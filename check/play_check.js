@@ -6,14 +6,17 @@
  * its top is refused with INVALID_DATA. The game files are written to a
  * folder for check/data_check.py.
  *
- *   node check/play_check.js <out folder> [--playwright <path to playwright>]
+ *   node check/play_check.js <out folder> [--playwright <path to playwright>] [--only name,name]
  *
  * Scenarios: 3 games in a row (2D 4 x 4, 3D 6 x 6, 2D two 4 x 4) with the
  * condition from DataPipe; a 3D game played to its last step with turns;
- * running out of energy; keys pressed while the view moves; DataPipe that
- * cannot hand out a condition; DataPipe down, then the file sent on the next
- * visit; a tab closed in the middle of a game, then the partial game sent;
- * the page opened from a file.
+ * running out of energy; keys pressed during a stay; keys held down
+ * (walking on from room to room, steering while walking, stays repeated) in
+ * both views; the environments of the model, with their start and food
+ * rooms; the sound switched with M and with the button; DataPipe that cannot
+ * hand out a condition; DataPipe down, then the file sent on the next visit;
+ * a tab closed in the middle of a game, then the partial game sent; the page
+ * opened from a file.
  */
 "use strict";
 var fs = require("fs");
@@ -24,12 +27,19 @@ var ROOT = path.join(__dirname, "..");
 var args = process.argv.slice(2);
 var OUT = args[0];
 var pwPath = args.indexOf("--playwright") >= 0 ? args[args.indexOf("--playwright") + 1] : "playwright";
+// --only three_games,hold: only these scenarios (the names are those below)
+var only = args.indexOf("--only") >= 0 ? args[args.indexOf("--only") + 1].split(",") : null;
+function want(name) {
+  return !only || only.indexOf(name) >= 0;
+}
 var chromium = require(pwPath).chromium;
 
 globalThis.window = globalThis;
 require(path.join(ROOT, "js", "mazes.js"));
 require(path.join(ROOT, "js", "rules.js"));
 require(path.join(ROOT, "settings.js"));
+require(path.join(ROOT, "js", "random.js"));
+require(path.join(ROOT, "js", "config.js"));
 var R = globalThis.FG.rules;
 var SETTINGS = globalThis.FG.SETTINGS;
 var FACING = ["RIGHT", "DOWN", "LEFT", "UP"];
@@ -215,6 +225,18 @@ async function play(page, rnd, plan, opts) {
         await sleep(50);
         continue;
       }
+      if (opts.fast && inGame === 0) {
+        // a stay in the start room, and a key during it: ignored as busy
+        // (after the moment in which keys are taken as left over from the menu)
+        await sleep(450);
+        await page.keyboard.press(" ");
+        await sleep(30);
+        await page.keyboard.press(gp.view === "3d" ? "ArrowUp" : "ArrowRight");
+        await sleep(600);
+        keys += 2;
+        inGame += 1;
+        continue;
+      }
       var k;
       if (gp.view === "3d") {
         var pick = rnd();
@@ -227,18 +249,47 @@ async function play(page, rnd, plan, opts) {
       if (rnd() < 0.03) {
         k = "x";
       }
-      await page.keyboard.press(k);
+      var walking = k === "ArrowUp" || (gp.view === "2d" && k !== " " && k !== "x");
+      if (gp.view === "3d" && (k === "ArrowLeft" || k === "ArrowRight") && rnd() < 0.75) {
+        // held, as a person turns to a door beside them (a tap turns 10 degrees)
+        await page.keyboard.down(k);
+        await sleep(560 + Math.floor(rnd() * 80));
+        await page.keyboard.up(k);
+      } else if (walking) {
+        // the player walks while the key is down: mostly into the next room,
+        // now and then a short way only, or stopping on the way
+        var r2 = rnd(), far = gp.view === "3d" ? 1500 : 700;
+        await page.keyboard.down(k);
+        if (r2 < 0.12) {
+          await sleep(far * 0.25);
+        } else if (r2 < 0.22) {
+          await sleep(far * 0.35);
+          await page.keyboard.up(k);
+          await sleep(250);
+          await page.keyboard.down(k);
+          await sleep(far * 0.9);
+        } else {
+          await sleep(far + Math.floor(rnd() * far * 0.3));
+        }
+        await page.keyboard.up(k);
+      } else {
+        await page.keyboard.press(k);
+      }
       keys += 1;
       inGame += 1;
-      if (opts.fast && rnd() < 0.3) {
-        // while the view still moves: these keys must be ignored as busy
-        await sleep(10);
+      if (opts.fast && (k === " " || rnd() < 0.3)) {
+        // a stay, and a key during it: that key must be ignored as busy
+        if (k !== " ") {
+          await sleep(gp.view === "3d" ? 700 : 400);
+          await page.keyboard.press(" ");
+          keys += 1;
+        }
+        await sleep(30);
         await page.keyboard.press(gp.view === "3d" ? "ArrowUp" : "ArrowRight");
         keys += 1;
       }
-      var moving = k !== " " && k !== "x";
-      await sleep(gp.view === "3d" ? (moving ? 1050 : 260) + Math.floor(rnd() * 120) :
-        (moving ? 330 : 120) + Math.floor(rnd() * 80));
+      await sleep(gp.view === "3d" ? (walking ? 650 : 480) + Math.floor(rnd() * 120) :
+        (walking ? 380 : 300) + Math.floor(rnd() * 80));
     }
     games += 1;
     await sleep(550);
@@ -249,7 +300,7 @@ async function play(page, rnd, plan, opts) {
 }
 
 function roomOf(text) {
-  return [Number(text[1]), Number(text[2])];
+  return R.roomFromName(text);
 }
 
 /* A game file: the header, the steps against the rules and the map rule,
@@ -257,7 +308,7 @@ function roomOf(text) {
 function checkGameFile(name, f) {
   var where = name;
   var g = f.game;
-  expect(f.format === "foraging-game" && f.format_version === 2, where + ": format");
+  expect(f.format === "foraging-game" && f.format_version === 3, where + ": format");
   expect(f.trial_type === "foraging-game", where + ": trial_type");
   expect(/^[0-9a-f]{8}$/.test(f.player), where + ": player code " + f.player);
   expect(/^[0-9a-f]{12}$/.test(f.session_id), where + ": session id");
@@ -322,6 +373,8 @@ function checkGameFile(name, f) {
       // the up arrow moves the way the player faces, Space stays; turns in between
       expect(st.key === "Space" ? st.move === "STAY" : st.key === "ArrowUp" && st.move === st.facing_before,
         where + " step " + t + ": 3D key " + st.key + " facing " + st.facing_before + " gave " + st.move);
+      // the turns since the step before, the one going on cut at the step;
+      // the walk began facing its door, and the turns lead to the facing at the step
       var turned = g.turns.filter(function (tr) { return tr.step === t - 1; });
       expect(turned.length === st.turns_before, where + " step " + t + ": turns " + turned.length + " vs " + st.turns_before);
       var f2 = facing;
@@ -329,7 +382,7 @@ function checkGameFile(name, f) {
         expect(tr.from === f2, where + " step " + t + ": a turn from " + tr.from + ", facing " + f2);
         f2 = tr.to;
       });
-      expect(st.facing_before === f2 && st.facing === f2, where + " step " + t + ": facing " + st.facing_before + " vs " + f2);
+      expect(st.facing === f2, where + " step " + t + ": facing " + st.facing + " vs " + f2);
       facing = st.facing;
     } else {
       var byKey = {ArrowLeft: "LEFT", ArrowRight: "RIGHT", ArrowUp: "UP", ArrowDown: "DOWN", Space: "STAY"};
@@ -352,18 +405,68 @@ function checkGameFile(name, f) {
     expectKnown(st, learn(true), t);
     expect(typeof st.decision_ms === "number" && st.decision_ms >= 0, where + " step " + t + ": decision " + st.decision_ms);
     expect(st.key_at >= st.shown_at, where + " step " + t + ": key before shown");
+    expect(typeof st.held === "boolean", where + " step " + t + ": held");
+    // a move is taken when the next room is entered, a stay when Space is pressed
+    expect(typeof st.entered_at === "number" && st.entered_at >= st.key_at,
+      where + " step " + t + ": entered " + st.entered_at + " after the walk began " + st.key_at);
+    if (st.move === "STAY") {
+      expect(st.entered_at - st.key_at < 50, where + " step " + t + ": a stay is taken at its key");
+    }
+    if (st.held) {
+      // a key held on from before: the walk (or the stay) began without a press
+      expect(st.press_at <= st.key_at && (st.released_at === null || st.released_at === undefined ||
+        st.released_at >= st.key_at), where + " step " + t + ": held step press and release");
+      var pressedThen = f.keys.some(function (k) {
+        return k.type === "down" && k.t === st.press_at && (k.key === st.key || (st.key === "Space" && k.key === " "));
+      });
+      expect(pressedThen, where + " step " + t + ": the press of a held step is in the keys");
+    } else {
+      expect(st.press_at === st.key_at, where + " step " + t + ": a pressed step is taken at the press");
+    }
     if (t < steps.length - 1 || !partial) {
-      expect(typeof st.arrived_at === "number" && st.arrived_at >= st.key_at, where + " step " + t + ": arrived_at");
+      expect((typeof st.arrived_at === "number" && st.arrived_at >= st.entered_at) ||
+        (st.arrived_at === null && typeof st.stopped_at === "number" && st.stopped_at >= st.entered_at),
+        where + " step " + t + ": arrived_at or stopped_at");
     }
   }
   expect(g.draws.length === steps.length - 1, where + ": draws " + g.draws.length);
   expect(g.result && g.result.rows.length === steps.length, where + ": result rows");
   var downs = f.keys.filter(function (k) { return k.type === "down" && k.phase === "game " + g.number; });
-  var moves = downs.filter(function (k) { return k.outcome === "move" || k.outcome === "stay"; });
-  expect(moves.length === steps.length - 1, where + ": " + moves.length + " move keys for " + (steps.length - 1) + " steps");
+  var stayKeys = downs.filter(function (k) { return k.outcome === "stay"; });
+  var pressedStays = steps.slice(1).filter(function (st) { return st.move === "STAY" && !st.held; }).length;
+  expect(stayKeys.length === pressedStays, where + ": " + stayKeys.length + " stay keys for " + pressedStays + " stays pressed");
+  steps.slice(1).forEach(function (st) {
+    if (st.move !== "STAY" && !st.held) {
+      var k0 = downs.filter(function (k) { return k.t === st.press_at; })[0];
+      // a key that walks, or in 2D one that first walked back and then on
+      expect(k0 && (k0.outcome === "walk" || k0.outcome === "walk back"), where + " step " + st.step +
+        ": the walk began with a key that walks (" + (k0 && k0.outcome) + ")");
+    }
+  });
+  (g.walks_back || []).forEach(function (wb, i) {
+    expect(wb.furthest >= 0 && wb.furthest < 1 && wb.back_at >= wb.started_at, where + ": walk back " + i);
+  });
   var turnKeys = downs.filter(function (k) { return k.outcome === "turn"; });
-  expect(turnKeys.length === (g.turns || []).length, where + ": " + turnKeys.length + " turn keys, " + (g.turns || []).length + " turns");
+  var ownTurns = (g.turns || []).filter(function (tr) { return !tr.continued; });
+  expect(turnKeys.length === ownTurns.length, where + ": " + turnKeys.length + " turn keys, " + ownTurns.length + " turns");
   expect(downs.every(function (k) { return k.outcome !== null; }), where + ": every game key has an outcome");
+  expect(f.keys.every(function (k) { return !k.repeat; }), where + ": repeats are counted, not recorded 1 by 1");
+  // the way the player went, and the rooms known at the end
+  expect(JSON.stringify(g.path) === JSON.stringify(steps.map(function (st) { return st.room; })), where + ": path");
+  var knownAll = {};
+  steps.forEach(function (st) { st.known_new.forEach(function (n) { knownAll[n] = true; }); });
+  if (!partial) {
+    expect(JSON.stringify(g.known_rooms) === JSON.stringify(Object.keys(knownAll).sort()), where + ": known rooms");
+  }
+  expect(g.sound && typeof g.sound.on_at_start === "boolean" && Array.isArray(g.sound.toggles), where + ": sound");
+  expect(g.food_kinds && Object.keys(g.food_kinds).every(function (n) { return ["cheese", "bread"].indexOf(g.food_kinds[n]) >= 0; }),
+    where + ": food kinds");
+  if (g.view === "3d") {
+    (g.turns || []).forEach(function (tr, i) {
+      expect(tr.to !== null && typeof tr.from_angle === "number" && typeof tr.to_angle === "number",
+        where + ": turn " + i + " has its angles");
+    });
+  }
   return g;
 }
 
@@ -381,8 +484,41 @@ function save(label, files) {
   });
 }
 
+/* The settings that take rooms and steps from a maze's environment file. */
+function checkEnvironmentSettings() {
+  var C = globalThis.FG.config, MZ = globalThis.FG.MAZES;
+  var envLink = {start_rooms: "environment", steps: "environment",
+    food_rooms: {patch: {room: "environment"}, small: {room: "environment"}}};
+  Object.keys(MZ).filter(function (m) { return MZ[m].environment; }).forEach(function (m) {
+    var e = MZ[m].environment;
+    var st = C.gameSettings(SETTINGS, null, m, envLink);
+    for (var k = 0; k < 5; k++) {
+      var lay = C.layout(st, null, globalThis.FG.random.make(k));
+      expect(e.start_rooms.some(function (r) { return r.join() === lay.start_room.join(); }), m + ": an environment start room");
+      expect(lay.food_rooms.patch.join() === e.food_rooms.patch.room.join() &&
+        lay.food_rooms.small.join() === e.food_rooms.small.room.join(), m + ": the environment's food rooms");
+    }
+    expect(st.steps === e.steps, m + ": the environment's steps");
+  });
+  var refused = 0;
+  try {
+    C.gameSettings(SETTINGS, null, "grid_4x4", {start_rooms: "environment"});
+  } catch (err) {
+    refused += /environment file/.test(err.message) ? 1 : 0;
+  }
+  try {
+    C.gameSettings(SETTINGS, null, "holes_6x6", {start_rooms: "s66"});
+  } catch (err) {
+    refused += /must be a room of holes_6x6/.test(err.message) ? 1 : 0;
+  }
+  expect(refused === 2, "environment settings: a maze without a file, and a room not in the maze, are refused");
+  var far = C.gameSettings(SETTINGS, null, "corridors_7x7", {start_rooms: "s66"});
+  expect(C.layout(far, null, globalThis.FG.random.make(1)).start_room.join() === "6,6", "a start in row 6");
+}
+
 (async function main() {
   fs.mkdirSync(OUT, {recursive: true});
+  checkEnvironmentSettings();
   var server = await serve();
   var base = "http://localhost:" + server.address().port + "/index.html";
   var browser = await chromium.launch(fs.existsSync("/opt/pw-browsers/chromium") ? {executablePath: "/opt/pw-browsers/chromium"} : {});
@@ -394,6 +530,7 @@ function save(label, files) {
     var page = await context.newPage();
     var errors = [];
     page.on("pageerror", function (e) { errors.push(String(e)); });
+    page.on("crash", function () { errors.push("the page crashed"); });
     page.on("console", function (m) {
       if (m.type() === "error" && !/Failed to load resource/.test(m.text())) {
         errors.push(m.text());
@@ -416,6 +553,7 @@ function save(label, files) {
     return {context: context, page: page, files: files, mode: mode, result: r, status: status};
   }
 
+  if (want("three_games")) {
   // 1. 3 games in a row, 2D and 3D, the condition from DataPipe
   var a = await session("three_games", "?test=1&set.steps=40", [
     {view: "2d", maze: "grid_4x4"}, {view: "3d", maze: "grid_6x6"}, {view: "2d", maze: "grid_two_4x4"}
@@ -450,6 +588,8 @@ function save(label, files) {
   save("three_games", a.files);
   await a.context.close();
 
+  }
+  if (want("full_3d")) {
   // 2. a 3D game to its last step, with turns; energy stays at 0
   var b = await session("full_3d", "?condition=exponential_slow&set.stomach.at_zero=continue", [
     {view: "3d", maze: "grid_two_4x4"}
@@ -464,7 +604,9 @@ function save(label, files) {
   save("full_3d", b.files);
   await b.context.close();
 
-  // 3. running out of energy, 2D, keys while the view moves
+  }
+  if (want("starve_fast")) {
+  // 3. running out of energy, 2D and 3D, keys during stays
   var c = await session("starve_fast", "?condition=linear_fast&set.stomach.start=4", [
     {view: "2d", maze: "grid_6x6"}, {view: "3d", maze: "grid_4x4"}
   ], {seed: 13, stay: 0.05, fast: true});
@@ -474,11 +616,127 @@ function save(label, files) {
     var g = checkGameFile(n, c.files[n]);
     expect(g.ended.how === "starved", "starve_fast: " + n + " ended " + g.ended.how);
     var busy = c.files[n].keys.filter(function (k) { return k.type === "down" && k.outcome === "ignored: busy"; });
-    expect(busy.length > 0, "starve_fast: " + n + " keys while moving were ignored (" + busy.length + ")");
+    expect(busy.length > 0, "starve_fast: " + n + " keys during a stay were ignored (" + busy.length + ")");
   });
   save("starve_fast", c.files);
   await c.context.close();
 
+  }
+  // 3b. keys held down: walking on, steering, stays repeated, in both views
+  async function holdGame(view, maze, query) {
+    var ctx = await browser.newContext({viewport: {width: 1100, height: 720}});
+    var page = await ctx.newPage();
+    var errors = [];
+    page.on("pageerror", function (e) { errors.push(String(e)); });
+    var files = {};
+    await pipe(page, files, {value: "ok"}, 0);
+    await page.goto(base + query);
+    await choose(page, view, maze);
+    await sleep(700);
+    var up = view === "3d" ? "ArrowUp" : "ArrowRight";
+    async function hold(key, ms) {
+      await page.keyboard.down(key);
+      for (var w = 0; w < ms; w += 100) {
+        await sleep(100);
+        await page.keyboard.down(key);          // as the browser repeats a key held down
+      }
+      await page.keyboard.up(key);
+    }
+    for (var round = 0; round < 6 && !(await ui(page)).end; round++) {
+      await hold(up, 2600);
+      await sleep(1500);
+      if (view === "3d") {
+        // steer while walking: the turn key down as well as the up arrow
+        await page.keyboard.down("ArrowUp");
+        await sleep(300);
+        await hold(round % 2 ? "ArrowLeft" : "ArrowRight", 700);
+        await sleep(900);
+        await page.keyboard.up("ArrowUp");
+        await sleep(1500);
+        await page.keyboard.press("ArrowDown");
+        await sleep(600);
+      } else {
+        await hold(["ArrowDown", "ArrowLeft", "ArrowUp"][round % 3], 1100);
+        await sleep(600);
+      }
+      await hold(" ", 1400);
+      await sleep(700);
+      if (round === 1) {
+        await page.keyboard.press("m");
+        await sleep(200);
+      }
+      if (round === 2) {
+        await page.click("#soundBtn");
+        await sleep(200);
+      }
+    }
+    // into a room (Space does nothing between 2 rooms), then stay to the end;
+    // in 2D between 2 rooms only the arrows along the corridor walk
+    var arrows = view === "3d" ? ["ArrowUp"] : ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"];
+    for (var w = 0; w < 100 && !(await ui(page)).end; w++) {
+      if (w % 8 === 0) {
+        await hold(arrows[(w / 8) % arrows.length], view === "3d" ? 1800 : 900);
+        await sleep(700);
+      }
+      await page.keyboard.press(" ");
+      await sleep(view === "3d" ? 480 : 320);
+    }
+    await sleep(800);
+    var route = await page.evaluate(function () {
+      var c = document.getElementById("route"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      var painted = 0;
+      for (var i = 3; i < d.length; i += 4) {
+        painted += d[i] > 0 ? 1 : 0;
+      }
+      return {w: c.width, painted: painted, shown: !document.getElementById("end").hidden};
+    });
+    await page.keyboard.press("Enter");
+    await sleep(1500);
+    expect(errors.length === 0, "hold " + view + ": page errors " + JSON.stringify(errors));
+    expect(route.shown && route.painted > route.w * 20, "hold " + view + ": the route map is drawn " + JSON.stringify(route));
+    var names = gameFiles(files);
+    expect(names.length === 1, "hold " + view + ": 1 file");
+    names.forEach(function (n) {
+      var g = checkGameFile(n, files[n]);
+      var held = g.steps.filter(function (st) { return st.held; });
+      var heldStays = held.filter(function (st) { return st.move === "STAY"; });
+      expect(held.length >= 6 && heldStays.length >= 3, "hold " + view + ": held steps " + held.length + ", held stays " + heldStays.length);
+      expect(g.sound.toggles.length === 2 && g.sound.toggles[0].by === "M" && g.sound.toggles[1].by === "button" &&
+        g.sound.toggles[0].on === false && g.sound.toggles[1].on === true, "hold " + view + ": sound toggles " + JSON.stringify(g.sound.toggles));
+      var reps = files[n].keys.filter(function (k) { return k.type === "down" && k.repeats > 0; });
+      expect(reps.length > 0, "hold " + view + ": repeats counted on the presses");
+      if (view === "3d") {
+        expect(g.turns.some(function (tr) { return tr.continued; }) || g.turns.some(function (tr) { return tr.split; }) ||
+          g.turns.length > 3, "hold 3d: turns while walking");
+      }
+      report.push("hold " + view + " " + maze + ": " + (g.steps.length - 1) + " steps, " + held.length + " held, " +
+        g.turns.length + " turns");
+    });
+    save("hold_" + view, files);
+    await ctx.close();
+  }
+  if (want("hold")) {
+  await holdGame("2d", "corridors_7x7", "?test=1&condition=linear_fast&set.steps=45&set.stomach.at_zero=continue");
+  await holdGame("3d", "holes_6x6", "?test=1&condition=linear_fast&set.steps=30&set.stomach.at_zero=continue");
+  }
+
+  if (want("environments")) {
+  // 3c. the environments of the model in both views, starting anywhere
+  var env3 = await session("environments_any_start", "?test=1&set.steps=25", [
+    {view: "3d", maze: "corridors_7x7"}, {view: "2d", maze: "holes_6x6"}, {view: "3d", maze: "ring_5x5"}
+  ], {seed: 23});
+  var en3 = gameFiles(env3.files);
+  expect(en3.length === 3, "environments_any_start: 3 files");
+  en3.forEach(function (n) {
+    var g = checkGameFile(n, env3.files[n]);
+    var envOf = globalThis.FG.MAZES[g.maze].environment;
+    expect(envOf && g.food_kinds.patch === "cheese" && g.food_kinds.small === "bread", n + ": cheese and bread");
+  });
+  save("environments", env3.files);
+  await env3.context.close();
+
+  }
+  if (want("no_condition")) {
   // 4. DataPipe hands out no condition: one is picked at random
   var d = await session("no_condition", "?set.steps=5", [{view: "2d", maze: "grid_4x4"}], {seed: 14, mode: "no condition"});
   var dn = gameFiles(d.files);
@@ -486,6 +744,8 @@ function save(label, files) {
   dn.forEach(function (n) { checkGameFile(n, d.files[n]); });
   await d.context.close();
 
+  }
+  if (want("down")) {
   // 5. DataPipe down for a game, then the next visit sends it
   var mode = {value: "down"};
   var ef = {};
@@ -502,6 +762,8 @@ function save(label, files) {
   save("down", ef);
   await e.context.close();
 
+  }
+  if (want("closed")) {
   // 6. the tab closed in the middle of a game: the partial game arrives
   var ff = {};
   var f = await session("closed", "?condition=linear_fast&set.stomach.at_zero=continue", [
@@ -522,6 +784,8 @@ function save(label, files) {
   save("closed", ff);
   await f.context.close();
 
+  }
+  if (want("metadata")) {
   // 7. Psych-DS metadata on: DataPipe answers METADATA_ERROR but keeps the
   // file; the game takes it as kept and does not send it again
   var mlog = [];
@@ -534,6 +798,8 @@ function save(label, files) {
   expect(/saved/.test(m.status), "metadata: saved message, got " + m.status);
   await m.context.close();
 
+  }
+  if (want("refused")) {
   // 8. DataPipe refuses every file: sent once a visit, given up after 3 refusals
   var rlog = [], rfiles = {}, rmode = {value: "refuse"};
   var rf = await session("refused", "?condition=linear_fast&set.steps=5", [{view: "2d", maze: "grid_4x4"}],
@@ -552,6 +818,8 @@ function save(label, files) {
   expect(rlog.length === 3 && left === 0, "refused: 3 requests in all, then given up (" + rlog.length + " requests, " + left + " left)");
   await rf.context.close();
 
+  }
+  if (want("old_queue")) {
   // 9. a file queued by the first version, without trial_type: sent with it
   var olog = [], ofiles = {};
   var octx = await browser.newContext();
@@ -575,6 +843,8 @@ function save(label, files) {
     "old queue: the old file arrived with trial_type (" + JSON.stringify(olog) + ")");
   await octx.close();
 
+  }
+  if (want("file")) {
   // 10. opened from a file, nothing sent
   var ctx = await browser.newContext();
   var fp = await ctx.newPage();
@@ -586,6 +856,7 @@ function save(label, files) {
   expect(fs1.menu && fs1.ready && ferr.length === 0, "file://: the first page, ready, no errors " + JSON.stringify(ferr));
   await ctx.close();
 
+  }
   await browser.close();
   server.close();
   report.forEach(function (r) { console.log(r); });

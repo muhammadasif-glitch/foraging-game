@@ -20,9 +20,9 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "2.0.1";
+  FG.VERSION = "2.1.0";
   var FORMAT = "foraging-game";
-  var FORMAT_VERSION = 2;
+  var FORMAT_VERSION = 3;
   var TRIAL_TYPE = "foraging-game";
   // keys sooner than this after the first page or the end of a game appear
   // are taken as left over from the screen before
@@ -32,6 +32,22 @@
     grid_6x6: ["6 &times; 6", "36 rooms"],
     grid_two_4x4: ["Two 4 &times; 4", "33 rooms, joined by a bridge"]
   };
+
+  /* The name and size of a maze on the first page: an environment of the
+   * model is named after its file, "ring_5x5" as "Ring 5 x 5". */
+  function mazeText(name) {
+    if (MAZE_TEXT[name]) {
+      return MAZE_TEXT[name];
+    }
+    var rooms = FG.MAZES[name].rooms, n = 0;
+    rooms.forEach(function (row) { row.forEach(function (v) { n += v >= 0 ? 1 : 0; }); });
+    var words = String(name).split("_").map(function (w) {
+      var m = /^(\d+)x(\d+)$/.exec(w);
+      return m ? m[1] + " &times; " + m[2] : escape(w);
+    });
+    words[0] = words[0].charAt(0).toUpperCase() + words[0].slice(1);
+    return [words.join(" "), n + " rooms"];
+  }
 
   function $(id) {
     return document.getElementById(id);
@@ -170,6 +186,7 @@
     var scene = null;             // what it shows
     var playing = false, failed = false, games = 0;
     var mark = REC.mark();
+    var soundMark = 0;
     var refreshGame = null;       // keeps the game in progress again, with the time of closing
     var ready = false;
 
@@ -255,7 +272,7 @@
       }).join("");
       $("views").className = "grid" + (all.menu.views.length === 2 ? " two" : "");
       $("mazes").innerHTML = all.menu.mazes.map(function (m, k) {
-        var t = MAZE_TEXT[m] || [escape(m), ""];
+        var t = mazeText(m);
         return '<div class="card"><div class="card-size">' + t[0] + '</div>' +
           '<div class="card-meta">' + t[1] + '</div><div class="card-meta"><kbd>' + (k + 1) + '</kbd></div></div>';
       }).join("");
@@ -290,7 +307,10 @@
             if (entry.t - at < MENU_GUARD_MS) {
               return "ignored: too soon";
             }
-            var n = {"1": 0, "2": 1, "3": 2, "4": 3}[e.key];
+            if ((e.key === "m" || e.key === "M") && FG.sound) {
+              return FG.sound.toggle("M") ? "sound on" : "sound off";
+            }
+            var n = /^[1-9]$/.test(e.key) ? Number(e.key) - 1 : undefined;
             var rows = [all.menu.views.length, all.menu.mazes.length];
             var what = null;
             if (n !== undefined && n < all.menu.mazes.length) {
@@ -351,6 +371,7 @@
         var got = REC.since(mark);
         f.keys = got.keys;
         f.attention = got.attention;
+        f.sound_log = FG.sound ? FG.sound.log.slice(soundMark) : [];
         return JSON.parse(JSON.stringify(f));
       }
 
@@ -363,6 +384,9 @@
         }
         if (!f.game.result) {
           f.game.result = FG.game.modelResult(f.game);
+        }
+        if (!f.game.path) {
+          FG.game.wayFields(f.game);
         }
         var short = header("partial game");
         short.menu = menuRec;
@@ -387,6 +411,7 @@
         var saving = FG.datapipe.save(fileName(String(n)), gameFile(rec, "game"));
         FG.datapipe.dropSlot("game");
         mark = REC.mark();
+        soundMark = FG.sound ? FG.sound.log.length : 0;
         if (!send) {
           root.console.log("send=0: game " + n, root.FG_SENT[root.FG_SENT.length - 1]);
         }
@@ -401,9 +426,12 @@
       $("endScore").textContent = (Math.round(eaten * 10) / 10).toFixed(1);
       $("endLabel").textContent = text("eaten") + " in " + rec.ended.step + " steps";
       $("endAgain").innerHTML = text("again");
+      $("routeTitle").textContent = text("route");
+      var rw = Math.max(260, Math.min(520, root.innerWidth - 90)), rh = Math.round(rw * 0.62);
       $("hud").hidden = true;
       $("gameKeys").hidden = true;
       only("end");
+      FG.route.draw($("route"), rec, rw, rh);
       status("saving");
       var slow = setTimeout(function () { status("slow"); }, 25000);
       saving.then(function (r) {
@@ -489,10 +517,34 @@
       }
     });
 
+    // sound: as settings.js says at first, then as the player switches it;
+    // it can play from the first key on
+    if (FG.sound) {
+      FG.sound.start(all.game.sound !== false);
+      root.addEventListener("keydown", function () { FG.sound.unlock(); }, true);
+      var btn = $("soundBtn");
+      var show = function () {
+        btn.classList.toggle("off", !FG.sound.on);
+        btn.setAttribute("aria-label", FG.sound.on ? "sound on, press M to turn off" : "sound off, press M to turn on");
+        btn.title = btn.getAttribute("aria-label");
+      };
+      FG.sound.listen(show);
+      show();
+      btn.hidden = false;
+      btn.addEventListener("mousedown", function (e) { e.preventDefault(); });
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        FG.sound.unlock();
+        FG.sound.toggle("button");
+        btn.blur();
+      });
+    }
+
     buildMenu();
     sizeViews();
     var start = loop();
-    return Promise.all([REC.browser(), chooseCondition(all, p.get("condition"))]).then(function (both) {
+    return Promise.all([REC.browser(), chooseCondition(all, p.get("condition")),
+      FG.art ? FG.art.load() : Promise.resolve(0)]).then(function (both) {
       session.browser = both[0];
       session.condition = both[1];
       ready = true;

@@ -23,6 +23,7 @@ import glob
 import json
 import math
 import os
+import re
 import sys
 
 
@@ -54,7 +55,8 @@ class Draws:
 
 
 def room(text):
-    return (int(text[1]), int(text[2]))
+    m = re.match(r"^[sS](\d)(\d)$", text) or re.match(r"^[sS](\d+)_(\d+)$", text)
+    return (int(m.group(1)), int(m.group(2)))
 
 
 def measures_for(res, C):
@@ -67,7 +69,7 @@ def measures_for(res, C):
 
 
 def name_of(room):
-    return "s%d%d" % room
+    return ("s%d%d" if room[0] < 10 and room[1] < 10 else "s%d_%d") % room
 
 
 def check_known(name, g, H):

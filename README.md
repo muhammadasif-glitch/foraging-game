@@ -22,7 +22,8 @@ A game file also holds the game in the form of a model run, so the measures
 of the agents' runs (`forage.lab.measures`) score people's games the same way.
 
 Plain HTML and JavaScript: no server, no library, no build step, nothing to
-install; the 3D view is drawn by the game itself.
+install; the 3D view, the food, the paintings and the music are made by the
+game itself.
 
 ## Putting it online (GitHub Pages)
 
@@ -39,24 +40,38 @@ use `?send=0` then (see below).
 ## Playing
 
 **The first page** offers the view (2D from above, 3D from inside) and the
-maze (4 x 4, 6 x 6, or 2 blocks of 4 x 4 joined by a bridge). The up and down
-arrows go between the 2 rows, the left and right arrows choose, the keys 1 to
-3 choose a maze, Enter plays. There is no consent page and no instructions:
-one line says what to do, and the keys are shown during the game. The player
-code is made by the game and kept in the browser.
+mazes of `settings.js` with their size (4 x 4, 6 x 6, 2 blocks of 4 x 4 joined
+by a bridge, and the environments made with the model, see below). The up and
+down arrows go between the 2 rows, the left and right arrows choose, the keys
+1 to 9 choose a maze, Enter plays. There is no consent page and no
+instructions: one line says what to do, and the keys are shown during the
+game. The player code is made by the game and kept in the browser.
 
 **A game**: 120 steps (or until the energy runs out). The bar at the top shows
-the energy, how full the food room the player is in is and its worth, the
-food eaten and the steps left.
+the energy, how full the food room the player is in is, its food and worth,
+the food eaten and the steps left.
 
 - 2D: the arrow keys move to the next room in their direction, Space stays.
-- 3D: the up arrow walks through the door ahead, the left and right arrows
-  turn, the down arrow turns around, Space stays. A turn is not a step: it
-  costs nothing and the world does not change; it is recorded.
+- 3D: the up arrow walks through the door the player faces (the door within
+  45 degrees of where the player looks); the left and right arrows turn, a
+  tap by about 10 degrees, held they keep turning (they can be held while
+  walking, to steer); the down arrow turns around; Space stays. A turn is not
+  a step: it costs nothing and the world does not change; it is recorded.
+- The player walks only while the key is held down: a tap goes a little
+  way, and letting go stops the player where they are, in a corridor too.
+  Held on, the player walks on through the next door, room after room. The
+  walk speeds up and slows down, and in 3D the head bobs a little.
+- On the way to the next room the player can go back (in 3D turn around and
+  walk, in 2D the opposite arrow) until that room is entered.
 - A move towards a wall is not a step: nothing changes, the view shakes, the
   key is recorded.
-- Keys pressed while the view moves are ignored (and recorded), as are keys
-  held down.
+
+**What is a step.** A move is a step when the player enters the next room
+(crosses its door): the world changes then, as in the model, and the rooms
+next to it come into light. A walk back into the room it began in is no
+step; it is recorded in `walks_back`. A stay is a step when Space is
+pressed; it takes a moment (0.24 s in 2D, 0.42 s in 3D), and held, Space
+stays again after each one. Turns and keys towards a wall are not steps.
 
 **What the player sees** is what the model's agent knows. The agent has the
 room it is in on its map and, after its first step, every room next to the
@@ -64,13 +79,43 @@ room it is in (through a door); it knows whether such a room holds food and
 what it is worth, and sees how full a food room is only while it is in it.
 So the game shows in light the rooms the player has been in and, from the
 first step on, the rooms next to them; everything else is dark. A food room
-among them shows a sign with its worth ("food 8"); the room the player is in
-shows its food as apples, 1 per tenth of its level. At step 0 only the start
-room is shown: the agent's first move is made before it has mapped any other
-room.
+among them shows a sign with its food and worth (a cheese and "food 8"),
+never its level; the room the player is in shows the food itself. At step 0
+only the start room is shown: the agent's first move is made before it has
+mapped any other room. Rooms the player learns of come into light while the
+player walks into the room next to them, instead of all at once on arrival.
 
-**The end of a game** shows the food eaten; Enter goes back to the first page
-for another game. Each game is saved as soon as it ends.
+**The food.** The room worth 8 holds a cheese wheel, the room worth 1 a loaf
+of bread, each in 10 pieces: at a level of 0.73 there are 7 whole wedges (or
+slices) and an eighth that is 0.3 of one. Staying eats from the room, as in
+the model: a piece goes down, crumbs fall and it crunches. A room that has
+grown back since the player left it is seen growing back on entering. In 3D
+the food stands in the middle of its room and the player stops in front of
+it; in 2D it is seen from above. Which room shows which food is set in
+`settings.js` (`food_rooms.<name>.food`: `cheese` or `bread`; without it the
+room worth the most shows cheese and the others bread).
+
+**The walls** of the 3D view are plaster in the colour of the room, with a
+framed painting on each side of the room. Each room colour has its own
+painting, so a painting tells the player no more than the colour of the
+wall; corridors are grey. The paintings are public-domain works of the Art
+Institute of Chicago, fetched once by `check/get_paintings.py` (see Paintings
+below); until then the game paints its own landscapes.
+
+**Sound.** Quiet music, footsteps, eating, a bump at a wall, a chime when
+food has grown back and a short tune at the end, all made by the browser (no
+sound files). Sound starts with the first key the player presses (browsers
+allow it only after one); M or the button in the bottom corner turns it on
+and off at any time. `game.sound` in `settings.js` says whether a session
+starts with sound; every switch is recorded.
+
+**The end of a game** shows the food eaten and the way the player went: the
+rooms the player knew at the end (only those, so the map shows no more of
+the maze than the player saw), the moves as a line from blue at the first
+step to red at the last with an arrow on each, a ring on each room the player
+stayed in (thicker for more stays), S at the start and E at the end, and on
+each food room its food and what was eaten there. Enter goes back to the
+first page for another game. Each game is saved as soon as it ends.
 
 ## Settings
 
@@ -79,22 +124,58 @@ Everything a study changes is in `settings.js`, with a comment on every key:
 - `datapipe.experiment_id`: the DataPipe experiment; `if_no_condition`: what
   to do when DataPipe cannot hand out a condition (`random` or `stop`).
 - `menu`: the views and the mazes the first page offers, in order.
-- `game`: what every game has: steps, start room, the food rooms (place
-  `random` or a room such as `s33`, worth, level at the start), the food rule
-  and its speed (`half_empty_in`, or `eat_per_step` and `refill_speed`),
-  random refill, the stomach (start, size, costs, what happens at 0), and what
-  the bar shows.
+- `game`: what every game has: steps, start room (`random`, any room such as
+  `s52`, or `environment`), `start_area` (null: random starts anywhere; 4: only
+  in rows and columns 0 to 3), the food rooms (place `random`, a room such as
+  `s33` or `environment`, worth, level at the start, and the food it shows),
+  the food rule and its speed (`half_empty_in`, or `eat_per_step` and
+  `refill_speed`), random refill, the stomach (start, size, costs, what
+  happens at 0), what the bar shows, and whether a session starts with sound.
 - `conditions`: the versions of the game. A condition changes any key of
   `game`; under `food_rooms` it changes rooms or adds new ones.
 - `texts`: everything the player reads.
 
 The keys have the names of the experiment files of the `forage` command, so a
 game and a model run are set up alike. The game refuses what the model
-refuses: start rooms outside rows and columns 0 to 3 (where the model's agents
-can start), eating or refill speeds above 1, `half_empty_in` that gives one,
-and food bin edges not in `0 < empty_below < full_above < 1`. The whole file,
-every condition in every maze with the link's settings, is checked when the
-page opens; a mistake is shown on the page instead of the game.
+refuses: a start or food room that is not a room of the maze, eating or
+refill speeds above 1, `half_empty_in` that gives one, and food bin edges not
+in `0 < empty_below < full_above < 1`. The whole file, every condition in
+every maze with the link's settings, is checked when the page opens; a
+mistake is shown on the page instead of the game. So a room such as `s52`, or
+`environment`, can only be used when every maze of the menu has it.
+
+### Mazes and environments
+
+The mazes are the model's (`js/mazes.js`, written from it by
+`check/export_mazes.py`): the 3 that come with it and every environment file
+in its `settings/environments/`, made with its `tools/make_environment.py`
+(a shape typed in, or a grid with holes, a maze with loops, or blocks joined
+by bridges, of any size). A new environment comes into the game in 2 steps:
+run `check/export_mazes.py` again with the model's checkout on the path, and
+add its name to `menu.mazes`. The game then lays it out, colours it and
+checks it as the model does. With `start_rooms: "environment"`,
+`food_rooms.<name>.room: "environment"` or `steps: "environment"`, a game
+takes the start rooms, food rooms or steps of the maze's environment file.
+Rooms from row or column 10 on are named with a `_`: `s10_3`.
+
+### Paintings
+
+`check/get_paintings.py` fetches about 48 public-domain landscape paintings
+from the Art Institute of Chicago, whose images of public-domain works are
+released under CC0, into `img/paintings/` (400 pixels wide, with
+`CREDITS.md` and `credits.json`), and packs them into `js/paintings.js`, which
+the page reads. It leaves out still lifes, food, portraits and violent
+scenes, and waits 1 second between requests, as the museum asks; run it once
+from the game's folder, with internet:
+
+```
+python check/get_paintings.py            # fetch and pack (about a minute)
+python check/get_paintings.py --pack     # pack again what is in img/paintings/
+```
+
+Images can also be added to or taken out of `img/paintings/` by hand; run it
+with `--pack` after. The paintings are packed into a script, not loaded as
+image files, so that they also show when the game is opened from a file.
 
 ### Links
 
@@ -166,7 +247,7 @@ Every file has at its top:
 | Key | |
 |---|---|
 | `trial_type` | `foraging-game` (for DataPipe's validation) |
-| `format`, `format_version`, `file` | `foraging-game`, 2, and `game` or `partial game` |
+| `format`, `format_version`, `file` | `foraging-game`, 3, and `game` or `partial game` |
 | `game_version` | the version of this code |
 | `player`, `player_code` | the player code (8 hex digits), and whether it was `new` or `kept in this browser` |
 | `session_id`, `session_started`, `test` | a random id of the page's visit, when it opened (UTC), test or not |
@@ -176,6 +257,7 @@ Every file has at its top:
 | `menu` | the first page before this game: `shown_at`, `chosen_at`, `view`, `maze`, and `actions` (every change of choice, with times) |
 | `game` | the game (below) |
 | `keys`, `attention` | every key press and release, and the tab or window losing and getting back focus, from the end of the game before (the end page, the first page, the game) |
+| `sound_log` | every switch of the sound in the same time: `{t, phase, on, by}`, by `M` or `button` |
 
 All times (`t`, `..._at`) are milliseconds on the browser's event clock,
 counted from when the game's script started (a moment after the page opened).
@@ -193,9 +275,14 @@ adds up to about one frame (`frame_ms`).
 | `seed`, `draws` | the seed of the game's own random numbers for refills (not numpy's) and every draw, 1 per step, used or not: the draws reproduce the game |
 | `layout_seed` | the seed the layout was picked with |
 | `settings`, `speeds` | all the settings of this game, and the eating and refill speeds used |
+| `controls` | how the player moves: walking speed and its speeding up (tiles a second; a room is 4 tiles, a corridor 3), how long a stay takes, and in 3D how a tap, a held key and turning around turn |
+| `food_kinds` | the food each food room shows: `cheese` or `bread` |
+| `sound` | `on_at_start`, and `toggles`: every switch during the game, `{t, step, on, by}` |
+| `path`, `known_rooms` | the room of every step from step 0, and the rooms the player knew at the end (what the end page draws) |
+| `walks_back` | every walk towards a room that went back to the room it began in: `{started_at, back_at, step (steps taken before), room, toward, move, furthest (the share of the way to the next room's door reached), held}` |
 | `started`, `started_at`, `ended` | `ended`: `{how, step, at}`; how is `finished`, `starved` or `page closed` (then `at` is when the page closed) |
 | `steps` | 1 row per step, step 0 being the start (below) |
-| `turns` | 3D: every turn, `{t, step (steps taken before it), key, from, to}` |
+| `turns` | 3D: every turn, `{t, step (steps taken before it), key, from, to, from_angle, to_angle, ms, held_ms}`: `from` and `to` are the doors faced (`RIGHT`, `DOWN`, `LEFT`, `UP`), the angles in degrees (0 east, 90 south), `held_ms` how long the key was held. A turn still going on when a step is taken ends there (`split`), and the rest is a turn of its own (`continued`, with no key press of its own) |
 | `result` | the game as a model run: `settings` (world, run, satiety) and `rows` as in `forage.v3.record`, for `forage.lab.measures.of_run`; laid over the defaults of `forage.v3.settings` they are valid settings of a model run |
 
 A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
@@ -205,11 +292,14 @@ A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
 |---|---|
 | `step` | 0 for the start, then 1, 2, ... |
 | `shown_at` | when the screen of this choice was on the screen |
-| `key_at`, `decision_ms` | when the key was pressed, and the time since `shown_at` |
-| `arrived_at` | when the result of the step was on the screen (after the walk to the next room) |
-| `released_at`, `hold_ms` | when the key was let go, and for how long it was held |
+| `shown_at` | when the player could act: the room before entered (or the stay before over), or the game shown for step 1 |
+| `key_at`, `decision_ms` | when the walk to this room began (the key pressed, or, for a key held on, the moment it walked on), and the time since `shown_at`; for a stay, when Space was pressed |
+| `entered_at` | when the step was taken: the room entered (for a stay, Space pressed); the world changes then |
+| `held`, `press_at`, `stops` | whether the walk began with a key held on from before, when that key was pressed, and how often the player stood still on the way |
+| `arrived_at`, `stopped_at` | when the player reached the middle of the room (in 3D a food room: the place before the food), or the stay was over; or, when the player stopped in the room before its middle, when that was |
+| `released_at`, `hold_ms`, `released_by` | when the key was let go, and for how long it was held after the step; `released_by: blur` when the window lost the keyboard while it was down |
 | `key`, `move` | `ArrowUp`, ... or `Space`; `UP`, `DOWN`, `LEFT`, `RIGHT` or `STAY` |
-| `facing_before`, `facing`, `turns_before` | the way the player faced before and after the step (`RIGHT`, `DOWN`, `LEFT`, `UP`; in 2D the last move), and the turns made while choosing (3D) |
+| `facing_before`, `facing`, `angle_before`, `turns_before` | the door the player faced before and after the step (`RIGHT`, `DOWN`, `LEFT`, `UP`; in 2D the last move), in 3D the angle in degrees, and the turns made since the step before (3D) |
 | `room_from`, `room_to`, `room` | rooms as `s<row><column>`, `s00` top left |
 | `legal` | the moves open from the room the choice was made in |
 | `walls_before`, `other_keys_before` | keys towards a wall, and other keys, pressed while choosing |
@@ -223,15 +313,19 @@ A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
 | `found`, `events` | a food room entered for the first time on this step, and events: `known` (a food room shown for the first time), `found`, `empty`, `full again`, `refill skipped`, `food lost` |
 
 `keys`: every key press and release: `t`, `type` (`down` or `up`), `key` (as
-the browser names it; Space is `" "`), `code`, `repeat`, `with` (Shift, Ctrl,
-Alt, Meta, when held), `phase` (`menu`, `game 3`, `end 3`) and `outcome`: in a
-game `move`, `stay`, `turn`, `wall`, `not allowed` (a move on a first step
-that must be a stay), `ignored: busy` (while the view moves), `ignored: too
-soon`, `ignored: repeat`, `ignored: key`, `ignored: with Ctrl, Alt or Meta`;
-on the first page `view`, `maze`, `row`, `play`, `ignored: not ready`; at the
-end of a game `menu`; anywhere `ignored: too soon`, `ignored: repeat` or
-`ignored: key`, or null for a key nothing listens to (a key release, a key
-between 2 screens). `attention`: the tab hidden or shown and the window
+the browser names it; Space is `" "`), `code`, `repeat`, `repeats` (how many
+times the browser repeated the press while the key was held; the repeats are
+not recorded 1 by 1), `with` (Shift, Ctrl, Alt, Meta, when held), `phase`
+(`menu`, `game 3`, `end 3`) and `outcome`: in a game `walk`, `walk back` (2D, the
+opposite arrow on the way), `stay`, `turn`, `wall`, `not allowed` (a move on
+a first step that must be a stay), `ignored: between rooms` (Space, or in 2D a
+sideways arrow, on the way), `ignored: busy` (during a stay), `ignored:
+turning` (while turning around), `ignored: too soon`, `ignored: key`,
+`ignored: with Ctrl, Alt or Meta`; on the first page `view`, `maze`, `row`, `play`, `ignored: not
+ready`; at the end of a game `menu`; anywhere `sound on` or `sound off` (M),
+`ignored: too soon` or `ignored: key`, or null for a key nothing listens to (a
+key release, a key between 2 screens). A walk taken with a key held on has no
+key press of its own: it is the press in `press_at`, still down. `attention`: the tab hidden or shown and the window
 losing or getting back focus, with times and phases.
 
 ### Scoring with the model's measures
@@ -275,6 +369,7 @@ python check/layout_check.py         # the maze drawn as in the model's films (n
 python check/map_check.py            # what the player is shown against the model's agent (a few minutes)
 node check/play_check.js out/        # games in Chromium, 2D and 3D (needs Playwright)
 python check/data_check.py out/      # the recorded games replayed through the model
+python check/draw_route.py GAME.json # the way a player went, as on the end page (needs matplotlib)
 ```
 
 `map_check.py` runs the model's agent in each maze and checks before every
@@ -283,10 +378,16 @@ among them the food rooms, and only they, carry a preference.
 `play_check.js` plays in a real browser and checks every file the game sends,
 with DataPipe stood in for (with its validation of the required fields):
 
-- 3 games in a row (2D and 3D, all 3 mazes) with the condition from DataPipe,
-  and the player code kept for the next visit;
+- 3 games in a row (2D and 3D, the 3 mazes that come with the model) with the
+  condition from DataPipe, and the player code kept for the next visit;
 - a 3D game played to its last step, with turns;
-- running out of energy, with keys pressed while the view moves;
+- running out of energy, with keys pressed during stays;
+- keys held down in 2D and 3D: walking on from room to room, steering while
+  walking, stays repeated, the sound switched with M and with the button, and
+  the route map drawn at the end;
+- the environments of the model in both views, starting anywhere, with
+  cheese and bread, and the settings that take rooms and steps from an
+  environment file;
 - no condition from DataPipe, and DataPipe down with the file sent on the next visit;
 - a tab closed in the middle of a game, then the partial game sent;
 - the page opened from a file.
@@ -299,6 +400,8 @@ checks the fields DataPipe's validation needs.
 ## Known limits
 
 - Keyboard only; made for a computer.
+- The paintings are the game's own landscapes until `check/get_paintings.py`
+  has been run once with internet.
 - Tested in Chromium; Firefox and Safari not yet.
 - A game cut short reaches DataPipe in full only if the browser sends it on
   closing (shorter games) or the page is opened again in the same browser;

@@ -29,19 +29,26 @@
     // What the first page offers, in this order.
     menu: {
       views: ["2d", "3d"],        // 2d: the maze from above; 3d: from inside
-      mazes: ["grid_4x4", "grid_6x6", "grid_two_4x4"]
+      // the mazes of the model; environments made with its
+      // tools/make_environment.py come in through check/export_mazes.py
+      mazes: ["grid_4x4", "grid_6x6", "grid_two_4x4", "ring_5x5", "holes_6x6", "corridors_7x7"]
     },
 
     // Every game, unless a condition or the link changes it.
     game: {
       maze: "grid_4x4",           // set by the player's choice on the first page
-      steps: 120,
+      steps: 120,                 // or "environment": the steps the maze's environment file gives
       first_step_stay: false,     // true: step 1 can only be a stay, as in the model's runs
-      start_rooms: "random",      // random, or a room such as "s00"
-      start_area: 4,              // random start rooms only in rows and columns 0 to 3, where the model's agents can start
-      food_rooms: {               // room: "random" (never the start room, never 2 in 1 room) or a room such as "s33"
-        patch: {room: "random", worth: 8.0, start_level: 1.0},
-        small: {room: "random", worth: 1.0, start_level: 1.0}
+      sound: true,                // music and sounds when the session starts; the player
+                                  // switches them with M or the button in the corner
+      start_rooms: "random",      // random, a room such as "s00", or "environment": 1 of the start rooms
+                                  // of the maze's environment file
+      start_area: null,           // null: random start rooms anywhere; 4: only in rows and columns 0 to 3
+      food_rooms: {               // room: "random" (never the start room, never 2 in 1 room), a room such
+                                  // as "s33", or "environment": the room the maze's environment file gives;
+                                  // food: what the room shows, cheese or bread
+        patch: {room: "random", worth: 8.0, start_level: 1.0, food: "cheese"},
+        small: {room: "random", worth: 1.0, start_level: 1.0, food: "bread"}
       },
       food: {
         rule: "linear",           // linear or exponential
@@ -81,17 +88,19 @@
       title: "Food Rooms",
       intro: "Walk through the rooms and eat to keep your energy up. A food room runs empty while you " +
         "eat from it and fills up again while you are away.",
-      keys_2d: "<kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&rarr;</kbd> <kbd>&darr;</kbd> move &middot; <kbd>Space</kbd> stay",
-      keys_3d: "<kbd>&uarr;</kbd> walk &middot; <kbd>&larr;</kbd> <kbd>&rarr;</kbd> turn &middot; " +
-        "<kbd>&darr;</kbd> turn around &middot; <kbd>Space</kbd> stay",
+      keys_2d: "<kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&rarr;</kbd> <kbd>&darr;</kbd> move, hold to keep going &middot; " +
+        "<kbd>Space</kbd> stay &middot; <kbd>M</kbd> sound",
+      keys_3d: "<kbd>&uarr;</kbd> walk, hold to keep going &middot; <kbd>&larr;</kbd> <kbd>&rarr;</kbd> turn &middot; " +
+        "<kbd>&darr;</kbd> turn around &middot; <kbd>Space</kbd> stay &middot; <kbd>M</kbd> sound",
       menu_keys: "<kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd> choose &middot; " +
-        "<kbd>Enter</kbd> play",
+        "<kbd>Enter</kbd> play &middot; <kbd>M</kbd> sound",
       view_2d: "From above",
       view_3d: "From inside",
       finished: "The game is over",
       starved: "You ran out of energy",
       eaten: "food eaten",
       again: "Press <kbd>Enter</kbd> to go back to the menu.",
+      route: "Your way through the maze",
       saving: "Saving your game...",
       still_saving: "Still saving your game. Please keep this page open.",
       saved: "Your game is saved.",

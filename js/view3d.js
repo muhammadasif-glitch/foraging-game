@@ -1,32 +1,33 @@
 /* The 3D view: the maze seen from inside, drawn by ray casting on a canvas
  * (no library, so the game also works offline and from a file).
  *
- * Walls are brick, in the colour of the room they face; corridors are grey.
- * Rooms the player does not know yet, and their walls, are dark. The food of
- * the room the player is in lies on the floor, 1 apple per tenth of its
- * level; a food room the player knows but is not in shows a sign with its
- * worth. */
+ * Walls are plaster in the colour of the room they face, with a framed
+ * painting on each side of the room (the same painting for the same colour,
+ * js/art.js); corridors are grey. Rooms the player does not know yet, and
+ * their walls, are dark; rooms come into light as the player learns of them
+ * (scene.light, 0 to 1 per tile). The food of the room the player is in
+ * stands in its middle (js/food.js); a food room the player knows but is not
+ * in shows a sign with its food and worth. */
 (function (root) {
   "use strict";
   var FG = root.FG = root.FG || {};
-  var Wd = FG.world;
+  var Wd = FG.world, F = FG.food, A = FG.art;
 
   var SKY_TOP = [92, 146, 205], SKY_LOW = [196, 210, 224];
   var FOG = [196, 210, 224];
   var FOG_FAR = 15;
   var DARK_WALL = [38, 44, 54], DARK_FLOOR = [24, 28, 35];
-
-  function pixels(canvas) {
-    var d = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
-    return {w: canvas.width, h: canvas.height, data: d.data};
-  }
+  var CORRIDOR_WALL = [150, 152, 158];
+  // the painting on its 2 wall tiles: across (u) and down (v, 0 at the top)
+  var PIC_U0 = 0.31, PIC_U1 = 0.69, PIC_V0 = 0.14, PIC_V1 = 0.74;
+  var FOOD_SIZE = {cheese: 0.5, bread: 0.4};
 
   function View(canvas) {
     this.canvas = canvas;
     this.buf = document.createElement("canvas");
-    this.apple = pixels(Wd.appleCanvas());
-    this.signs = {};
     this.tex = Wd.textures();
+    this.places = null;
+    this.placesOf = null;
   }
 
   View.prototype.resize = function (w, h) {
@@ -45,13 +46,6 @@
     this.zbuf = new Float32Array(this.rw);
   };
 
-  View.prototype.sign = function (text) {
-    if (!this.signs[text]) {
-      this.signs[text] = pixels(Wd.signCanvas(text));
-    }
-    return this.signs[text];
-  };
-
   function fogMix(c, d, out) {
     var f = Math.max(0, Math.min(1, 1 - d / FOG_FAR));
     f = f * f * (3 - 2 * f);
@@ -60,42 +54,56 @@
     out[2] = FOG[2] + (c[2] - FOG[2]) * f;
   }
 
-  /* The sprites of a scene: apples in the room the player is in, signs on
-   * the other food rooms it knows. */
+  function lightOf(scene, at) {
+    return scene.light ? scene.light[at] : (scene.lit[at] ? 1 : 0);
+  }
+
+  /* The sprites of a scene: the food of the room the player is in, crumbs,
+   * and signs on the other food rooms it knows. */
   View.prototype.sprites = function (scene) {
-    var out = [], self = this, M = scene.maze;
+    var out = [], M = scene.maze;
     (scene.food || []).forEach(function (f) {
       var c = Wd.centre(M, f.room);
       if (scene.here && Wd.key(scene.here.room) === Wd.key(f.room)) {
-        var tenths = Math.round(scene.here.level * 10 * 1e6) / 1e6;
-        var whole = Math.floor(tenths), part = tenths - whole;
-        for (var k = 0; k < 10; k++) {
-          var size = k < whole ? 0.16 : (k === whole && part > 1e-6 ? 0.16 * Math.max(0.3, part) : 0);
-          if (size > 0) {
-            var a = (k + 0.5) / 10 * 2 * Math.PI;
-            out.push({x: c[0] + Math.cos(a) * 1.6, y: c[1] + Math.sin(a) * 1.6, pic: self.apple, size: size});
-          }
-        }
+        out.push({x: c[0], y: c[1], pic: F.sideView(f.kind, scene.here.level), size: FOOD_SIZE[f.kind] || 0.45,
+          fade: scene.here.fade === undefined ? 1 : scene.here.fade});
       } else {
-        out.push({x: c[0], y: c[1], pic: self.sign("food " + f.worth), size: 0.18, lift: 0.62});
+        var at = Math.floor(c[1]) * M.W + Math.floor(c[0]);
+        var L = lightOf(scene, at);
+        if (L > 0.5) {
+          out.push({x: c[0], y: c[1], pic: F.sign(f.kind, f.worth), size: 0.18, lift: 0.62});
+        }
       }
+    });
+    (scene.crumbs || []).forEach(function (cr) {
+      out.push({x: cr.x, y: cr.y, pic: F.crumb(cr.kind, cr.n), size: 0.022, lift: cr.z});
     });
     return out;
   };
 
-  /* scene: {maze, x, y, angle (0 east, pi/2 south), lit, food, here} */
+  View.prototype.ensurePlaces = function (M) {
+    if (this.placesOf !== M) {
+      this.places = Wd.paintingPlaces(M);
+      this.placesOf = M;
+    }
+    return this.places;
+  };
+
+  /* scene: {maze, x, y, angle (0 east, pi/2 south), lit or light, food,
+   * here, crumbs, bob} */
   View.prototype.draw = function (scene) {
-    var M = scene.maze, lit = scene.lit, w = this.rw, h = this.rh;
+    var M = scene.maze, w = this.rw, h = this.rh;
     var data = this.image.data, z = this.zbuf, T = this.tex;
+    var places = this.ensurePlaces(M);
     var dirX = Math.cos(scene.angle), dirY = Math.sin(scene.angle);
     var fov = Math.tan(33 * Math.PI / 180) * (w / h) / (4 / 3);
     var planeX = -dirY * fov, planeY = dirX * fov;
-    var px = scene.x, py = scene.y, half = h / 2;
-    var col = [0, 0, 0], tmp = [0, 0, 0];
-    var x, y, o;
+    var px = scene.x, py = scene.y, half = h / 2 + (scene.bob || 0) * h;
+    var col = [0, 0, 0], tmp = [0, 0, 0], lit3 = [0, 0, 0];
+    var x, y, o, L;
 
-    for (y = 0; y < half; y++) {
-      var t = Math.pow(y / half, 1.6);
+    for (y = 0; y < Math.min(h, Math.ceil(half)); y++) {
+      var t = Math.pow(Math.max(0, y / half), 1.6);
       var cr = SKY_TOP[0] + (SKY_LOW[0] - SKY_TOP[0]) * t;
       var cg = SKY_TOP[1] + (SKY_LOW[1] - SKY_TOP[1]) * t;
       var cb = SKY_TOP[2] + (SKY_LOW[2] - SKY_TOP[2]) * t;
@@ -106,7 +114,7 @@
     }
 
     var rx0 = dirX - planeX, ry0 = dirY - planeY, rx1 = dirX + planeX, ry1 = dirY + planeY;
-    for (y = Math.ceil(half); y < h; y++) {
+    for (y = Math.max(0, Math.ceil(half)); y < h; y++) {
       var dist = (0.5 * h) / (y - half + 0.5);
       var sx = dist * (rx1 - rx0) / w, sy = dist * (ry1 - ry0) / w;
       var fx = px + dist * rx0, fy = py + dist * ry0;
@@ -116,11 +124,17 @@
         tmp[0] = DARK_FLOOR[0] * tx; tmp[1] = DARK_FLOOR[1] * tx; tmp[2] = DARK_FLOOR[2] * tx;
         if (cx >= 0 && cy >= 0 && cx < M.W && cy < M.H) {
           var at = cy * M.W + cx, kd = M.kind[at];
-          if (lit[at] && kd === Wd.FLOOR) {
-            var rgb = M.list[M.roomAt[at]].rgb;
-            tmp[0] = (rgb[0] * 0.42 + 40) * tx; tmp[1] = (rgb[1] * 0.42 + 40) * tx; tmp[2] = (rgb[2] * 0.42 + 40) * tx;
-          } else if (lit[at] && kd !== Wd.WALL) {
-            tmp[0] = 118 * tx; tmp[1] = 120 * tx; tmp[2] = 126 * tx;
+          L = kd === Wd.WALL ? 0 : lightOf(scene, at);
+          if (L > 0) {
+            if (kd === Wd.FLOOR) {
+              var rgb = M.list[M.roomAt[at]].rgb;
+              lit3[0] = rgb[0] * 0.42 + 40; lit3[1] = rgb[1] * 0.42 + 40; lit3[2] = rgb[2] * 0.42 + 40;
+            } else {
+              lit3[0] = 118; lit3[1] = 120; lit3[2] = 126;
+            }
+            tmp[0] = (DARK_FLOOR[0] + (lit3[0] - DARK_FLOOR[0]) * L) * tx;
+            tmp[1] = (DARK_FLOOR[1] + (lit3[1] - DARK_FLOOR[1]) * L) * tx;
+            tmp[2] = (DARK_FLOOR[2] + (lit3[2] - DARK_FLOOR[2]) * L) * tx;
           }
         }
         fogMix(tmp, dist, col);
@@ -129,6 +143,7 @@
       }
     }
 
+    var base = [0, 0, 0];
     for (x = 0; x < w; x++) {
       var camX = 2 * x / w - 1;
       var rdx = dirX + planeX * camX, rdy = dirY + planeY * camX;
@@ -152,25 +167,61 @@
       z[x] = perp;
       // the wall takes the colour of the tile in front of it
       var fx2 = side === 0 ? mx - stepX : mx, fy2 = side === 1 ? my - stepY : my;
-      var base = DARK_WALL, front = fy2 * M.W + fx2;
-      if (fx2 >= 0 && fy2 >= 0 && fx2 < M.W && fy2 < M.H && lit[front]) {
+      var front = fy2 * M.W + fx2, inside = fx2 >= 0 && fy2 >= 0 && fx2 < M.W && fy2 < M.H;
+      L = inside ? lightOf(scene, front) : 0;
+      var place = null;
+      base[0] = DARK_WALL[0]; base[1] = DARK_WALL[1]; base[2] = DARK_WALL[2];
+      if (L > 0) {
+        var lw;
         if (M.roomAt[front] >= 0) {
           var rc = M.list[M.roomAt[front]].rgb;
-          base = [rc[0] * 0.72 + 50, rc[1] * 0.72 + 50, rc[2] * 0.72 + 50];
+          lw = [rc[0] * 0.62 + 78, rc[1] * 0.62 + 78, rc[2] * 0.62 + 78];
+          var face = side === 0 ? (stepX > 0 ? 0 : 2) : (stepY > 0 ? 1 : 3);
+          var k = places.at[front * 4 + face];
+          if (k >= 0) {
+            place = places.list[k];
+          }
         } else {
-          base = [120, 122, 128];
+          lw = CORRIDOR_WALL;
+        }
+        base[0] = DARK_WALL[0] + (lw[0] - DARK_WALL[0]) * L;
+        base[1] = DARK_WALL[1] + (lw[1] - DARK_WALL[1]) * L;
+        base[2] = DARK_WALL[2] + (lw[2] - DARK_WALL[2]) * L;
+      }
+      var shade = side === 1 ? 0.8 : 1;
+      var along = side === 0 ? py + perp * rdy : px + perp * rdx;
+      var wallX = along - Math.floor(along);
+      var u = Math.floor(wallX * 64) & 63;
+      var pic = null, pu = 0;
+      if (place) {
+        var su = (along - place.start) / 2;
+        if (place.flip) {
+          su = 1 - su;
+        }
+        if (su >= PIC_U0 && su < PIC_U1) {
+          pic = A.painting(place.colour);
+          pu = Math.min(pic.w - 1, Math.floor((su - PIC_U0) / (PIC_U1 - PIC_U0) * pic.w));
         }
       }
-      var shade = side === 1 ? 0.78 : 1;
-      var wallX = side === 0 ? py + perp * rdy : px + perp * rdx;
-      wallX -= Math.floor(wallX);
-      var u = Math.floor(wallX * 64) & 63;
       var lineH = h / perp;
-      var top = Math.max(0, Math.floor(half - lineH / 2)), bot = Math.min(h, Math.ceil(half + lineH / 2));
+      var wallTop = half - lineH / 2;
+      var top = Math.max(0, Math.floor(wallTop)), bot = Math.min(h, Math.ceil(half + lineH / 2));
       for (y = top; y < bot; y++) {
-        var v = (y - (half - lineH / 2)) / lineH;
-        var s = shade * T.brick[(Math.floor(v * 64) & 63) * 64 + u] * (v > 0.92 ? 0.55 : 1) * (0.9 + 0.1 * (1 - v));
-        tmp[0] = base[0] * s; tmp[1] = base[1] * s; tmp[2] = base[2] * s;
+        var v = (y - wallTop) / lineH;
+        if (pic && v >= PIC_V0 && v < PIC_V1) {
+          var pv = Math.min(pic.h - 1, Math.floor((v - PIC_V0) / (PIC_V1 - PIC_V0) * pic.h));
+          var q = (pv * pic.w + pu) * 4;
+          var ps = shade * (0.85 + 0.15 * L);
+          tmp[0] = (DARK_WALL[0] + (pic.data[q] - DARK_WALL[0]) * L) * ps;
+          tmp[1] = (DARK_WALL[1] + (pic.data[q + 1] - DARK_WALL[1]) * L) * ps;
+          tmp[2] = (DARK_WALL[2] + (pic.data[q + 2] - DARK_WALL[2]) * L) * ps;
+        } else {
+          var s = shade * T.plaster[(Math.floor(v * 64) & 63) * 64 + u] * (0.92 + 0.08 * (1 - v));
+          if (pic && v >= PIC_V1 && v < PIC_V1 + 0.03) {
+            s *= 0.82;                         // the painting's shadow on the wall
+          }
+          tmp[0] = base[0] * s; tmp[1] = base[1] * s; tmp[2] = base[2] * s;
+        }
         fogMix(tmp, perp, col);
         o = (y * w + x) * 4;
         data[o] = col[0]; data[o + 1] = col[1]; data[o + 2] = col[2];
@@ -184,7 +235,10 @@
     }).filter(function (e) { return e.ty > 0.15; });
     list.sort(function (a, b) { return b.ty - a.ty; });
     list.forEach(function (e) {
-      var pic = e.sp.pic, ty = e.ty;
+      var pic = e.sp.pic, ty = e.ty, fade = e.sp.fade === undefined ? 1 : e.sp.fade;
+      if (fade <= 0) {
+        return;
+      }
       var screenX = Math.floor((w / 2) * (1 + e.tx / ty));
       var hgt = Math.abs(h / ty) * e.sp.size;
       var wid = hgt * pic.w / pic.h;
@@ -203,7 +257,13 @@
           tmp[0] = pic.data[q]; tmp[1] = pic.data[q + 1]; tmp[2] = pic.data[q + 2];
           fogMix(tmp, ty, col);
           var oo = (sy2 * w + sx2) * 4;
-          data[oo] = col[0]; data[oo + 1] = col[1]; data[oo + 2] = col[2];
+          if (fade < 1) {
+            data[oo] += (col[0] - data[oo]) * fade;
+            data[oo + 1] += (col[1] - data[oo + 1]) * fade;
+            data[oo + 2] += (col[2] - data[oo + 2]) * fade;
+          } else {
+            data[oo] = col[0]; data[oo + 1] = col[1]; data[oo + 2] = col[2];
+          }
         }
       }
     });

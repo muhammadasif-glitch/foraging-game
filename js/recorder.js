@@ -5,7 +5,9 @@
  * All times are milliseconds since the session started (performance.now()),
  * on the clock of the browser's events. Keys typed into a text field are
  * recorded as "char", not as the letter: the text itself is recorded once,
- * when it is entered. */
+ * when it is entered. A key held down makes the browser send the press again
+ * and again; those repeats are counted on the press (repeats) rather than
+ * recorded 1 by 1. */
 (function (root) {
   "use strict";
   var FG = root.FG = root.FG || {};
@@ -16,6 +18,7 @@
   var attention = [];
   var handler = null;
   var stopped = false;
+  var pressed = {};          // key code -> its press, until it is let go
 
   function now() {
     return round3(performance.now() - t0);
@@ -49,6 +52,14 @@
 
   function onKey(e) {
     var text = isText(e);
+    var code = e.code || e.key;
+    if (e.type === "keydown" && e.repeat && pressed[code]) {
+      pressed[code].repeats = (pressed[code].repeats || 0) + 1;
+      if (!text && (GAME_KEYS.indexOf(e.key) >= 0 || /^[0-9]$/.test(e.key)) && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+      }
+      return;
+    }
     var entry = {
       t: at(e.timeStamp), type: e.type === "keydown" ? "down" : "up",
       key: text && e.key.length === 1 ? "char" : e.key,
@@ -60,6 +71,11 @@
         e.metaKey ? "Meta" : ""].filter(Boolean).join("+");
     }
     keys.push(entry);
+    if (e.type === "keydown") {
+      pressed[code] = entry;
+    } else {
+      delete pressed[code];
+    }
     if (!text && (GAME_KEYS.indexOf(e.key) >= 0 || /^[0-9]$/.test(e.key)) && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();            // no scrolling with the arrows or Space, Tab keeps the focus here
     }

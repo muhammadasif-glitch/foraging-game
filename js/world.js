@@ -15,8 +15,9 @@
 
   var ROOM = 4, CORR = 1;
 
-  // REPO_PALETTE of forage/base/renderer.py: the colour of room colour i
-  var PALETTE = [
+  // REPO_PALETTE of forage/base/renderer.py: the colour of room colour i;
+  // js/mazes.js holds the whole list (FG.FILM_PALETTE), these are its first 36
+  var PALETTE = FG.FILM_PALETTE || [
     [255, 0, 0], [0, 255, 0], [0, 0, 255], [112, 39, 195], [255, 255, 0], [100, 100, 100],
     [115, 60, 60], [255, 0, 255], [80, 145, 80], [201, 132, 226], [75, 182, 220], [255, 153, 51],
     [255, 204, 229], [153, 153, 0], [229, 255, 204], [204, 204, 255], [0, 153, 153],
@@ -132,30 +133,43 @@
     return [M.cs[room[1]] + ROOM / 2, M.rs[room[0]] + ROOM / 2];
   }
 
-  /* The way from the middle of a room to the middle of its neighbour in
-   * direction d ([row, col]): along the room to the door, through the
-   * corridor, and on to the middle of the next room. Points as [x, y]. */
-  function pathTo(M, room, d) {
+  /* In the 3D view the player stops in a food room before its food, which
+   * stands in the middle: STAND tiles back from the middle, on the way in. */
+  var STAND = 1.25;
+
+  function standPoint(M, room, d) {
+    var c = centre(M, room);
+    return [c[0] - d[1] * STAND, c[1] - d[0] * STAND];
+  }
+
+  /* The way from point p in a room to point q in its neighbour in
+   * direction d ([row, col]): across the room to the door, through the
+   * corridor, and on to q. Points as [x, y]; the 6th (index 5) is the door
+   * of the neighbour, half a tile before its floor. */
+  function walkPath(M, p, room, d, q) {
     var i = room[0], j = room[1];
     var t = doorAndCorridor(i, j, i + d[0], j + d[1], M.rs, M.cs);
-    var a = centre(M, room), b = centre(M, [i + d[0], j + d[1]]);
     function mid(tile) {
       return [tile[1] + 0.5, tile[0] + 0.5];
     }
     var first = mid(t[0]), last = mid(t[2]);
-    var pts = [a];
-    if (d[1] !== 0) {
-      pts.push([a[0], first[1]], [first[0] - d[1] * 0.9, first[1]]);
+    // across to the line of the door, then to it; a player already nearer
+    // the door than 0.9 tiles goes straight on
+    var line = d[1] !== 0 ? [p[0], first[1]] : [first[0], p[1]];
+    var near = d[1] !== 0 ? [first[0] - d[1] * 0.9, first[1]] : [first[0], first[1] - d[0] * 0.9];
+    var pts = [p, line];
+    if ((near[0] - line[0]) * d[1] + (near[1] - line[1]) * d[0] > 0) {
+      pts.push(near);
     } else {
-      pts.push([first[0], a[1]], [first[0], first[1] - d[0] * 0.9]);
+      pts.push(line);
     }
     pts.push(first, mid(t[1]), last);
     if (d[1] !== 0) {
-      pts.push([last[0] + d[1] * 0.9, last[1]], [b[0], last[1]]);
+      pts.push([last[0] + d[1] * 0.9, last[1]], [q[0], last[1]]);
     } else {
-      pts.push([last[0], last[1] + d[0] * 0.9], [last[0], b[1]]);
+      pts.push([last[0], last[1] + d[0] * 0.9], [last[0], q[1]]);
     }
-    pts.push(b);
+    pts.push(q);
     return pts;
   }
 
@@ -256,72 +270,75 @@
     return out;
   }
 
-  /* The food: a red apple, as in the films' food icon. */
-  function drawApple(g, cx, cy, r) {
-    g.fillStyle = "rgb(214,58,43)";
-    g.strokeStyle = "rgb(70,16,12)";
-    g.lineWidth = Math.max(1, r * 0.1);
-    g.beginPath();
-    g.ellipse(cx, cy + r * 0.05, r, r * 0.95, 0, 0, 2 * Math.PI);
-    g.fill();
-    g.stroke();
-    g.fillStyle = "rgb(246,170,160)";
-    g.beginPath();
-    g.ellipse(cx - r * 0.35, cy - r * 0.3, r * 0.25, r * 0.25, 0, 0, 2 * Math.PI);
-    g.fill();
-    g.strokeStyle = "rgb(92,58,26)";
-    g.lineWidth = Math.max(1, r * 0.2);
-    g.beginPath();
-    g.moveTo(cx, cy - r * 0.9);
-    g.lineTo(cx + r * 0.15, cy - r * 1.5);
-    g.stroke();
-    g.fillStyle = "rgb(54,150,60)";
-    g.beginPath();
-    g.ellipse(cx + r * 0.55, cy - r * 1.45, r * 0.4, r * 0.22, -0.4, 0, 2 * Math.PI);
-    g.fill();
+  /* Light and shade of a plastered wall, 64 x 64, with a skirting board at
+   * the bottom and a moulding at the top. */
+  function plasterTexture() {
+    var out = new Float32Array(64 * 64), rnd = noise(23);
+    var coarse = [];
+    for (var k = 0; k < 64; k++) {
+      coarse.push(rnd());
+    }
+    for (var y = 0; y < 64; y++) {
+      for (var x = 0; x < 64; x++) {
+        var a = coarse[(Math.floor(y / 8) * 8 + Math.floor(x / 8)) % 64];
+        var b = coarse[(Math.floor(y / 8) * 8 + Math.floor(x / 8) + 1) % 64];
+        var f = (x % 8) / 8;
+        var v = 0.9 + 0.06 * (a + (b - a) * f) + 0.035 * rnd();
+        if (y >= 58) {
+          v = y === 58 ? 0.55 : 0.7 + 0.03 * rnd();
+        } else if (y <= 2) {
+          v = y === 2 ? 0.78 : 1.02;
+        }
+        out[y * 64 + x] = v;
+      }
+    }
+    return out;
   }
 
-  function appleCanvas() {
-    var c = document.createElement("canvas");
-    c.width = c.height = 64;
-    drawApple(c.getContext("2d"), 32, 40, 20);
-    return c;
-  }
-
-  /* A sign with the worth of a food room: "food 8". */
-  function signCanvas(text) {
-    var c = document.createElement("canvas");
-    var g = c.getContext("2d");
-    var font = "bold 40px ui-sans-serif, system-ui, sans-serif";
-    g.font = font;
-    var w = Math.ceil(g.measureText(text).width) + 36;
-    c.width = w;
-    c.height = 64;
-    g = c.getContext("2d");
-    g.fillStyle = "#f4f6fa";
-    g.strokeStyle = "#1d2633";
-    g.lineWidth = 4;
-    g.fillRect(2, 2, w - 4, 60);
-    g.strokeRect(2, 2, w - 4, 60);
-    g.fillStyle = "#121820";
-    g.font = font;
-    g.textBaseline = "middle";
-    g.fillText(text, 18, 34);
-    return c;
+  /* Where the paintings hang: on every side of every room, 1 painting
+   * across 2 wall tiles, in the middle of the wall or beside its door.
+   * Returns {at: Int16Array over (tile * 4 + side) giving the place's index
+   * or -1, list: [{colour, start, flip}]}: the tile in front of the wall,
+   * the side the wall is on from it (0 east, 1 south, 2 west, 3 north), the
+   * room colour, where the 2 tiles start along the wall, and whether the
+   * picture runs against the wall's coordinate when seen from the room. */
+  function paintingPlaces(M) {
+    var at = new Int16Array(M.W * M.H * 4).fill(-1), list = [];
+    M.list.forEach(function (rm) {
+      var colour = M.rooms[rm.i][rm.j];
+      [[0, 1, 0], [1, 0, 1], [0, -1, 2], [-1, 0, 3]].forEach(function (d) {
+        var door = -1;
+        if (isRoom(M, rm.i + d[0], rm.j + d[1])) {
+          var t = doorAndCorridor(rm.i, rm.j, rm.i + d[0], rm.j + d[1], M.rs, M.cs);
+          door = d[1] !== 0 ? t[0][0] - rm.r0 : t[0][1] - rm.c0;
+        }
+        var from = door === 1 ? 2 : door === 2 ? 0 : 1;
+        var side = d[2];
+        var k = list.length;
+        // east and north walls run with the coordinate, seen from inside
+        list.push({colour: colour, start: (d[1] !== 0 ? rm.r0 : rm.c0) + from, flip: side === 1 || side === 2});
+        for (var n = from; n < from + 2; n++) {
+          var tile = d[1] !== 0 ? (rm.r0 + n) * M.W + (d[1] > 0 ? rm.c0 + ROOM - 1 : rm.c0) :
+            (d[0] > 0 ? rm.r0 + ROOM - 1 : rm.r0) * M.W + rm.c0 + n;
+          at[tile * 4 + side] = k;
+        }
+      });
+    });
+    return {at: at, list: list};
   }
 
   var textures = null;
   function tex() {
     if (!textures) {
-      textures = {brick: brickTexture(), floor: floorTexture()};
+      textures = {brick: brickTexture(), floor: floorTexture(), plaster: plasterTexture()};
     }
     return textures;
   }
 
   FG.world = {
     ROOM: ROOM, PALETTE: PALETTE, DIRS: DIRS, WALL: WALL, FLOOR: FLOOR, DOOR: DOOR, CORRIDOR: CORRIDOR,
-    key: key, build: build, isRoom: isRoom, centre: centre, pathTo: pathTo, along: along,
-    pathLength: pathLength, lit: lit, doorAndCorridor: doorAndCorridor, textures: tex,
-    drawApple: drawApple, appleCanvas: appleCanvas, signCanvas: signCanvas
+    key: key, build: build, isRoom: isRoom, centre: centre, along: along,
+    STAND: STAND, standPoint: standPoint, walkPath: walkPath, paintingPlaces: paintingPlaces,
+    pathLength: pathLength, lit: lit, doorAndCorridor: doorAndCorridor, textures: tex
   };
 })(typeof window !== "undefined" ? window : globalThis);

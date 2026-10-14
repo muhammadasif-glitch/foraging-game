@@ -187,8 +187,19 @@
     return a[0] === b[0] && a[1] === b[1];
   }
 
+  /* "s33" for row 3, column 3; a room in row or column 10 or more has a _
+   * between them, "s10_3", as in the model (forage.lab.config.room_name). */
   function roomName(room) {
-    return "s" + room[0] + room[1];
+    if (room[0] < 10 && room[1] < 10) {
+      return "s" + room[0] + room[1];
+    }
+    return "s" + room[0] + "_" + room[1];
+  }
+
+  /* The room a name stands for, [row, column], or null: "s33", "s10_3". */
+  function roomFromName(text) {
+    var m = /^[sS](\d)(\d)$/.exec(String(text)) || /^[sS](\d+)_(\d+)$/.exec(String(text));
+    return m ? [Number(m[1]), Number(m[2])] : null;
   }
 
   function Maze(name, grid, colours) {
@@ -342,6 +353,7 @@
     binOf: binOf,
     sameRoom: sameRoom,
     roomName: roomName,
+    roomFromName: roomFromName,
     Maze: Maze,
     maze: maze,
     World: World,

@@ -1,10 +1,10 @@
 /* The 2D view: the same maze as the 3D view, seen from above. The same
- * colours, brick walls, apples and food signs; rooms the player does not
- * know yet are dark. */
+ * colours, food and food signs; rooms the player does not know yet are dark,
+ * and come into light as the player learns of them. */
 (function (root) {
   "use strict";
   var FG = root.FG = root.FG || {};
-  var Wd = FG.world;
+  var Wd = FG.world, F = FG.food;
 
   var BG = "#0c1016";
 
@@ -44,7 +44,7 @@
     return this.fitted;
   };
 
-  /* A wall tile seen from above: grey bricks. */
+  /* A wall tile seen from above: grey plaster. */
   View.prototype.brickTile = function (T) {
     if (this.brickSize === T) {
       return this.brick;
@@ -53,12 +53,13 @@
     var n = Math.max(8, Math.round(T * (root.devicePixelRatio || 1)));
     c.width = c.height = n;
     var g = c.getContext("2d");
-    var img = g.createImageData(n, n), B = Wd.textures().brick;
+    var img = g.createImageData(n, n), B = Wd.textures().plaster;
     for (var y = 0; y < n; y++) {
       for (var x = 0; x < n; x++) {
-        var s = B[(Math.floor(y / n * 64) & 63) * 64 + (Math.floor(x / n * 64) & 63)];
+        // the plain part of the plaster, without its skirting board and moulding
+        var s = B[(4 + Math.floor(y / n * 52)) * 64 + (Math.floor(x / n * 64) & 63)];
         var o = (y * n + x) * 4;
-        img.data[o] = 96 * s; img.data[o + 1] = 102 * s; img.data[o + 2] = 114 * s; img.data[o + 3] = 255;
+        img.data[o] = 104 * s; img.data[o + 1] = 110 * s; img.data[o + 2] = 122 * s; img.data[o + 3] = 255;
       }
     }
     g.putImageData(img, 0, 0);
@@ -80,10 +81,14 @@
     g.fillText(text, cx - w / 2, top + 4);
   }
 
-  /* scene: {maze, x, y, facing (0 east, 1 south, 2 west, 3 north), lit,
-   * food, here} */
+  function lightOf(scene, at) {
+    return scene.light ? scene.light[at] : (scene.lit[at] ? 1 : 0);
+  }
+
+  /* scene: {maze, x, y, facing (0 east, 1 south, 2 west, 3 north), lit or
+   * light, food, here, crumbs} */
   View.prototype.draw = function (scene) {
-    var M = scene.maze, lit = scene.lit;
+    var M = scene.maze;
     var f = this.fit(M), T = f.T;
     var g = this.canvas.getContext("2d");
     g.setTransform(f.dpr, 0, 0, f.dpr, 0, 0);
@@ -95,63 +100,63 @@
       for (var x = 0; x < M.W; x++) {
         var at = y * M.W + x, kd = M.kind[at];
         if (kd === Wd.WALL) {
-          var near = false;
-          for (var dy = -1; dy <= 1 && !near; dy++) {
+          var near = 0;
+          for (var dy = -1; dy <= 1; dy++) {
             for (var dx = -1; dx <= 1; dx++) {
               var nx = x + dx, ny = y + dy;
-              if (nx >= 0 && ny >= 0 && nx < M.W && ny < M.H && lit[ny * M.W + nx] && M.kind[ny * M.W + nx] !== Wd.WALL) {
-                near = true;
-                break;
+              if (nx >= 0 && ny >= 0 && nx < M.W && ny < M.H && M.kind[ny * M.W + nx] !== Wd.WALL) {
+                near = Math.max(near, lightOf(scene, ny * M.W + nx));
               }
             }
           }
-          if (near) {
+          if (near > 0) {
+            g.globalAlpha = near;
             g.drawImage(brick, x * T, y * T, T, T);
+            g.globalAlpha = 1;
           }
           continue;
         }
-        if (!lit[at]) {
+        var L = lightOf(scene, at);
+        if (L <= 0) {
           continue;                 // not known: dark, like the background
         }
         var c = kd === Wd.FLOOR ? M.list[M.roomAt[at]].rgb : null;
+        g.globalAlpha = L;
         g.fillStyle = c ? rgb([c[0] * 0.42 + 40, c[1] * 0.42 + 40, c[2] * 0.42 + 40], 1) : "rgb(118,120,126)";
         g.fillRect(x * T, y * T, T, T);
         g.fillStyle = "rgba(0,0,0,0.22)";
         g.fillRect(x * T, y * T, T, line);
         g.fillRect(x * T, y * T, line, T);
+        g.globalAlpha = 1;
       }
     }
 
-    // food: the worth on every food room the player knows; in the room it is
-    // in, 10 places filled to the level (1 apple = 0.1), as in the films
+    // food: the food and its worth on every food room the player knows; in
+    // the room it is in, the food itself, its 10 pieces showing the level
     var size = Math.max(10, Math.round(T * 0.62));
     (scene.food || []).forEach(function (fd) {
       var rm = M.list[M.index[Wd.key(fd.room)]];
       var x0 = rm.c0 * T, y0 = rm.r0 * T, side = Wd.ROOM * T;
-      label(g, "food " + fd.worth, x0 + side / 2, y0 + T * 0.2, size);
       var here = scene.here && Wd.key(scene.here.room) === Wd.key(fd.room);
-      var top = y0 + T * 0.2 + size + 10, cw = side / 5, ch = (y0 + side - top) / 2;
-      var r = Math.min(cw, ch) * 0.32;
-      if (!here) {
-        Wd.drawApple(g, x0 + side / 2, top + (y0 + side - top) * 0.55, Math.min(side * 0.14, r * 1.6));
+      var L = lightOf(scene, (rm.r0 + 1) * M.W + rm.c0 + 1);
+      if (L <= 0) {
         return;
       }
-      var tenths = Math.round(scene.here.level * 10 * 1e6) / 1e6;
-      var whole = Math.floor(tenths), part = tenths - whole;
-      for (var k = 0; k < 10; k++) {
-        var cx = x0 + cw * (k % 5 + 0.5), cy = top + ch * (Math.floor(k / 5) + 0.6);
-        if (k < whole) {
-          Wd.drawApple(g, cx, cy, r);
-        } else if (k === whole && part > 1e-6) {
-          Wd.drawApple(g, cx, cy, r * Math.max(0.3, part));
-        } else {
-          g.strokeStyle = "rgba(20,24,30,0.55)";
-          g.lineWidth = 1;
-          g.beginPath();
-          g.arc(cx, cy, r * 0.45, 0, 2 * Math.PI);
-          g.stroke();
-        }
+      g.globalAlpha = L;
+      label(g, "food " + fd.worth, x0 + side / 2, y0 + T * 0.2, size);
+      var top = y0 + T * 0.2 + size + 10, room2 = y0 + side - top;
+      if (!here) {
+        F.icon(g, fd.kind, x0 + side / 2, top + room2 * 0.45, Math.min(side * 0.42, room2 * 0.9));
+      } else {
+        g.globalAlpha = L * (scene.here.fade === undefined ? 1 : scene.here.fade);
+        F.topView(g, fd.kind, x0 + side / 2, top + room2 * 0.48, Math.min(side * 0.42, room2 * 0.8), scene.here.level);
       }
+      g.globalAlpha = 1;
+    });
+    (scene.crumbs || []).forEach(function (cr) {
+      g.fillStyle = cr.kind === "bread" ? "#c58a4a" : "#e9b93c";
+      var cs = Math.max(2, T * 0.09);
+      g.fillRect(cr.x * T - cs / 2, (cr.y - cr.z * 0.8) * T - cs / 2, cs, cs);
     });
 
     // the player

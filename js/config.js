@@ -22,6 +22,9 @@
   }
 
   var BAD_KEYS = ["__proto__", "constructor", "prototype"];
+  var FOOD_ROOM_KEYS = ["room", "worth", "start_level", "food"];
+  // the foods the game can draw (js/world.js)
+  var FOODS = ["cheese", "bread"];
 
   function plainKey(key, place) {
     if (BAD_KEYS.indexOf(key) >= 0) {
@@ -46,12 +49,12 @@
           if (!isGroup(room)) {
             throw new SettingsError(place + "." + name + " must be a group: room, worth, start_level");
           }
-          var old = base[key][name] || {room: "random", worth: null, start_level: 1.0};
+          var old = base[key][name] || {room: "random", worth: null, start_level: 1.0, food: null};
           Object.keys(room).forEach(function (k) {
             plainKey(k, place + "." + name + "." + k);
-            if (["room", "worth", "start_level"].indexOf(k) < 0) {
+            if (FOOD_ROOM_KEYS.indexOf(k) < 0) {
               throw new SettingsError("unknown setting '" + place + "." + name + "." + k +
-                "'. Known here: room, worth, start_level");
+                "'. Known here: " + FOOD_ROOM_KEYS.join(", "));
             }
           });
           base[key][name] = Object.assign({}, old, copy(room));
@@ -96,24 +99,34 @@
     return out;
   }
 
-  /* A start room: the model's agents can only start in rows 0 to 3 and
-   * columns 0 to 3 (forage.v3.settings), so the game keeps to them too. */
+  /* A start room: any room of the maze, as for the model's agents. */
   function startRoom(text, maze, place) {
-    var room = roomOf(text, maze, place);
-    if (!(room[0] < 4 && room[1] < 4)) {
-      throw new SettingsError(place + " must be in rows 0 to 3 and columns 0 to 3, where the model's " +
-        "agents can start, got " + text);
-    }
-    return room;
+    return roomOf(text, maze, place);
   }
 
   function roomOf(text, maze, place) {
-    var m = /^[sS](\d)(\d)$/.exec(String(text));
-    var room = m ? [Number(m[1]), Number(m[2])] : null;
+    var room = Array.isArray(text) ? [text[0], text[1]] : R.roomFromName(text);
     if (!room || !maze.isRoom(room)) {
       throw new SettingsError(place + " must be a room of " + maze.name + " such as s00, got " + text);
     }
     return room;
+  }
+
+  /* What an environment file of the model gave its maze (check/export_mazes.py),
+   * or null for the mazes that come with the model. */
+  function environment(name) {
+    return (FG.MAZES[name] && FG.MAZES[name].environment) || null;
+  }
+
+  /* The food a food room shows: its own setting, or cheese for the room
+   * worth the most and bread for the others. */
+  function foodOf(s, name) {
+    var f = s.food_rooms[name];
+    if (f.food) {
+      return f.food;
+    }
+    var top = Math.max.apply(null, Object.keys(s.food_rooms).map(function (n) { return s.food_rooms[n].worth; }));
+    return f.worth >= top ? "cheese" : "bread";
   }
 
   function number(v, place, low, high) {
@@ -159,15 +172,30 @@
     if (!FG.MAZES[s.maze]) {
       throw new SettingsError("maze must be one of " + Object.keys(FG.MAZES).join(", ") + ", got " + s.maze);
     }
-    if (typeof s.steps !== "number" || s.steps < 1 || s.steps !== Math.floor(s.steps)) {
-      throw new SettingsError("steps must be a whole number of at least 1, got " + s.steps);
+    if (s.steps !== "environment" &&
+        (typeof s.steps !== "number" || s.steps < 1 || s.steps !== Math.floor(s.steps))) {
+      throw new SettingsError("steps must be a whole number of at least 1, or environment, got " + s.steps);
     }
     flag(s.first_step_stay, "first_step_stay");
+    flag(s.sound, "sound");
     var maze = R.maze(s.maze);
-    if (s.start_rooms !== "random") {
+    var env = environment(s.maze);
+    if (s.start_rooms === "environment") {
+      if (!env || !env.start_rooms.length) {
+        throw new SettingsError("start_rooms: environment needs a maze whose environment file gives start rooms");
+      }
+    } else if (s.start_rooms !== "random") {
       startRoom(s.start_rooms, maze, "start_rooms");
     }
-    number(s.start_area, "start_area", 1, 4);
+    if (s.start_area !== null) {
+      number(s.start_area, "start_area", 1, 1e6);
+    }
+    if (s.steps === "environment") {
+      if (!env || !env.steps) {
+        throw new SettingsError("steps: environment needs a maze whose environment file gives steps");
+      }
+      s.steps = env.steps;
+    }
     var names = Object.keys(s.food_rooms);
     if (!names.length) {
       throw new SettingsError("food_rooms must name at least 1 food room");
@@ -177,8 +205,16 @@
       if (!/^[a-z][a-z0-9_]*$/.test(n)) {
         throw new SettingsError("food_rooms: the name " + n + " must be small letters, digits and _");
       }
-      if (f.room !== "random") {
+      if (f.room === "environment") {
+        if (!env || !env.food_rooms[n]) {
+          throw new SettingsError("food_rooms." + n + ".room: environment needs a maze whose environment " +
+            "file gives a food room called " + n);
+        }
+      } else if (f.room !== "random") {
         roomOf(f.room, maze, "food_rooms." + n + ".room");
+      }
+      if (f.food !== null && f.food !== undefined) {
+        oneOf(f.food, FOODS, "food_rooms." + n + ".food");
       }
       number(f.worth, "food_rooms." + n + ".worth", 0, 1e6);
       number(f.start_level, "food_rooms." + n + ".start_level", 0, 1);
@@ -239,10 +275,13 @@
     };
     if (fixed.start_room) {
       out.start_room = startRoom(fixed.start_room, maze, "layout.start_room");
+    } else if (s.start_rooms === "environment") {
+      out.start_room = startRoom(rand.pick(environment(s.maze).start_rooms), maze, "start_rooms");
     } else if (s.start_rooms !== "random") {
       out.start_room = startRoom(s.start_rooms, maze, "start_rooms");
     } else {
-      var area = rooms.filter(function (r) { return r[0] < s.start_area && r[1] < s.start_area; });
+      var area = s.start_area === null ? rooms :
+        rooms.filter(function (r) { return r[0] < s.start_area && r[1] < s.start_area; });
       out.start_room = rand.pick(area);
     }
     taken.push(out.start_room);
@@ -253,7 +292,9 @@
       }
     });
     names.forEach(function (n) {
-      var r = given[n] || (s.food_rooms[n].room !== "random" ? s.food_rooms[n].room : null);
+      var spec = s.food_rooms[n].room;
+      var r = given[n] || (spec === "environment" ? environment(s.maze).food_rooms[n].room :
+        spec !== "random" ? spec : null);
       if (r) {
         var room = roomOf(r, maze, "food room " + n);
         Object.keys(out.food_rooms).forEach(function (other) {
@@ -341,6 +382,9 @@
     merge: merge,
     fromLink: fromLink,
     roomOf: roomOf,
+    environment: environment,
+    foodOf: foodOf,
+    FOODS: FOODS,
     gameSettings: gameSettings,
     speeds: speeds,
     layout: layout,

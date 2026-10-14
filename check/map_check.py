@@ -107,6 +107,10 @@ CASES = [
     ("grid_4x4", (2, 1), ((0, 3), (1, 1)), 5, True),
     ("grid_6x6", (1, 2), ((4, 5), (0, 0)), 4, False),
     ("grid_two_4x4", (3, 3), ((1, 6), (2, 1)), 6, False),
+    # environment files of the model, 1 with a start outside rows 0 to 3
+    ("ring_5x5", (2, 0), ((2, 4), (1, 1)), 7, False),
+    ("holes_6x6", (5, 5), ((4, 4), (1, 2)), 8, True),
+    ("corridors_7x7", (6, 6), ((4, 4), (0, 4)), 9, False),
 ]
 
 
