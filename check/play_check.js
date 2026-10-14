@@ -75,7 +75,9 @@ function serve() {
   });
 }
 
-/* DataPipe as the test wants it: mode "ok", "down" or "no condition". */
+/* DataPipe as the test wants it: mode "ok", "down", "no condition",
+ * "metadata" (answers METADATA_ERROR, as with Psych-DS metadata on, and
+ * keeps the file) or "refuse" (refuses every file with INVALID_DATA). */
 function pipe(page, store, mode, condition, log) {
   return page.route("https://pipe.jspsych.org/**", function (route) {
     var req = route.request();
@@ -115,6 +117,10 @@ function pipe(page, store, mode, condition, log) {
     if (log) {
       log.push(body.filename + (valid ? "" : " INVALID"));
     }
+    if (mode.value === "refuse") {
+      return route.fulfill({status: 400, contentType: "application/json",
+        body: JSON.stringify({error: "INVALID_DATA", message: "The data are not valid"})});
+    }
     if (!valid) {
       expect(false, "DataPipe would refuse " + body.filename + " (INVALID_DATA)");
       return route.fulfill({status: 400, contentType: "application/json",
@@ -125,6 +131,10 @@ function pipe(page, store, mode, condition, log) {
         body: JSON.stringify({error: "FILE_EXISTS", message: "exists"})});
     }
     store[body.filename] = data;
+    if (mode.value === "metadata") {
+      return route.fulfill({status: 400, contentType: "application/json",
+        body: JSON.stringify({error: "METADATA_ERROR", message: "Data must be an array of trials"})});
+    }
     return route.fulfill({status: 201, contentType: "application/json", body: JSON.stringify({message: "Success"})});
   });
 }
@@ -512,7 +522,60 @@ function save(label, files) {
   save("closed", ff);
   await f.context.close();
 
-  // 7. opened from a file, nothing sent
+  // 7. Psych-DS metadata on: DataPipe answers METADATA_ERROR but keeps the
+  // file; the game takes it as kept and does not send it again
+  var mlog = [];
+  var m = await session("metadata", "?condition=linear_fast&set.steps=5", [{view: "2d", maze: "grid_4x4"}],
+    {seed: 17, mode: "metadata", log: mlog});
+  await sleep(35000);
+  var mn = gameFiles(m.files);
+  expect(mn.length === 1 && mlog.filter(function (x) { return x === mn[0]; }).length === 1,
+    "metadata: the file sent once (" + JSON.stringify(mlog) + ")");
+  expect(/saved/.test(m.status), "metadata: saved message, got " + m.status);
+  await m.context.close();
+
+  // 8. DataPipe refuses every file: sent once a visit, given up after 3 refusals
+  var rlog = [], rfiles = {}, rmode = {value: "refuse"};
+  var rf = await session("refused", "?condition=linear_fast&set.steps=5", [{view: "2d", maze: "grid_4x4"}],
+    {seed: 18, modeRef: rmode, log: rlog, files: rfiles});
+  await sleep(35000);
+  var once = rlog.length;
+  expect(once === 1, "refused: 1 request on the first visit in 35 s, got " + once + " " + JSON.stringify(rlog));
+  for (var visit = 0; visit < 3; visit++) {
+    await rf.page.goto(base + "?condition=linear_fast");
+    await sleep(1500);
+  }
+  var left = await rf.page.evaluate(function () {
+    var k = Object.keys(localStorage).filter(function (x) { return /:queue$/.test(x); })[0];
+    return k ? Object.keys(JSON.parse(localStorage.getItem(k))).length : 0;
+  });
+  expect(rlog.length === 3 && left === 0, "refused: 3 requests in all, then given up (" + rlog.length + " requests, " + left + " left)");
+  await rf.context.close();
+
+  // 9. a file queued by the first version, without trial_type: sent with it
+  var olog = [], ofiles = {};
+  var octx = await browser.newContext();
+  await octx.addInitScript(function (id) {
+    var key = "foraging-game:" + id + ":/:queue";
+    if (!localStorage.getItem("old-queued")) {
+      var old = {format: "foraging-game", format_version: 1, file: "game", player: "P7", session_id: "0123456789ab",
+        game: {steps: []}};
+      var q = {};
+      q["P7_0123456789ab_1-practice.json"] = {experimentID: id, text: JSON.stringify(old)};
+      localStorage.setItem(key, JSON.stringify(q));
+      localStorage.setItem("old-queued", "1");
+    }
+  }, SETTINGS.datapipe.experiment_id);
+  var op = await octx.newPage();
+  await pipe(op, ofiles, {value: "ok"}, 0, olog);
+  await op.goto(base + "?condition=linear_fast");
+  await sleep(2500);
+  var oldFile = ofiles["P7_0123456789ab_1-practice.json"];
+  expect(oldFile && oldFile.trial_type === "foraging-game" && oldFile.player === "P7",
+    "old queue: the old file arrived with trial_type (" + JSON.stringify(olog) + ")");
+  await octx.close();
+
+  // 10. opened from a file, nothing sent
   var ctx = await browser.newContext();
   var fp = await ctx.newPage();
   var ferr = [];

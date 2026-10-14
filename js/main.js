@@ -20,7 +20,7 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "2.0.0";
+  FG.VERSION = "2.0.1";
   var FORMAT = "foraging-game";
   var FORMAT_VERSION = 2;
   var TRIAL_TYPE = "foraging-game";

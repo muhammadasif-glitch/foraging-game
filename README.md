@@ -121,13 +121,23 @@ The experiment in DataPipe needs **data collection on**. On its page:
   1 the second, and so on. If DataPipe cannot hand one out, the game picks one
   at random and records why (`if_no_condition: "stop"` refuses to start
   instead).
+- **Metadata (Psych-DS):** off. It is made for jsPsych data, a list of
+  trials; with it on, DataPipe answers every file of this game with
+  `METADATA_ERROR` ("Data must be an array of trials"). It still keeps such a
+  file and stores it later without the metadata, so the game counts it as
+  kept, but the dashboard lists it as rejected.
 - **Session limit:** off. DataPipe counts every file it accepts, and a player
   sends 1 file per game.
 - **Base64 data:** off.
 
 Every file is kept in the browser until DataPipe has taken it; one that cannot
-be sent is tried again, then every 30 s while the page is open, and again the
-next time the page is opened in that browser. The game in progress is kept
+be sent (no answer, or a server error) is tried again, then every 30 s while
+the page is open, and again the next time the page is opened in that browser.
+A file DataPipe refuses (any other `400`, such as `INVALID_DATA`,
+`SESSION_LIMIT_REACHED` or data collection turned off) is not sent again
+during that visit, is tried again on the next visit, and is given up after 3
+refusals. Files an older version of the game left in a browser without
+`trial_type` are given it before they are sent. The game in progress is kept
 after every step. If the page is closed during a game, it goes into the
 browser's queue and the browser is asked to send it on the way out, in a short
 form (`.partial-short.json`) when the whole file is longer than the browser

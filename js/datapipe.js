@@ -23,8 +23,16 @@
  *
  * API (https://pipe.jspsych.org/docs/api): POST /api/data/ with
  * {experimentID, filename, data}; 201 stored, 202 queued (also stored),
- * 400 FILE_EXISTS means the file is already there. POST /api/condition/
- * with {experimentID} gives {condition: n}, handing out 0 to n - 1 in turn.
+ * 400 FILE_EXISTS means the file is already there, and 400 METADATA_ERROR
+ * that DataPipe could not make the Psych-DS metadata but keeps the file and
+ * stores it later: all 4 count as kept. Any other 400 is a refusal (for
+ * example INVALID_DATA, or data collection turned off): sending again soon
+ * would not change it, so the file waits for the next visit, and is given up
+ * after 3 refusals, so that a refused file is not sent again and again.
+ * Files queued by an older version of the game without trial_type, which
+ * DataPipe's validation needs, get it before they are sent. POST
+ * /api/condition/ with {experimentID} gives {condition: n}, handing out 0 to
+ * n - 1 in turn.
  */
 (function (root) {
   "use strict";
@@ -33,6 +41,8 @@
   var BASE = "https://pipe.jspsych.org/api/";
   var STALE_MS = 10 * 60 * 1000;
   var KEEPALIVE_BUDGET = 60000;
+  var MAX_REFUSALS = 3;
+  var held = {};               // files refused on this visit: tried again on the next one
   var experimentId = null;
   var sending = true;
   var prefix = "foraging-game";
@@ -194,18 +204,62 @@
     });
   }
 
+  /* Whether DataPipe's answer means the file is kept. */
+  function kept(r) {
+    var code = r.body && r.body.error;
+    return r.status === 201 || r.status === 202 ||
+      (r.status === 400 && (code === "FILE_EXISTS" || code === "METADATA_ERROR"));
+  }
+
+  /* A game file of an older version, queued without trial_type: given it. */
+  function repaired(text) {
+    if (text.indexOf('"trial_type"') >= 0) {
+      return text;
+    }
+    try {
+      var obj = JSON.parse(text);
+      if (obj && typeof obj === "object" && !Array.isArray(obj) && obj.format === "foraging-game" &&
+          obj.trial_type === undefined) {
+        var out = {trial_type: "foraging-game"};
+        Object.keys(obj).forEach(function (k) { out[k] = obj[k]; });
+        return JSON.stringify(out);
+      }
+    } catch (err) {
+      // not JSON: sent as it is
+    }
+    return text;
+  }
+
   function sendOnce(filename) {
     var item = current()[filename];
-    if (!item) {
-      return Promise.resolve({ok: true, status: "already sent", error: null});
+    if (!item || held[filename]) {
+      return Promise.resolve(item ? {ok: false, status: "held", error: "refused before"} :
+        {ok: true, status: "already sent", error: null});
     }
-    return post("data/", {experimentID: item.experimentID, filename: filename, data: item.text}).then(function (r) {
+    var text = repaired(item.text);
+    if (text !== item.text) {
+      item = {experimentID: item.experimentID, text: text, refused: item.refused || 0};
+      added[filename] = item;
+      saveQueue();
+    }
+    return post("data/", {experimentID: item.experimentID, filename: filename, data: text}).then(function (r) {
       var code = r.body && r.body.error;
-      var ok = r.status === 201 || r.status === 202 || (r.status === 400 && code === "FILE_EXISTS");
       log.push({file: filename, status: r.status, error: code || null, t: FG.recorder.now()});
-      if (ok) {
+      if (kept(r)) {
         dequeue(filename);
         return {ok: true, status: r.status, error: code || null};
+      }
+      if (r.status === 400) {
+        // refused: not again on this visit; given up after MAX_REFUSALS
+        held[filename] = true;
+        var again = {experimentID: item.experimentID, text: text, refused: (item.refused || 0) + 1};
+        if (again.refused >= MAX_REFUSALS) {
+          log.push({file: filename, status: "given up", error: code || null, t: FG.recorder.now()});
+          dequeue(filename);
+        } else {
+          added[filename] = again;
+          saveQueue();
+        }
       }
       return {ok: false, status: r.status, error: code || (r.body && r.body.message) || "error"};
     }, function (err) {
@@ -224,7 +278,7 @@
       return;
     }
     retrying = setInterval(function () {
-      var names = Object.keys(current());
+      var names = Object.keys(current()).filter(function (n) { return !held[n]; });
       if (!names.length) {
         clearInterval(retrying);
         retrying = null;
@@ -247,10 +301,10 @@
     function attempt() {
       tries += 1;
       return sendOnce(filename).then(function (r) {
-        // a 400 other than FILE_EXISTS: DataPipe refused it (for example data
-        // collection turned off); trying again soon will not help
+        // a refusal (400) waits for the next visit; no answer or a server
+        // error is tried again every 30 s
         if (r.ok || tries >= 5 || r.status === 400) {
-          if (!r.ok) {
+          if (!r.ok && r.status !== 400) {
             keepTrying();
           }
           return r;
@@ -320,13 +374,13 @@
         // nothing usable was left
       }
     }
-    var names = Object.keys(current());
+    var names = Object.keys(current()).filter(function (n) { return !held[n]; });
     if (!names.length) {
-      return Promise.resolve(0);
+      return Promise.resolve(Object.keys(current()).length);
     }
     return Promise.all(names.map(sendOnce)).then(function () {
       var left = Object.keys(current()).length;
-      if (left) {
+      if (Object.keys(current()).some(function (n) { return !held[n]; })) {
         keepTrying();
       }
       return left;
@@ -383,7 +437,7 @@
         budget -= size + 500;
         try {
           post("data/", body, {keepalive: true}).then(function (r) {
-            if ((r.status === 201 || r.status === 202) && body.filename === item.filename) {
+            if (kept(r) && body.filename === item.filename) {
               dequeue(item.filename);
             }
           }, function () {});
@@ -411,9 +465,10 @@
   }
 
   /* left: files of this page not yet taken by DataPipe; kept: whether the
-   * browser's storage holds them. */
+   * browser's storage holds them; refused: those DataPipe refused. */
   function state() {
-    return {left: Object.keys(added).length, kept: keptInBrowser};
+    return {left: Object.keys(added).length, kept: keptInBrowser,
+      refused: Object.keys(added).filter(function (n) { return held[n]; }).length};
   }
 
   FG.datapipe = {
