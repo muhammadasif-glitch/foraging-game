@@ -133,71 +133,13 @@
     return [M.cs[room[1]] + ROOM / 2, M.rs[room[0]] + ROOM / 2];
   }
 
-  /* In the 3D view the player stops in a food room before its food, which
-   * stands in the middle: STAND tiles back from the middle, on the way in. */
+  /* A game that starts in a food room starts STAND tiles back from its
+   * food, which stands in the middle, facing it. */
   var STAND = 1.25;
 
   function standPoint(M, room, d) {
     var c = centre(M, room);
     return [c[0] - d[1] * STAND, c[1] - d[0] * STAND];
-  }
-
-  /* The way from point p in a room to point q in its neighbour in
-   * direction d ([row, col]): across the room to the door, through the
-   * corridor, and on to q. Points as [x, y]; the 6th (index 5) is the door
-   * of the neighbour, half a tile before its floor. */
-  function walkPath(M, p, room, d, q) {
-    var i = room[0], j = room[1];
-    var t = doorAndCorridor(i, j, i + d[0], j + d[1], M.rs, M.cs);
-    function mid(tile) {
-      return [tile[1] + 0.5, tile[0] + 0.5];
-    }
-    var first = mid(t[0]), last = mid(t[2]);
-    // across to the line of the door, then to it; a player already nearer
-    // the door than 0.9 tiles goes straight on
-    var line = d[1] !== 0 ? [p[0], first[1]] : [first[0], p[1]];
-    var near = d[1] !== 0 ? [first[0] - d[1] * 0.9, first[1]] : [first[0], first[1] - d[0] * 0.9];
-    var pts = [p, line];
-    if ((near[0] - line[0]) * d[1] + (near[1] - line[1]) * d[0] > 0) {
-      pts.push(near);
-    } else {
-      pts.push(line);
-    }
-    pts.push(first, mid(t[1]), last);
-    if (d[1] !== 0) {
-      pts.push([last[0] + d[1] * 0.9, last[1]], [q[0], last[1]]);
-    } else {
-      pts.push([last[0], last[1] + d[0] * 0.9], [last[0], q[1]]);
-    }
-    pts.push(q);
-    return pts;
-  }
-
-  /* Where along a path a share t (0 to 1) of its length is. */
-  function along(pts, t) {
-    var lens = [], total = 0;
-    for (var k = 1; k < pts.length; k++) {
-      var l = Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
-      lens.push(l);
-      total += l;
-    }
-    var at = t * total;
-    for (k = 0; k < lens.length; k++) {
-      if (at <= lens[k] || k === lens.length - 1) {
-        var f = lens[k] ? Math.min(1, at / lens[k]) : 1;
-        return [pts[k][0] + (pts[k + 1][0] - pts[k][0]) * f, pts[k][1] + (pts[k + 1][1] - pts[k][1]) * f];
-      }
-      at -= lens[k];
-    }
-    return pts[pts.length - 1];
-  }
-
-  function pathLength(pts) {
-    var total = 0;
-    for (var k = 1; k < pts.length; k++) {
-      total += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
-    }
-    return total;
   }
 
   /* The tiles shown in light: the floor of every room the player knows, and
@@ -337,8 +279,7 @@
 
   FG.world = {
     ROOM: ROOM, PALETTE: PALETTE, DIRS: DIRS, WALL: WALL, FLOOR: FLOOR, DOOR: DOOR, CORRIDOR: CORRIDOR,
-    key: key, build: build, isRoom: isRoom, centre: centre, along: along,
-    STAND: STAND, standPoint: standPoint, walkPath: walkPath, paintingPlaces: paintingPlaces,
-    pathLength: pathLength, lit: lit, doorAndCorridor: doorAndCorridor, textures: tex
+    key: key, build: build, isRoom: isRoom, centre: centre, STAND: STAND, standPoint: standPoint,
+    paintingPlaces: paintingPlaces, lit: lit, doorAndCorridor: doorAndCorridor, textures: tex
   };
 })(typeof window !== "undefined" ? window : globalThis);

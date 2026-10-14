@@ -32,7 +32,9 @@ var only = args.indexOf("--only") >= 0 ? args[args.indexOf("--only") + 1].split(
 function want(name) {
   return !only || only.indexOf(name) >= 0;
 }
-var chromium = require(pwPath).chromium;
+// --files <folder>: only check the game files saved there before (no browser)
+var filesOnly = args.indexOf("--files") >= 0 ? args[args.indexOf("--files") + 1] : null;
+var chromium = filesOnly ? null : require(pwPath).chromium;
 
 globalThis.window = globalThis;
 require(path.join(ROOT, "js", "mazes.js"));
@@ -249,27 +251,31 @@ async function play(page, rnd, plan, opts) {
       if (rnd() < 0.03) {
         k = "x";
       }
-      var walking = k === "ArrowUp" || (gp.view === "2d" && k !== " " && k !== "x");
+      var walking = k === "ArrowUp" || (gp.view === "3d" && k === "ArrowDown") ||
+        (gp.view === "2d" && k !== " " && k !== "x");
       if (gp.view === "3d" && (k === "ArrowLeft" || k === "ArrowRight") && rnd() < 0.75) {
-        // held, as a person turns to a door beside them (a tap turns 10 degrees)
+        // held, as a person turns to a door beside them (a tap turns a few degrees)
         await page.keyboard.down(k);
-        await sleep(560 + Math.floor(rnd() * 80));
+        await sleep(450 + Math.floor(rnd() * 350));
         await page.keyboard.up(k);
       } else if (walking) {
-        // the player walks while the key is down: mostly into the next room,
-        // now and then a short way only, or stopping on the way
-        var r2 = rnd(), far = gp.view === "3d" ? 1500 : 700;
+        // the player walks while the key is down: mostly a room or 2, now and
+        // then a short way only, now and then on the slant (2D) or steering (3D)
+        var r2 = rnd(), far = gp.view === "3d" ? 1900 : 1000;
         await page.keyboard.down(k);
         if (r2 < 0.12) {
-          await sleep(far * 0.25);
-        } else if (r2 < 0.22) {
-          await sleep(far * 0.35);
-          await page.keyboard.up(k);
-          await sleep(250);
-          await page.keyboard.down(k);
-          await sleep(far * 0.9);
+          await sleep(far * 0.2);
+        } else if (r2 < 0.3) {
+          await sleep(far * 0.4);
+          var side = gp.view === "3d" ? (rnd() < 0.5 ? "ArrowLeft" : "ArrowRight") :
+            (k === "ArrowLeft" || k === "ArrowRight" ? (rnd() < 0.5 ? "ArrowUp" : "ArrowDown") :
+              (rnd() < 0.5 ? "ArrowLeft" : "ArrowRight"));
+          await page.keyboard.down(side);
+          await sleep(far * 0.3);
+          await page.keyboard.up(side);
+          await sleep(far * 0.4);
         } else {
-          await sleep(far + Math.floor(rnd() * far * 0.3));
+          await sleep(far + Math.floor(rnd() * far * 0.4));
         }
         await page.keyboard.up(k);
       } else {
@@ -369,10 +375,11 @@ function checkGameFile(name, f) {
     expect(st.step === t, where + ": step number " + t);
     expect(maze.legal(room).indexOf(st.move) >= 0, where + " step " + t + ": move " + st.move + " not open");
     expect(st.legal.join() === maze.legal(room).join(), where + " step " + t + ": legal");
+    // Space stays; a move was walked with a key that walks
+    var walkKeys = g.view === "3d" ? ["ArrowUp", "ArrowDown"] : ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
+    expect(st.move === "STAY" ? st.key === "Space" : walkKeys.indexOf(st.key) >= 0,
+      where + " step " + t + ": key " + st.key + " gave " + st.move);
     if (g.view === "3d") {
-      // the up arrow moves the way the player faces, Space stays; turns in between
-      expect(st.key === "Space" ? st.move === "STAY" : st.key === "ArrowUp" && st.move === st.facing_before,
-        where + " step " + t + ": 3D key " + st.key + " facing " + st.facing_before + " gave " + st.move);
       // the turns since the step before, the one going on cut at the step;
       // the walk began facing its door, and the turns lead to the facing at the step
       var turned = g.turns.filter(function (tr) { return tr.step === t - 1; });
@@ -384,9 +391,6 @@ function checkGameFile(name, f) {
       });
       expect(st.facing === f2, where + " step " + t + ": facing " + st.facing + " vs " + f2);
       facing = st.facing;
-    } else {
-      var byKey = {ArrowLeft: "LEFT", ArrowRight: "RIGHT", ArrowUp: "UP", ArrowDown: "DOWN", Space: "STAY"};
-      expect(byKey[st.key] === st.move, where + " step " + t + ": 2D key " + st.key + " gave " + st.move);
     }
     var to = maze.next(room, st.move);
     world.advance(to);
@@ -421,12 +425,17 @@ function checkGameFile(name, f) {
       });
       expect(pressedThen, where + " step " + t + ": the press of a held step is in the keys");
     } else {
-      expect(st.press_at === st.key_at, where + " step " + t + ": a pressed step is taken at the press");
+      // a stay at its press; a walk sets off at its press or later (pressed facing a wall, then turned)
+      expect(st.move === "STAY" ? st.press_at === st.key_at : st.key_at >= st.press_at && st.press_at >= st.shown_at,
+        where + " step " + t + ": a pressed step begins at its press");
     }
-    if (t < steps.length - 1 || !partial) {
-      expect((typeof st.arrived_at === "number" && st.arrived_at >= st.entered_at) ||
-        (st.arrived_at === null && typeof st.stopped_at === "number" && st.stopped_at >= st.entered_at),
-        where + " step " + t + ": arrived_at or stopped_at");
+    if (st.move === "STAY" && (t < steps.length - 1 || !partial)) {
+      expect(typeof st.arrived_at === "number" && st.arrived_at >= st.entered_at, where + " step " + t +
+        ": a stay is over (arrived_at)");
+    }
+    if (st.move !== "STAY") {
+      expect(typeof st.left_at === "number" && st.left_at <= st.entered_at && st.walked_tiles > 0,
+        where + " step " + t + ": left the room before at " + st.left_at + ", walked " + st.walked_tiles);
     }
   }
   expect(g.draws.length === steps.length - 1, where + ": draws " + g.draws.length);
@@ -438,13 +447,12 @@ function checkGameFile(name, f) {
   steps.slice(1).forEach(function (st) {
     if (st.move !== "STAY" && !st.held) {
       var k0 = downs.filter(function (k) { return k.t === st.press_at; })[0];
-      // a key that walks, or in 2D one that first walked back and then on
-      expect(k0 && (k0.outcome === "walk" || k0.outcome === "walk back"), where + " step " + st.step +
+      expect(k0 && (k0.outcome === "walk" || k0.outcome === "back"), where + " step " + st.step +
         ": the walk began with a key that walks (" + (k0 && k0.outcome) + ")");
     }
   });
   (g.walks_back || []).forEach(function (wb, i) {
-    expect(wb.furthest >= 0 && wb.furthest < 1 && wb.back_at >= wb.started_at, where + ": walk back " + i);
+    expect(wb.furthest > 0 && wb.furthest <= 1 && wb.back_at >= wb.left_at, where + ": walk back " + i);
   });
   var turnKeys = downs.filter(function (k) { return k.outcome === "turn"; });
   var ownTurns = (g.turns || []).filter(function (tr) { return !tr.continued; });
@@ -516,7 +524,34 @@ function checkEnvironmentSettings() {
   expect(C.layout(far, null, globalThis.FG.random.make(1)).start_room.join() === "6,6", "a start in row 6");
 }
 
+function checkSaved(folder) {
+  var n = 0;
+  fs.readdirSync(folder).forEach(function (sub) {
+    var dir = path.join(folder, sub);
+    if (!fs.statSync(dir).isDirectory()) {
+      return;
+    }
+    fs.readdirSync(dir).filter(function (f) { return /\.json$/.test(f) && !/short/.test(f); }).forEach(function (f) {
+      checkGameFile(f, JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")));
+      n += 1;
+    });
+  });
+  var kinds = {};
+  problems.forEach(function (p) {
+    var k = p.replace(/^\S+\.json( step \d+)?: /, "").replace(/[0-9.]+/g, "N");
+    kinds[k] = (kinds[k] || 0) + 1;
+  });
+  console.log(n + " files, " + problems.length + " problems");
+  Object.keys(kinds).forEach(function (k) { console.log("  " + kinds[k] + " x " + k); });
+  problems.slice(0, 15).forEach(function (p) { console.log("    " + p); });
+  process.exit(problems.length ? 1 : 0);
+}
+
 (async function main() {
+  if (filesOnly) {
+    checkSaved(filesOnly);
+    return;
+  }
   fs.mkdirSync(OUT, {recursive: true});
   checkEnvironmentSettings();
   var server = await serve();
@@ -653,8 +688,8 @@ function checkEnvironmentSettings() {
         await sleep(900);
         await page.keyboard.up("ArrowUp");
         await sleep(1500);
-        await page.keyboard.press("ArrowDown");
-        await sleep(600);
+        await hold("ArrowLeft", 1300);           // about turned round
+        await sleep(400);
       } else {
         await hold(["ArrowDown", "ArrowLeft", "ArrowUp"][round % 3], 1100);
         await sleep(600);

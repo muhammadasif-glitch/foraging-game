@@ -51,27 +51,27 @@ game. The player code is made by the game and kept in the browser.
 the energy, how full the food room the player is in is, its food and worth,
 the food eaten and the steps left.
 
-- 2D: the arrow keys move to the next room in their direction, Space stays.
-- 3D: the up arrow walks through the door the player faces (the door within
-  45 degrees of where the player looks); the left and right arrows turn, a
-  tap by about 10 degrees, held they keep turning (they can be held while
-  walking, to steer); the down arrow turns around; Space stays. A turn is not
-  a step: it costs nothing and the world does not change; it is recorded.
-- The player walks only while the key is held down: a tap goes a little
-  way, and letting go stops the player where they are, in a corridor too.
-  Held on, the player walks on through the next door, room after room. The
-  walk speeds up and slows down, and in 3D the head bobs a little.
-- On the way to the next room the player can go back (in 3D turn around and
-  walk, in 2D the opposite arrow) until that room is entered.
-- A move towards a wall is not a step: nothing changes, the view shakes, the
-  key is recorded.
+The player walks freely, as in other games, while a key is held:
 
-**What is a step.** A move is a step when the player enters the next room
-(crosses its door): the world changes then, as in the model, and the rooms
-next to it come into light. A walk back into the room it began in is no
-step; it is recorded in `walks_back`. A stay is a step when Space is
-pressed; it takes a moment (0.24 s in 2D, 0.42 s in 3D), and held, Space
-stays again after each one. Turns and keys towards a wall are not steps.
+- 2D: the arrow keys walk in their direction (2 at once walk on the slant).
+- 3D: the up arrow walks where the player looks, the down arrow walks
+  backwards, the left and right arrows turn: the turn speeds up while the
+  key is held and slows down when it is let go, so a tap turns a few
+  degrees and a hold turns steadily (also while walking, to steer). A turn
+  is not a step: it costs nothing and the world does not change; it is
+  recorded.
+- The walk speeds up and slows down; the player slides along walls, and
+  walking into a wall next to a door slides into the door; doors and
+  corridors draw the player to their middle. The food stands in the way.
+  In 3D the head bobs a little.
+
+**What is a step.** A move is a step when the player walks onto the floor of
+the next room: the world changes then, as in the model, and the rooms next
+to it come into light. Walking out into a door or a corridor and back into
+the same room is no step; it is recorded in `walks_back`. A stay is a step
+when Space is pressed in a room; it takes a moment (0.24 s in 2D, 0.42 s in
+3D), and held, Space stays again after each one. Turns and walking into
+walls are not steps.
 
 **What the player sees** is what the model's agent knows. The agent has the
 room it is in on its map and, after its first step, every room next to the
@@ -275,11 +275,11 @@ adds up to about one frame (`frame_ms`).
 | `seed`, `draws` | the seed of the game's own random numbers for refills (not numpy's) and every draw, 1 per step, used or not: the draws reproduce the game |
 | `layout_seed` | the seed the layout was picked with |
 | `settings`, `speeds` | all the settings of this game, and the eating and refill speeds used |
-| `controls` | how the player moves: walking speed and its speeding up (tiles a second; a room is 4 tiles, a corridor 3), how long a stay takes, and in 3D how a tap, a held key and turning around turn |
+| `controls` | how the player moves: walking speeds and their speeding up and slowing down (tiles a second; a room is 4 tiles, a corridor 3), the size of the body, how long a stay takes, and in 3D how fast turning goes and speeds up |
 | `food_kinds` | the food each food room shows: `cheese` or `bread` |
 | `sound` | `on_at_start`, and `toggles`: every switch during the game, `{t, step, on, by}` |
 | `path`, `known_rooms` | the room of every step from step 0, and the rooms the player knew at the end (what the end page draws) |
-| `walks_back` | every walk towards a room that went back to the room it began in: `{started_at, back_at, step (steps taken before), room, toward, move, furthest (the share of the way to the next room's door reached), held}` |
+| `walks_back` | every time the player went out into a door or corridor and back into the same room: `{left_at, back_at, step (steps taken before), room, toward, move, furthest (the share of the way to the next room's floor reached)}` |
 | `started`, `started_at`, `ended` | `ended`: `{how, step, at}`; how is `finished`, `starved` or `page closed` (then `at` is when the page closed) |
 | `steps` | 1 row per step, step 0 being the start (below) |
 | `turns` | 3D: every turn, `{t, step (steps taken before it), key, from, to, from_angle, to_angle, ms, held_ms}`: `from` and `to` are the doors faced (`RIGHT`, `DOWN`, `LEFT`, `UP`), the angles in degrees (0 east, 90 south), `held_ms` how long the key was held. A turn still going on when a step is taken ends there (`split`), and the rest is a turn of its own (`continued`, with no key press of its own) |
@@ -293,13 +293,13 @@ A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
 | `step` | 0 for the start, then 1, 2, ... |
 | `shown_at` | when the screen of this choice was on the screen |
 | `shown_at` | when the player could act: the room before entered (or the stay before over), or the game shown for step 1 |
-| `key_at`, `decision_ms` | when the walk to this room began (the key pressed, or, for a key held on, the moment it walked on), and the time since `shown_at`; for a stay, when Space was pressed |
-| `entered_at` | when the step was taken: the room entered (for a stay, Space pressed); the world changes then |
-| `held`, `press_at`, `stops` | whether the walk began with a key held on from before, when that key was pressed, and how often the player stood still on the way |
-| `arrived_at`, `stopped_at` | when the player reached the middle of the room (in 3D a food room: the place before the food), or the stay was over; or, when the player stopped in the room before its middle, when that was |
+| `key_at`, `decision_ms` | when the walk to this room began (when the player last set off from standing, or the room before was entered while walking on), and the time since `shown_at`; for a stay, when Space was pressed |
+| `entered_at`, `left_at` | when the step was taken: the floor of the room entered (for a stay, Space pressed); the world changes then. And when the player left the floor of the room before |
+| `held`, `press_at`, `stops`, `walked_tiles` | whether the walk began with a key held on from before the step before, when that key was pressed, how often the player stood still since the step before, and how far the player walked |
+| `arrived_at` | for a stay, when it was over |
 | `released_at`, `hold_ms`, `released_by` | when the key was let go, and for how long it was held after the step; `released_by: blur` when the window lost the keyboard while it was down |
 | `key`, `move` | `ArrowUp`, ... or `Space`; `UP`, `DOWN`, `LEFT`, `RIGHT` or `STAY` |
-| `facing_before`, `facing`, `angle_before`, `turns_before` | the door the player faced before and after the step (`RIGHT`, `DOWN`, `LEFT`, `UP`; in 2D the last move), in 3D the angle in degrees, and the turns made since the step before (3D) |
+| `facing_before`, `facing`, `angle_before`, `angle`, `turns_before` | the way the player faced when the walk began and at the step (`RIGHT`, `DOWN`, `LEFT`, `UP`; in 2D the way walked), in 3D also as angles in degrees (0 east, 90 south), and the turns made since the step before (3D) |
 | `room_from`, `room_to`, `room` | rooms as `s<row><column>`, `s00` top left |
 | `legal` | the moves open from the room the choice was made in |
 | `walls_before`, `other_keys_before` | keys towards a wall, and other keys, pressed while choosing |
@@ -316,11 +316,9 @@ A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
 the browser names it; Space is `" "`), `code`, `repeat`, `repeats` (how many
 times the browser repeated the press while the key was held; the repeats are
 not recorded 1 by 1), `with` (Shift, Ctrl, Alt, Meta, when held), `phase`
-(`menu`, `game 3`, `end 3`) and `outcome`: in a game `walk`, `walk back` (2D, the
-opposite arrow on the way), `stay`, `turn`, `wall`, `not allowed` (a move on
-a first step that must be a stay), `ignored: between rooms` (Space, or in 2D a
-sideways arrow, on the way), `ignored: busy` (during a stay), `ignored:
-turning` (while turning around), `ignored: too soon`, `ignored: key`,
+(`menu`, `game 3`, `end 3`) and `outcome`: in a game `walk`, `back` (3D, the
+down arrow), `stay`, `turn`, `not allowed` (a move on a first step that must
+be a stay), `ignored: between rooms` (Space in a door or corridor), `ignored: busy` (during a stay), `ignored: too soon`, `ignored: key`,
 `ignored: with Ctrl, Alt or Meta`; on the first page `view`, `maze`, `row`, `play`, `ignored: not
 ready`; at the end of a game `menu`; anywhere `sound on` or `sound off` (M),
 `ignored: too soon` or `ignored: key`, or null for a key nothing listens to (a
@@ -367,7 +365,8 @@ python check/rules_check.py          # the rules against the model, 2,000 random
 python check/export_mazes.py --check # js/mazes.js is the model's mazes
 python check/layout_check.py         # the maze drawn as in the model's films (needs node)
 python check/map_check.py            # what the player is shown against the model's agent (a few minutes)
-node check/play_check.js out/        # games in Chromium, 2D and 3D (needs Playwright)
+node check/play_check.js out/        # games in Chromium, 2D and 3D (needs Playwright; about 45 minutes;
+                                     # --only hold,closed for some scenarios, --files out/ to check saved files again)
 python check/data_check.py out/      # the recorded games replayed through the model
 python check/draw_route.py GAME.json # the way a player went, as on the end page (needs matplotlib)
 ```

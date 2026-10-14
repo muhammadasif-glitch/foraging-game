@@ -2,18 +2,21 @@
 
 ## 2.1.0
 
-- Walking: the player walks only while the key is held; a tap goes a little
-  way and letting go stops the player where they are, in a corridor too.
-  Held on, the player walks on room after room. The walk speeds up and slows
-  down, and in 3D the head bobs a little. On the way the player can go back
-  until the next room is entered.
-- A move is a step when the next room is entered (the world changes then);
-  a walk back into the room it began in is no step and is recorded in
-  `walks_back`. A stay is a step when Space is pressed; held, Space stays
-  again after each stay.
-- 3D turning: a tap turns about 10 degrees, a held key keeps turning (also
-  while walking), the up arrow walks through the door within 45 degrees of
-  where the player looks. Turns are recorded with their angles.
+- Walking: the player walks freely, as in other games, while a key is
+  held: in 3D the up arrow walks where the player looks and the down arrow
+  backwards, in 2D the arrows walk their way. The walk speeds up and slows
+  down, slides along walls and into doors, and is guided to the middle of
+  doors and corridors; the food stands in the way. In 3D the head bobs a
+  little.
+- A move is a step when the player walks onto the floor of the next room
+  (the world changes then); out into a door or corridor and back is no step
+  and is recorded in `walks_back`. A stay is a step when Space is pressed in
+  a room; held, Space stays again after each stay.
+- 3D turning speeds up while the key is held and slows down when it is let
+  go: a tap turns a few degrees, a hold turns steadily, also while walking.
+  Turns are recorded with their angles.
+- The 3D view is drawn faster (the fog is worked out once per row and per
+  column).
 - The rooms the player learns of come into light while the player walks in,
   instead of all at once.
 - Food: a cheese wheel in the room worth 8 and a loaf of bread in the room
@@ -40,6 +43,6 @@
 - Key repeats while a key is held are counted on the press (`repeats`)
   instead of being recorded 1 by 1.
 - File format 3: new fields `controls`, `food_kinds`, `sound`, `path`,
-  `known_rooms`, `walks_back`, `sound_log`; in a step `entered_at`, `held`,
-  `press_at`, `stops`, `stopped_at`, `angle_before`; in a turn `from_angle`,
-  `to_angle`, `ms`, `held_ms`.
+  `known_rooms`, `walks_back`, `sound_log`; in a step `entered_at`,
+  `left_at`, `held`, `press_at`, `stops`, `walked_tiles`, `angle_before`,
+  `angle`; in a turn `from_angle`, `to_angle`, `ms`, `held_ms`.

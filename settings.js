@@ -88,10 +88,10 @@
       title: "Food Rooms",
       intro: "Walk through the rooms and eat to keep your energy up. A food room runs empty while you " +
         "eat from it and fills up again while you are away.",
-      keys_2d: "<kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&rarr;</kbd> <kbd>&darr;</kbd> move, hold to keep going &middot; " +
+      keys_2d: "<kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&rarr;</kbd> <kbd>&darr;</kbd> walk (hold) &middot; " +
         "<kbd>Space</kbd> stay &middot; <kbd>M</kbd> sound",
-      keys_3d: "<kbd>&uarr;</kbd> walk, hold to keep going &middot; <kbd>&larr;</kbd> <kbd>&rarr;</kbd> turn &middot; " +
-        "<kbd>&darr;</kbd> turn around &middot; <kbd>Space</kbd> stay &middot; <kbd>M</kbd> sound",
+      keys_3d: "<kbd>&uarr;</kbd> walk &middot; <kbd>&darr;</kbd> back &middot; <kbd>&larr;</kbd> <kbd>&rarr;</kbd> turn &middot; " +
+        "<kbd>Space</kbd> stay &middot; <kbd>M</kbd> sound",
       menu_keys: "<kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd> choose &middot; " +
         "<kbd>Enter</kbd> play &middot; <kbd>M</kbd> sound",
       view_2d: "From above",

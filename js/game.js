@@ -1,26 +1,20 @@
 /* 1 game, in the 2D or the 3D view. The world follows js/rules.js, which
  * gives the numbers of the model; every step and every key is recorded.
  *
- * The moves are the model's: LEFT, RIGHT, UP, DOWN and STAY, 1 room a step.
- *   2D  the arrow keys move in their direction, Space stays.
- *   3D  the up arrow walks through the door the player faces (the door
- *       within 45 degrees of where the player looks), the left and right
- *       arrows turn (a tap about 10 degrees, held they keep turning), the
- *       down arrow turns around, Space stays. A turn is not a step: it costs
- *       nothing and the world does not change; it is recorded.
- * A move towards a wall is not a step either: nothing changes, the view
- * shakes, and the key is recorded.
+ * The player walks freely, as in other games, while a key is held:
+ *   2D  the arrow keys walk in their direction (2 at once: on the slant).
+ *   3D  the up arrow walks where the player looks, the down arrow walks
+ *       backwards, the left and right arrows turn (speeding up and slowing
+ *       down: a tap turns a few degrees, a hold turns steadily).
+ * The walk speeds up and slows down, slides along walls, and doors and
+ * corridors guide the player to their middle. The food stands in the way.
  *
- * Walking. The player walks only while the key is held: a tap goes a little
- * way, and letting go stops the player where they are, in the corridor too.
- * The way between 2 rooms can be walked back (in 3D by turning around, in 2D
- * with the opposite arrow) as long as the next room has not been entered.
- *
- * Steps. A move is a step when the player enters the next room: the world
- * changes then, as in the model. A walk that goes back to the room it came
- * from is no step (it is recorded in walks_back). A key held on walks on
- * through the next door, room after room. A stay is a step when Space is
- * pressed; held, it stays again after each stay.
+ * Steps. The moves are the model's: LEFT, RIGHT, UP, DOWN and STAY, 1 room
+ * a step. A move is a step when the player walks onto the floor of the next
+ * room: the world changes then, as in the model. Walking out into a door or
+ * a corridor and back is no step (it is recorded in walks_back). A stay is a
+ * step when Space is pressed in a room; held, it stays again after each
+ * stay. Turns and walking into walls are not steps; they are recorded.
  *
  * What the player is shown is what the model's agent knows: the rooms it has
  * been in and, from the first step on, the rooms next to the room it is in;
@@ -43,11 +37,21 @@
   var TOO_SOON_MS = 300;
   // how the player moves; written into every game file
   var CONTROLS = {
-    "2d": {walk_tiles_per_s: 12, speed_up_tiles_per_s2: 90, slow_down_tiles_per_s2: 200, stay_ms: 240},
-    "3d": {walk_tiles_per_s: 6, speed_up_tiles_per_s2: 20, slow_down_tiles_per_s2: 40, stay_ms: 420,
-      turn_tap_degrees: 10, turn_tap_ms: 90, turn_degrees_per_s: 150, turn_around_ms: 380}
+    "2d": {walk_tiles_per_s: 7, speed_up_tiles_per_s2: 45, slow_down_tiles_per_s2: 60, stay_ms: 240,
+      body_radius_tiles: 0.3},
+    "3d": {walk_tiles_per_s: 4.5, back_tiles_per_s: 2.5, speed_up_tiles_per_s2: 16, slow_down_tiles_per_s2: 22,
+      stay_ms: 420, turn_degrees_per_s: 130, turn_speed_up_degrees_per_s2: 1000, body_radius_tiles: 0.3}
   };
-  var OPPOSITE = {LEFT: "RIGHT", RIGHT: "LEFT", UP: "DOWN", DOWN: "UP"};
+  // the food stands in the middle of its room, this wide (tiles)
+  var FOOD_RADIUS = {cheese: 0.42, bread: 0.32};
+  // a room is entered this far onto its floor (tiles)
+  var ENTER_TILES = 0.3;
+  // doors guide the player when they are this far ahead (tiles), the walk
+  // goes nearly their way (cosine), with this pull (a second)
+  var GUIDE_LOOK = [0, 0.6, 1.2], GUIDE_COS = 0.8, GUIDE_PULL = 4, GUIDE_SIDE = 1.4, GUIDE_TURN_MAX = 0.6;
+  // walking into a wall within SLIDE_TILES of a door slides into the door
+  var SLIDE_TILES = 2, SLIDE_SPEED = 3;
+  var END_MS = 700;                          // the last step, then the end of the game
   var BOB = 0.011, BOB_TILES = 3.6;          // the head bob: its height and its length
   var GROW_MS = 700, BITE_MS = 320;
   var LIGHT_MS = 450, HERE_MS = 400;         // new rooms coming into light, the food coming into view
@@ -106,11 +110,6 @@
     return k * k * (3 - 2 * k);
   }
 
-  function easeOut(k) {
-    k = Math.max(0, Math.min(1, k));
-    return 1 - (1 - k) * (1 - k);
-  }
-
   /* g: {number, view ("2d" or "3d"), renderer (draw(scene)), settings,
    * layout, seed, layout_seed, onChange(record)}. Resolves to the record. */
   function play(g) {
@@ -134,6 +133,7 @@
     var stomach = new R.Stomach(s.stomach);
     var edges = [s.food.empty_below, s.food.full_above];
     var SND = FG.sound;
+    var RAD = C.body_radius_tiles;
 
     var room = g.layout.start_room.slice();
     var t = 0;
@@ -143,20 +143,22 @@
     // the 3D view starts facing a door
     var facing0 = three ? facingOf(maze.legal(room).filter(function (m) { return m !== "STAY"; })[0]) : 0;
     var start = Wd.centre(M, room);
-    var scene = {maze: M, x: start[0], y: start[1], angle: facing0 * QUARTER, facing: facing0,
+    var scene = {maze: M, x: start[0], y: start[1], angle: facing0 * QUARTER, facing: facing0, heading: 0,
       lit: null, light: new Float32Array(M.W * M.H), food: [], here: null, crumbs: [], bob: 0};
     var eaten = 0;
     var steps = [], turns = [], back = [];
     var over = false;
     var shownAt = null;           // when the player could last act: entering a room, the end of a stay
-    var walls = 0, others = 0, turnsBefore = 0;
+    var walls = 0, others = 0, turnsBefore = 0, stops = 0;
     var holding = {};             // key code -> the rows its press made
-    var down = {};                // key code -> {key, code, t, order, stale, used}
+    var down = {};                // key code -> {key, code, t, order}
     var order = 0;
-    var track = null;             // the way to the next room while the player is on it
-    var stay = null, turning = null, spin = null, ending = null;
-    var speed = 0, heading = 1, bobPhase = 0;
-    var carry = null;             // the move of a way just walked to its end at speed, to walk on
+    var vx = 0, vy = 0, omega = 0, bobPhase = 0, walked = 0;
+    var moveStart = null;         // the walk since the player last stood still: {t, press, key, code, held, angle}
+    var away = null;              // the player out of the floor of its room: {left_at, side, furthest}
+    var leftAt = null;            // when the player last left the floor of its room
+    var turning = null, stay = null, ending = null;
+    var lastBump = -1e9;
     var fade = null;              // {from, to, t0}: new rooms coming into light
     var shown = {};               // food room -> {level, from, to, t0, ms}: the level drawn
     var left = {};                // food room -> its level when the player last left it
@@ -315,6 +317,114 @@
       }
     }
 
+    // ---------------------------------------------------------- the body
+    /* Where the player can be: not in a wall, not in the food of a room it
+     * knows, and before the first stay not out of the start room when the
+     * first step must be a stay. */
+    function solidTile(x, y) {
+      var cx = Math.floor(x), cy = Math.floor(y);
+      if (cx < 0 || cy < 0 || cx >= M.W || cy >= M.H) {
+        return true;
+      }
+      var kd = M.kind[cy * M.W + cx];
+      if (kd === Wd.WALL) {
+        return true;
+      }
+      return t === 0 && s.first_step_stay && kd !== Wd.FLOOR;
+    }
+
+    function free(x, y) {
+      if (solidTile(x - RAD, y - RAD) || solidTile(x + RAD, y - RAD) || solidTile(x - RAD, y + RAD) ||
+          solidTile(x + RAD, y + RAD)) {
+        return false;
+      }
+      for (var i = 0; i < names.length; i++) {
+        var fr = g.layout.food_rooms[names[i]];
+        if (!known[Wd.key(fr)]) {
+          continue;
+        }
+        var c = Wd.centre(M, fr), rr = (kinds[names[i]] === "bread" ? FOOD_RADIUS.bread : FOOD_RADIUS.cheese) + RAD;
+        if ((x - c[0]) * (x - c[0]) + (y - c[1]) * (y - c[1]) < rr * rr) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    /* The room whose floor the player stands on, at least a little way in;
+     * null in a door or a corridor. */
+    function roomUnder(x, y) {
+      var cx = Math.floor(x), cy = Math.floor(y);
+      if (cx < 0 || cy < 0 || cx >= M.W || cy >= M.H || M.kind[cy * M.W + cx] !== Wd.FLOOR) {
+        return null;
+      }
+      var rm = M.list[M.roomAt[cy * M.W + cx]];
+      var m = ENTER_TILES;
+      if (x < rm.c0 + m || x > rm.c0 + Wd.ROOM - m || y < rm.r0 + m || y > rm.r0 + Wd.ROOM - m) {
+        return null;
+      }
+      return [rm.i, rm.j];
+    }
+
+    function onFloorOf(r, x, y) {
+      var rm = M.list[M.index[Wd.key(r)]];
+      return x >= rm.c0 && x <= rm.c0 + Wd.ROOM && y >= rm.r0 && y <= rm.r0 + Wd.ROOM;
+    }
+
+    /* Doors and corridors guide the player through: across them the player
+     * is drawn to their middle line, and in 3D the view turns gently along
+     * them, when it already looks nearly that way. */
+    function guide(dt, speed) {
+      if (speed < 0.2) {
+        return;
+      }
+      var ux = vx / speed, uy = vy / speed;
+      var best = null;
+      for (var k = 0; k < GUIDE_LOOK.length; k++) {
+        var ax = scene.x + ux * GUIDE_LOOK[k], ay = scene.y + uy * GUIDE_LOOK[k];
+        var cx = Math.floor(ax), cy = Math.floor(ay);
+        if (cx < 0 || cy < 0 || cx >= M.W || cy >= M.H) {
+          break;
+        }
+        var kd = M.kind[cy * M.W + cx];
+        if (kd === Wd.DOOR || kd === Wd.CORRIDOR) {
+          best = {cx: cx, cy: cy, look: GUIDE_LOOK[k]};
+          break;
+        }
+        if (kd === Wd.WALL) {
+          break;
+        }
+      }
+      if (!best) {
+        return;
+      }
+      // which way the door runs: along x if open to its left and right
+      var open = function (x, y) { return x >= 0 && y >= 0 && x < M.W && y < M.H && M.kind[y * M.W + x] !== Wd.WALL; };
+      var alongX = open(best.cx - 1, best.cy) && open(best.cx + 1, best.cy);
+      var dirAx = alongX ? (ux >= 0 ? 0 : Math.PI) : (uy >= 0 ? QUARTER : -QUARTER);
+      var forward = alongX ? Math.abs(ux) : Math.abs(uy);
+      if (forward < GUIDE_COS) {
+        return;
+      }
+      // drawn to the middle line, at most GUIDE_SIDE tiles a second
+      var most = GUIDE_SIDE * dt * Math.min(1, speed / C.walk_tiles_per_s);
+      var off = alongX ? best.cy + 0.5 - scene.y : best.cx + 0.5 - scene.x;
+      var by = Math.max(-most, Math.min(most, off * Math.min(1, dt * GUIDE_PULL)));
+      if (alongX && free(scene.x, scene.y + by)) {
+        scene.y += by;
+      } else if (!alongX && free(scene.x + by, scene.y)) {
+        scene.x += by;
+      }
+      if (three && !turning && Math.abs(omega) < 0.05) {
+        var want = Math.abs(Math.atan2(Math.sin(dirAx - scene.angle), Math.cos(dirAx - scene.angle))) < QUARTER ?
+          dirAx : dirAx + Math.PI;
+        var diff = Math.atan2(Math.sin(want - scene.angle), Math.cos(want - scene.angle));
+        if (Math.abs(diff) < GUIDE_TURN_MAX) {
+          scene.angle += diff * Math.min(1, dt * 3.2);
+        }
+      }
+    }
+
     // ---------------------------------------------------------- keys held
     function release(code, at, how) {
       var rows = holding[code];
@@ -329,70 +439,42 @@
         delete holding[code];
         changed();
       }
-      if (turning && turning.code === code && turning.held) {
+      if (turning && turning.code === code) {
         turning.held = false;
-        turning.releasedAt = performance.now();
         turning.rec.held_ms = round(at - turning.rec.t, 3);
       }
       delete down[code];
     }
 
-    /* The key held down that moves the player: of the up arrow and Space
-     * (3D) or the arrows and Space (2D), the one pressed last. The turning
-     * keys can be held at the same time, to steer. */
-    function heldKey() {
+    function isDown(name) {
+      return Object.keys(down).some(function (c) { return KEY_MOVE[down[c].key] === name; });
+    }
+
+    /* The movement key held down that was pressed last. */
+    function lastMoveKey() {
       var best = null;
-      Object.keys(down).forEach(function (code) {
-        var d = down[code], key = KEY_MOVE[d.key];
-        if (three && key !== "UP" && key !== "STAY") {
-          return;
-        }
-        if (d.wall && (d.wall.facing !== quarterOf(scene.angle) || d.wall.room !== Wd.key(room))) {
-          // held against a wall, then turned to another door: it walks again,
-          // as a key held on (the walk begins now, not at the press)
-          d.stale = false;
-          d.wall = null;
-          d.used = true;
-        }
-        if (!d.stale && (!best || d.order > best.order)) {
+      Object.keys(down).forEach(function (c) {
+        var d = down[c], key = KEY_MOVE[d.key];
+        var moves = three ? key === "UP" || key === "DOWN" : key === "UP" || key === "DOWN" || key === "LEFT" ||
+          key === "RIGHT";
+        if (moves && (!best || d.order > best.order)) {
           best = d;
         }
       });
       return best;
     }
 
-    /* How a key starts a step: pressed (the step is taken at the press) or
-     * held on from before (taken now). */
-    function how(d) {
-      var now = REC.now();
-      var pressed = !d.used && d.t >= shownAt;
-      d.used = true;
-      return {key: d.key, code: d.code, at: pressed ? d.t : now, press: d.t, held: !pressed};
-    }
-
     // ---------------------------------------------------------- turning (3D)
     function startTurn(dir, e, entry) {
+      if (turning) {
+        endTurn();
+      }
       var rec = {t: entry.t, step: t, key: e.key, from: FACING[quarterOf(scene.angle)], to: null,
         from_angle: degrees(scene.angle), to_angle: null, ms: null, held_ms: null};
       turns.push(rec);
       turnsBefore += 1;
-      turning = {dir: dir, code: e.code || e.key, t0: performance.now(), a0: scene.angle, held: true,
-        releasedAt: null, rec: rec};
+      turning = {dir: dir, code: e.code || e.key, held: true, rec: rec};
       changed();
-    }
-
-    /* How far a turn has gone: a tap turns turn_tap_degrees, a key held
-     * longer goes on turning until it is let go. */
-    function turnOffset(tr, now) {
-      var tap = C.turn_tap_degrees * Math.PI / 180, ms = C.turn_tap_ms;
-      var e = now - tr.t0;
-      if (!tr.held) {
-        e = tr.releasedAt - tr.t0 >= ms ? tr.releasedAt - tr.t0 : Math.min(e, ms);
-      }
-      if (e <= ms) {
-        return tap * easeOut(e / ms);
-      }
-      return tap + C.turn_degrees_per_s * Math.PI / 180 * (e - ms) / 1000;
     }
 
     function endTurn() {
@@ -404,29 +486,25 @@
       changed();
     }
 
-    function updateTurn(now) {
-      if (turning) {
-        scene.angle = turning.a0 + turning.dir * turnOffset(turning, now);
-        scene.facing = quarterOf(scene.angle);
-        dirty = true;
-        if (!turning.held && now - turning.t0 >= Math.max(C.turn_tap_ms, turning.releasedAt - turning.t0)) {
-          endTurn();
-        }
+    /* Turning speeds up while a turning key is held and slows down when it
+     * is let go, so that a tap turns a few degrees and a hold turns
+     * steadily. */
+    function updateTurn(dt) {
+      var want = 0;
+      if (turning && turning.held) {
+        want = turning.dir * C.turn_degrees_per_s * Math.PI / 180;
       }
-      if (spin) {
-        var k = Math.min(1, (now - spin.t0) / C.turn_around_ms);
-        scene.angle = spin.a0 + Math.PI * (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
+      var acc = C.turn_speed_up_degrees_per_s2 * Math.PI / 180 * dt;
+      omega += Math.max(-acc, Math.min(acc, want - omega));
+      if (Math.abs(omega) > 1e-4) {
+        scene.angle += omega * dt;
         scene.facing = quarterOf(scene.angle);
         dirty = true;
-        if (k >= 1) {
-          scene.angle = spin.a0 + Math.PI;
-          scene.facing = quarterOf(scene.angle);
-          spin.rec.to = FACING[scene.facing];
-          spin.rec.to_angle = degrees(scene.angle);
-          spin.rec.ms = round(REC.now() - spin.rec.t, 3);
-          spin = null;
-          changed();
-        }
+      } else {
+        omega = 0;
+      }
+      if (turning && !turning.held && omega === 0) {
+        endTurn();
       }
     }
 
@@ -434,11 +512,10 @@
      * (endAtStep, before it), and the rest is a turn of its own before the
      * next step (goOn, after it). */
     function endAtStep() {
-      var tr = turning || spin;
-      if (!tr) {
+      if (!turning) {
         return;
       }
-      var old = tr.rec;
+      var old = turning.rec;
       old.to = FACING[quarterOf(scene.angle)];
       old.to_angle = degrees(scene.angle);
       old.ms = round(REC.now() - old.t, 3);
@@ -446,16 +523,15 @@
     }
 
     function goOn() {
-      var tr = turning || spin;
-      if (!tr) {
+      if (!turning) {
         return;
       }
-      var old = tr.rec;
+      var old = turning.rec;
       var rec = {t: REC.now(), step: t, key: old.key, from: old.to, to: null, from_angle: old.to_angle,
         to_angle: null, ms: null, held_ms: null, continued: true};
       turns.push(rec);
       turnsBefore += 1;
-      tr.rec = rec;
+      turning.rec = rec;
     }
 
     return new Promise(function (resolve) {
@@ -463,9 +539,10 @@
       var first = learn(false);
       knowledgeChanged(true);
       steps.push(row({shown_at: null, key_at: null, decision_ms: null, entered_at: null, arrived_at: null,
-        released_at: null, hold_ms: null, key: null, move: null, held: false, press_at: null, stops: 0,
-        room_from: null, room_to: R.roomName(room), legal: allowed(),
-        facing_before: null, angle_before: null, turns_before: 0, walls_before: 0, other_keys_before: 0,
+        left_at: null, released_at: null, hold_ms: null, key: null, move: null, held: false, press_at: null,
+        stops: 0, walked_tiles: 0, room_from: null, room_to: R.roomName(room), legal: allowed(),
+        facing_before: null, angle_before: null, angle: three ? degrees(scene.angle) : null,
+        turns_before: 0, walls_before: 0, other_keys_before: 0,
         paid: 0, cost: 0, food_lost: 0, change: null, draw: null,
         found: null, known_new: first.rooms, known_food_new: first.food,
         events: first.food.map(function (n) { return {type: "known", room: n}; })}));
@@ -474,12 +551,10 @@
         steps[0].found = world.nameAt(room);
         steps[0].events.push({type: "found", room: world.nameAt(room)});
         setHere(world.nameAt(room), false);
-        if (three) {
-          // stand before the food, facing it
-          var p = Wd.standPoint(M, room, Wd.DIRS[FACING[facing0]]);
-          scene.x = p[0];
-          scene.y = p[1];
-        }
+        // stand before the food, facing it
+        var p = Wd.standPoint(M, room, Wd.DIRS[FACING[facing0]]);
+        scene.x = p[0];
+        scene.y = p[1];
       }
       $("gain").textContent = "";
       hud();
@@ -501,12 +576,6 @@
         if (turning) {
           endTurn();
         }
-        if (spin) {
-          spin.rec.to = FACING[quarterOf(scene.angle)];
-          spin.rec.to_angle = degrees(scene.angle);
-          spin.rec.ms = round(REC.now() - spin.rec.t, 3);
-          spin = null;
-        }
         REC.listen(null);
         stopSound();
         root.removeEventListener("blur", onBlur);
@@ -522,37 +591,9 @@
       }
 
       function bump() {
-        nudge($("stage"), "shake");
         if (SND) {
           SND.bump();
         }
-      }
-
-      /* What a key pressed now does, for its outcome; the walking itself
-       * is done frame by frame while it is held. */
-      function pressOutcome(key) {
-        if (stay || ending) {
-          return "ignored: busy";
-        }
-        if (key === "STAY") {
-          if (track) {
-            return "ignored: between rooms";
-          }
-          return null;                      // a stay, taken in the next frame
-        }
-        var move = three ? FACING[quarterOf(scene.angle)] : key;
-        if (track && !track.entered && !three) {
-          return move === track.move ? "walk" : move === OPPOSITE[track.move] ? "walk back" : "ignored: between rooms";
-        }
-        if (track && (three || move === track.move)) {
-          return "walk";
-        }
-        if (allowed().indexOf(move) < 0) {
-          walls += 1;
-          bump();
-          return t === 0 && s.first_step_stay ? "not allowed" : "wall";
-        }
-        return "walk";
       }
 
       REC.listen(function (e, entry) {
@@ -575,53 +616,37 @@
           others += 1;
           return "ignored: key";
         }
-        down[code] = {key: e.key, code: code, t: entry.t, order: ++order, stale: false, used: false};
         if (over || shownAt === null) {
-          down[code].stale = true;
           return "ignored: busy";
         }
         if (t === 0 && entry.t - shownAt < TOO_SOON_MS) {
-          down[code].stale = true;
           return "ignored: too soon";
         }
+        down[code] = {key: e.key, code: code, t: entry.t, order: ++order};
+        if (ending) {
+          return "ignored: busy";
+        }
         if (three && (key === "LEFT" || key === "RIGHT")) {
-          if (spin) {
-            return "ignored: turning";
-          }
-          if (turning) {
-            endTurn();
-          }
           startTurn(key === "LEFT" ? -1 : 1, e, entry);
           return "turn";
         }
-        if (three && key === "DOWN") {
-          if (turning || spin) {
-            return "ignored: turning";
-          }
-          if (stay || ending) {
+        if (key === "STAY") {
+          if (stay) {
             return "ignored: busy";
           }
-          var rec = {t: entry.t, step: t, key: e.key, from: FACING[quarterOf(scene.angle)], to: null,
-            from_angle: degrees(scene.angle), to_angle: null, ms: null, held_ms: null};
-          turns.push(rec);
-          turnsBefore += 1;
-          spin = {t0: performance.now(), a0: scene.angle, rec: rec};
-          changed();
-          return "turn";
-        }
-        var out = pressOutcome(key);
-        if (out === "wall" || out === "not allowed" || out === "ignored: between rooms" || out === "ignored: busy") {
-          down[code].stale = out !== "ignored: busy";
-          if (three && out === "wall") {
-            down[code].wall = {facing: quarterOf(scene.angle), room: Wd.key(room)};
+          if (!onFloorOf(room, scene.x, scene.y)) {
+            return "ignored: between rooms";
           }
-          return out;
-        }
-        if (key === "STAY") {
-          stayStep(how(down[code]));
+          stayStep({key: e.key, code: code, at: entry.t, press: entry.t, held: false});
           return "stay";
         }
-        return out;
+        if (stay) {
+          return "ignored: busy";
+        }
+        if (t === 0 && s.first_step_stay) {
+          return "not allowed";
+        }
+        return three && key === "DOWN" ? "back" : "walk";
       });
 
       root.addEventListener("blur", onBlur);
@@ -671,10 +696,12 @@
         var now = REC.now();
         var r = row({
           shown_at: shownAt, key_at: h.at, decision_ms: round(h.at - shownAt, 3), entered_at: now, arrived_at: null,
-          released_at: null, hold_ms: null, key: h.key === " " || h.key === "Spacebar" ? "Space" : h.key,
-          move: move, held: h.held, press_at: h.press, stops: extra.stops || 0,
+          left_at: extra.left_at === undefined ? null : extra.left_at, released_at: null, hold_ms: null,
+          key: h.key === " " || h.key === "Spacebar" ? "Space" : h.key,
+          move: move, held: h.held, press_at: h.press, stops: stops, walked_tiles: round(walked, 2),
           room_from: R.roomName(from), room_to: R.roomName(to),
-          legal: legal, facing_before: extra.facing, angle_before: extra.angle, turns_before: turnsBefore,
+          legal: legal, facing_before: extra.facing, angle_before: extra.angle,
+          angle: three ? degrees(scene.angle) : null, turns_before: turnsBefore,
           walls_before: walls, other_keys_before: others,
           paid: paid, cost: en.cost, food_lost: en.lost, change: what.rooms, draw: what.draw,
           found: newFound, known_new: learned.rooms, known_food_new: learned.food, events: events
@@ -682,13 +709,15 @@
         walls = 0;
         others = 0;
         turnsBefore = 0;
+        stops = 0;
+        walked = 0;
         goOn();
         steps.push(r);
         if (down[h.code]) {
           (holding[h.code] = holding[h.code] || []).push(r);
         } else {
-          r.released_at = REC.now();
-          r.hold_ms = round(r.released_at - r.key_at, 3);
+          r.released_at = now;
+          r.hold_ms = round(now - r.key_at, 3);
         }
         shownAt = now;
         knowledgeChanged(false);
@@ -703,7 +732,8 @@
           left[leftName] = world.level[leftName];
         }
         if (gameOver()) {
-          ending = {how: stomach.energy <= 0 && s.stomach.at_zero === "end" ? "starved" : "finished", row: r};
+          ending = {how: stomach.energy <= 0 && s.stomach.at_zero === "end" ? "starved" : "finished", row: r,
+            t0: performance.now()};
         }
         changed();
         dirty = true;
@@ -717,6 +747,9 @@
       function stayStep(h) {
         var st = takeStep("STAY", h, {facing: FACING[scene.facing], angle: three ? degrees(scene.angle) : null});
         stay = {t0: performance.now(), row: st.row};
+        vx = 0;
+        vy = 0;
+        moveStart = null;
         if (st.food !== null) {
           setHere(st.food, false);
           var shownNow = shown[st.food] ? shown[st.food].level : world.level[st.food];
@@ -732,104 +765,23 @@
         }
       }
 
-      /* Sets off towards the next room in direction move, from where the
-       * player stands. */
-      function setOff(move, d) {
-        var dir = Wd.DIRS[move], to = maze.next(room, move);
-        var food = world.nameAt(to);
-        var q = three && food !== null ? Wd.standPoint(M, to, dir) : Wd.centre(M, to);
-        var pts = Wd.walkPath(M, [scene.x, scene.y], room, dir, q);
-        track = {pts: pts, total: Wd.pathLength(pts), s: 0, move: move, to: to,
-          enterS: Wd.pathLength(pts.slice(0, 6)) + 0.5, entered: false, row: null, stops: 0, still: false,
-          h: how(d), facing: FACING[scene.facing], angle: three ? degrees(scene.angle) : null, furthest: 0};
-        heading = 1;
-      }
-
-      /* The direction of the way at the player, for the way the player faces. */
-      function wayAt() {
-        var a = Wd.along(track.pts, Math.max(0, track.s - 0.05) / track.total);
-        var b = Wd.along(track.pts, Math.min(track.total, track.s + 0.05) / track.total);
-        var dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy);
-        if (l < 1e-6) {
-          var dd = Wd.DIRS[track.move];
-          return [dd[1], dd[0]];
-        }
-        return [dx / l, dy / l];
-      }
-
-      /* Where the held keys send the player: +1 on along the way, -1 back,
-       * 0 nowhere. Starts a way, or a stay, when the player stands in a room. */
-      function intent() {
-        if (ending) {
-          return ending.walkOn ? 1 : 0;
-        }
-        var d = heldKey();
-        if (!d || stay) {
-          return 0;
-        }
-        var key = KEY_MOVE[d.key];
-        if (key === "STAY") {
-          if (!track && speed === 0) {
-            stayStep(how(d));
+      /* The player has walked onto the floor of the next room: a move. */
+      function enterRoom(next) {
+        var move = null;
+        Object.keys(Wd.DIRS).forEach(function (m) {
+          var d = Wd.DIRS[m];
+          if (room[0] + d[0] === next[0] && room[1] + d[1] === next[1]) {
+            move = m;
           }
-          return 0;
-        }
-        var move = three ? FACING[quarterOf(scene.angle)] : key;
-        if (track) {
-          if (three) {
-            // on or back by the way the player faces, against the door ahead
-            var dd = Wd.DIRS[track.move], dot = dd[1] * Math.cos(scene.angle) + dd[0] * Math.sin(scene.angle);
-            if (!track.entered) {
-              return dot >= 0 ? 1 : -1;
-            }
-            if (dot >= -0.2) {
-              return 1;
-            }
-          } else {
-            if (move === track.move) {
-              return 1;
-            }
-            if (!track.entered) {
-              return move === OPPOSITE[track.move] ? -1 : 0;
-            }
-          }
-          if (speed > 0) {
-            return 0;                       // slows down first, then stands in the room
-          }
-          stand();
-        }
-        if (speed > 0 && move !== carry) {
-          return 0;
-        }
-        carry = null;
-        if (allowed().indexOf(move) < 0) {
-          walls += 1;
-          bump();
-          d.stale = true;
-          if (three) {
-            d.wall = {facing: quarterOf(scene.angle), room: Wd.key(room)};
-          }
-          speed = 0;
-          return 0;
-        }
-        setOff(move, d);
-        return 1;
-      }
-
-      /* Stops on the way after the room was entered: the player stands
-       * there, in the room. */
-      function stand() {
-        if (track && track.row && track.row.arrived_at === null) {
-          track.row.stopped_at = REC.now();
-        }
-        track = null;
-        speed = 0;
-      }
-
-      function enter() {
-        track.entered = true;
-        var st = takeStep(track.move, track.h, {facing: track.facing, angle: track.angle, stops: track.stops});
-        track.row = st.row;
+        });
+        var ms = moveStart || {t: REC.now(), press: REC.now(), key: "ArrowUp", code: "ArrowUp", held: true,
+          facing: FACING[scene.facing], angle: three ? degrees(scene.angle) : null};
+        var st = takeStep(move, {key: ms.key, code: ms.code, at: ms.t, press: ms.press, held: ms.held},
+          {facing: ms.facing, angle: ms.angle, left_at: leftAt});
+        away = null;
+        // the walk goes on from here, with the key still held
+        moveStart = {t: REC.now(), press: ms.press, key: ms.key, code: ms.code, held: true,
+          facing: FACING[scene.facing], angle: three ? degrees(scene.angle) : null};
         if (st.food !== null) {
           setHere(st.food, true);
           var from = left[st.food] === undefined ? world.level[st.food] : left[st.food];
@@ -849,116 +801,176 @@
         if (!three && SND) {
           SND.step(true);
         }
-        if (ending) {
-          ending.walkOn = true;               // the last room: walk on into it, then the end
-        }
       }
 
-      function updateWalk(dt) {
-        var dir = intent();
-        if (!track) {
-          speed = 0;
-          carry = null;
-          return;
-        }
-        var V = C.walk_tiles_per_s, A = C.speed_up_tiles_per_s2, D = C.slow_down_tiles_per_s2;
-        if (dir !== 0 && (dir === heading || speed === 0)) {
-          heading = dir;
-          speed = Math.min(V, speed + A * dt);
-          if (heading > 0) {
-            // slow down to stop at the end, unless the player walks on from there
-            var rem = track.total - track.s;
-            var on = !ending && wouldGoOn();
-            if (!on) {
-              speed = Math.min(speed, Math.max(Math.sqrt(2 * D * rem), V * 0.1));
+      /* Moves the player for the keys held: speeding up and slowing down,
+       * sliding along walls, guided through doors. */
+      function updateBody(dt) {
+        var wx = 0, wy = 0, top = C.walk_tiles_per_s;
+        if (!stay && !ending) {
+          if (three) {
+            var f = (isDown("UP") ? 1 : 0) - (isDown("DOWN") ? 1 : 0);
+            if (f < 0) {
+              top = C.back_tiles_per_s;
+            }
+            wx = Math.cos(scene.angle) * f;
+            wy = Math.sin(scene.angle) * f;
+          } else {
+            wx = (isDown("RIGHT") ? 1 : 0) - (isDown("LEFT") ? 1 : 0);
+            wy = (isDown("DOWN") ? 1 : 0) - (isDown("UP") ? 1 : 0);
+            var l = Math.hypot(wx, wy);
+            if (l > 0) {
+              wx /= l;
+              wy /= l;
             }
           }
-        } else {
-          speed = Math.max(0, speed - D * dt);
         }
-        var ds = heading * speed * dt;
-        track.s = Math.max(0, Math.min(track.total, track.s + ds));
-        track.furthest = Math.max(track.furthest, track.s);
-        var p = Wd.along(track.pts, track.total ? track.s / track.total : 1);
-        scene.x = p[0];
-        scene.y = p[1];
+        wx *= top;
+        wy *= top;
+        var pushing = wx !== 0 || wy !== 0;
+        var acc = (pushing ? C.speed_up_tiles_per_s2 : C.slow_down_tiles_per_s2) * dt;
+        var dx = wx - vx, dy = wy - vy, dl = Math.hypot(dx, dy);
+        if (dl > acc) {
+          dx *= acc / dl;
+          dy *= acc / dl;
+        }
+        vx += dx;
+        vy += dy;
+        var speed = Math.hypot(vx, vy);
+        if (speed < 0.02 && !pushing) {
+          vx = 0;
+          vy = 0;
+          speed = 0;
+        }
+        if (speed > 0 && pushing && !moveStart) {
+          var k = lastMoveKey();
+          moveStart = {t: REC.now(), press: k ? k.t : REC.now(), key: k ? k.key : "ArrowUp", code: k ? k.code : "",
+            held: k ? k.t < shownAt : true, facing: FACING[scene.facing], angle: three ? degrees(scene.angle) : null};
+        }
+        if (speed === 0) {
+          if (moveStart) {
+            stops += 1;
+          }
+          moveStart = null;
+        }
         if (speed > 0) {
-          track.still = false;
-        } else if (!track.still && !track.entered && track.s > 0) {
-          track.still = true;
-          track.stops += 1;
-        }
-        if (three) {
-          if (speed > 0 && !turning && !spin) {
-            var w = wayAt(), want = Math.atan2(w[1] * heading, w[0] * heading);
-            var diff = Math.atan2(Math.sin(want - scene.angle), Math.cos(want - scene.angle));
-            if (Math.abs(diff) < 0.75) {
-              scene.angle += diff * Math.min(1, dt * 6);
+          var x0 = scene.x, y0 = scene.y;
+          var nx = scene.x + vx * dt;
+          var hit = false;
+          if (free(nx, scene.y)) {
+            scene.x = nx;
+          } else {
+            hit = hit || Math.abs(vx) > 1;
+            toDoor(0, vx, dt);
+            vx = 0;
+          }
+          var ny = scene.y + vy * dt;
+          if (free(scene.x, ny)) {
+            scene.y = ny;
+          } else {
+            hit = hit || Math.abs(vy) > 1;
+            toDoor(1, vy, dt);
+            vy = 0;
+          }
+          if (hit && performance.now() - lastBump > 600) {
+            lastBump = performance.now();
+            walls += 1;
+            bump();
+          }
+          guide(dt, Math.hypot(vx, vy));
+          var moved = Math.hypot(scene.x - x0, scene.y - y0);
+          walked += moved;
+          if (!three) {
+            if (Math.hypot(vx, vy) > 0.3) {
+              scene.heading = Math.atan2(vy, vx);
+              scene.facing = quarterOf(scene.heading);
             }
+          } else {
+            var phase = bobPhase + moved * 2 * Math.PI / BOB_TILES;
+            if (Math.floor(phase / Math.PI) !== Math.floor(bobPhase / Math.PI) && SND) {
+              SND.step(false);
+            }
+            bobPhase = phase;
+            scene.bob = Math.sin(bobPhase) * BOB * Math.min(1, speed / C.walk_tiles_per_s);
           }
-          var phase = bobPhase + speed * dt * 2 * Math.PI / BOB_TILES;
-          if (Math.floor(phase / Math.PI) !== Math.floor(bobPhase / Math.PI) && SND) {
-            SND.step(false);
+          dirty = true;
+          rooms();
+        } else if (three && scene.bob !== 0) {
+          scene.bob *= Math.max(0, 1 - dt * 10);
+          if (Math.abs(scene.bob) < 1e-4) {
+            scene.bob = 0;
           }
-          bobPhase = phase;
-          scene.bob = Math.sin(bobPhase) * BOB * Math.min(1, speed / V);
-        } else if (speed > 0) {
-          scene.facing = facingOf(heading > 0 ? track.move : OPPOSITE[track.move]);
-        }
-        dirty = true;
-        if (!track.entered && track.s >= track.enterS) {
-          enter();
-        }
-        if (track.s >= track.total - 1e-6 && heading > 0) {
-          track.row.arrived_at = REC.now();
-          var goes = wouldGoOnNow();
-          carry = goes ? (three ? FACING[quarterOf(scene.angle)] : track.move) : null;
-          track = null;
-          speed = goes ? speed : 0;
-          if (ending) {
-            var e = ending;
-            ending = null;
-            REC.shown().then(function (at) { e.row.arrived_at = at; finish(e.how); });
-          }
-          return;
-        }
-        if (track.s <= 1e-6 && heading < 0 && !track.entered) {
-          // back where the walk began, in the same room: no step
-          back.push({started_at: track.h.at, back_at: REC.now(), step: t, room: R.roomName(room),
-            toward: R.roomName(track.to), move: track.move,
-            furthest: round(track.furthest / track.enterS, 3), held: track.h.held});
-          track = null;
-          speed = 0;
-          changed();
-          return;
-        }
-        if (track.entered && speed === 0 && dir === 0) {
-          stand();
+          dirty = true;
         }
       }
 
-      /* Whether the player walks on from the end of the way, into the next
-       * room, with the keys held now. */
-      function wouldGoOn() {
-        var d = heldKey();
-        if (!d || KEY_MOVE[d.key] === "STAY") {
-          return false;
+      /* Walking into a wall next to a door slides the player along the wall
+       * into the door. axis 0: the wall is across x (pushed with v along x). */
+      function toDoor(axis, v, dt) {
+        var side = v > 0 ? 1 : -1;
+        var cx = Math.floor(scene.x), cy = Math.floor(scene.y);
+        var best = null;
+        for (var k = -SLIDE_TILES; k <= SLIDE_TILES; k++) {
+          var tx = axis === 0 ? cx + side : cx + k, ty = axis === 0 ? cy + k : cy + side;
+          if (tx < 0 || ty < 0 || tx >= M.W || ty >= M.H) {
+            continue;
+          }
+          var kd = M.kind[ty * M.W + tx];
+          if ((kd === Wd.DOOR || kd === Wd.CORRIDOR) && (best === null || Math.abs(k) < Math.abs(best))) {
+            best = k;
+          }
         }
-        var move = three ? FACING[quarterOf(scene.angle)] : KEY_MOVE[d.key];
-        var at = track.entered ? room : track.to;
-        if (!three && move !== track.move) {
-          return false;
+        if (best === null) {
+          return;
         }
-        return maze.legal(at).indexOf(move) >= 0 && t + (track.entered ? 0 : 1) < s.steps;
+        var target = axis === 0 ? cy + best + 0.5 : cx + best + 0.5;
+        var at = axis === 0 ? scene.y : scene.x;
+        var by = Math.max(-SLIDE_SPEED * dt, Math.min(SLIDE_SPEED * dt, target - at));
+        by *= Math.min(1, Math.abs(v) / 1.5 + 0.3);
+        if (axis === 0 && free(scene.x, scene.y + by)) {
+          scene.y += by;
+        } else if (axis === 1 && free(scene.x + by, scene.y)) {
+          scene.x += by;
+        }
       }
 
-      function wouldGoOnNow() {
-        var d = heldKey();
-        if (!d || KEY_MOVE[d.key] === "STAY") {
-          return false;
+      /* Whether the player has left the floor of its room, come back to it,
+       * or walked onto the floor of the next room. */
+      function rooms() {
+        var under = roomUnder(scene.x, scene.y);
+        if (under && !R.sameRoom(under, room)) {
+          enterRoom(under);
+          return;
         }
-        var move = three ? FACING[quarterOf(scene.angle)] : KEY_MOVE[d.key];
-        return allowed().indexOf(move) >= 0;
+        var onFloor = onFloorOf(room, scene.x, scene.y);
+        if (!onFloor && !away) {
+          leftAt = REC.now();
+          away = {left_at: leftAt, furthest: 0, toward: null};
+        }
+        if (away) {
+          // how far towards the next room: from the edge of this room's floor
+          var rm = M.list[M.index[Wd.key(room)]];
+          var ex = Math.max(rm.c0 - scene.x, scene.x - (rm.c0 + Wd.ROOM), 0);
+          var ey = Math.max(rm.r0 - scene.y, scene.y - (rm.r0 + Wd.ROOM), 0);
+          var out = Math.max(ex, ey);
+          if (out > away.furthest) {
+            away.furthest = out;
+            var cx = rm.c0 + Wd.ROOM / 2, cy = rm.r0 + Wd.ROOM / 2;
+            var m = Math.abs(scene.x - cx) > Math.abs(scene.y - cy) ? (scene.x > cx ? "RIGHT" : "LEFT") :
+              (scene.y > cy ? "DOWN" : "UP");
+            away.toward = m;
+          }
+          if (onFloor && roomUnder(scene.x, scene.y)) {
+            if (away.furthest > 0.3) {
+              var d = away.toward ? Wd.DIRS[away.toward] : null;
+              back.push({left_at: away.left_at, back_at: REC.now(), step: t, room: R.roomName(room),
+                toward: d ? R.roomName([room[0] + d[0], room[1] + d[1]]) : null, move: away.toward,
+                furthest: round(Math.min(1, away.furthest / (Wd.ROOM - 1 + 2 * ENTER_TILES)), 3)});
+              changed();
+            }
+            away = null;
+          }
+        }
       }
 
       function updateFood(now, dt) {
@@ -994,13 +1006,6 @@
           });
           dirty = true;
         }
-        if ((!track || speed === 0) && three && scene.bob !== 0) {
-          scene.bob *= Math.max(0, 1 - dt * 10);
-          if (Math.abs(scene.bob) < 1e-4) {
-            scene.bob = 0;
-          }
-          dirty = true;
-        }
       }
 
       function frame(ts) {
@@ -1011,25 +1016,33 @@
         lastFrame = ts;
         var now = performance.now();
         if (three) {
-          updateTurn(now);
+          updateTurn(dt);
         }
         updateLight(now);
         updateFood(now, dt);
-        if (stay) {
-          if (now - stay.t0 >= C.stay_ms) {
-            stay.row.arrived_at = REC.now();
-            shownAt = stay.row.arrived_at;
-            stay = null;
-            if (ending) {
-              var e = ending;
-              ending = null;
-              REC.shown().then(function (at) { e.row.arrived_at = at; finish(e.how); });
-              return;
-            }
-            changed();
+        if (shownAt !== null) {
+          updateBody(dt);
+        }
+        if (stay && now - stay.t0 >= C.stay_ms) {
+          stay.row.arrived_at = REC.now();
+          shownAt = stay.row.arrived_at;
+          stay = null;
+          changed();
+          // Space still held: stay again
+          if (!ending && isDown("STAY") && onFloorOf(room, scene.x, scene.y)) {
+            var sk = Object.keys(down).filter(function (c) { return KEY_MOVE[down[c].key] === "STAY"; })[0];
+            stayStep({key: down[sk].key, code: sk, at: REC.now(), press: down[sk].t, held: true});
           }
-        } else if (shownAt !== null) {
-          updateWalk(dt);
+        }
+        if (ending && !stay && now - ending.t0 >= END_MS) {
+          var e = ending;
+          ending = null;
+          REC.shown().then(function (at) {
+            if (e.row.arrived_at === null && e.row.move === "STAY") {
+              e.row.arrived_at = at;
+            }
+            finish(e.how);
+          });
         }
         if (dirty && !over) {
           draw();

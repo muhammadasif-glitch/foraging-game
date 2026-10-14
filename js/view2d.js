@@ -176,7 +176,7 @@
     g.beginPath();
     g.arc(px, py, pr * 0.42, 0, 2 * Math.PI);
     g.fill();
-    var a = (scene.facing || 0) * Math.PI / 2;
+    var a = scene.heading !== undefined ? scene.heading : (scene.facing || 0) * Math.PI / 2;
     g.fillStyle = "#0c1016";
     g.beginPath();
     g.moveTo(px + Math.cos(a) * pr * 1.55, py + Math.sin(a) * pr * 1.55);

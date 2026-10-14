@@ -46,9 +46,14 @@
     this.zbuf = new Float32Array(this.rw);
   };
 
-  function fogMix(c, d, out) {
+  /* How much of a colour at distance d is left in the fog (0 to 1). */
+  function fog(d) {
     var f = Math.max(0, Math.min(1, 1 - d / FOG_FAR));
-    f = f * f * (3 - 2 * f);
+    return f * f * (3 - 2 * f);
+  }
+
+  function fogMix(c, d, out) {
+    var f = fog(d);
     out[0] = FOG[0] + (c[0] - FOG[0]) * f;
     out[1] = FOG[1] + (c[1] - FOG[1]) * f;
     out[2] = FOG[2] + (c[2] - FOG[2]) * f;
@@ -81,6 +86,18 @@
     return out;
   };
 
+  /* The floor colour of every room of a maze, kept with the maze. */
+  View.prototype.floorColours = function (M) {
+    if (!M.floorColours) {
+      var fc = new Float32Array(M.list.length * 3);
+      M.list.forEach(function (r, i) {
+        fc[i * 3] = r.rgb[0] * 0.42 + 40; fc[i * 3 + 1] = r.rgb[1] * 0.42 + 40; fc[i * 3 + 2] = r.rgb[2] * 0.42 + 40;
+      });
+      M.floorColours = fc;
+    }
+    return M.floorColours;
+  };
+
   View.prototype.ensurePlaces = function (M) {
     if (this.placesOf !== M) {
       this.places = Wd.paintingPlaces(M);
@@ -99,51 +116,50 @@
     var fov = Math.tan(33 * Math.PI / 180) * (w / h) / (4 / 3);
     var planeX = -dirY * fov, planeY = dirX * fov;
     var px = scene.x, py = scene.y, half = h / 2 + (scene.bob || 0) * h;
-    var col = [0, 0, 0], tmp = [0, 0, 0], lit3 = [0, 0, 0];
-    var x, y, o, L;
+    var col = [0, 0, 0], tmp = [0, 0, 0];
+    var x, y, o, L, f, f0, f1, f2;
+    var light = scene.light, lit = scene.lit;
+    var fc = this.floorColours(M);
 
     for (y = 0; y < Math.min(h, Math.ceil(half)); y++) {
       var t = Math.pow(Math.max(0, y / half), 1.6);
       var cr = SKY_TOP[0] + (SKY_LOW[0] - SKY_TOP[0]) * t;
       var cg = SKY_TOP[1] + (SKY_LOW[1] - SKY_TOP[1]) * t;
       var cb = SKY_TOP[2] + (SKY_LOW[2] - SKY_TOP[2]) * t;
-      for (x = 0; x < w; x++) {
-        o = (y * w + x) * 4;
+      for (x = 0, o = y * w * 4; x < w; x++, o += 4) {
         data[o] = cr; data[o + 1] = cg; data[o + 2] = cb; data[o + 3] = 255;
       }
     }
 
+    // the floor: 1 distance, so 1 fog, for each row of the screen
     var rx0 = dirX - planeX, ry0 = dirY - planeY, rx1 = dirX + planeX, ry1 = dirY + planeY;
+    var FL = T.floor, kind = M.kind, roomAt = M.roomAt, MW = M.W, MH = M.H;
     for (y = Math.max(0, Math.ceil(half)); y < h; y++) {
       var dist = (0.5 * h) / (y - half + 0.5);
+      f = fog(dist);
+      f0 = FOG[0] * (1 - f); f1 = FOG[1] * (1 - f); f2 = FOG[2] * (1 - f);
       var sx = dist * (rx1 - rx0) / w, sy = dist * (ry1 - ry0) / w;
       var fx = px + dist * rx0, fy = py + dist * ry0;
-      for (x = 0; x < w; x++, fx += sx, fy += sy) {
+      for (x = 0, o = y * w * 4; x < w; x++, fx += sx, fy += sy, o += 4) {
         var cx = Math.floor(fx), cy = Math.floor(fy);
-        var tx = T.floor[(Math.floor((fy - cy) * 64) & 63) * 64 + (Math.floor((fx - cx) * 64) & 63)];
-        tmp[0] = DARK_FLOOR[0] * tx; tmp[1] = DARK_FLOOR[1] * tx; tmp[2] = DARK_FLOOR[2] * tx;
-        if (cx >= 0 && cy >= 0 && cx < M.W && cy < M.H) {
-          var at = cy * M.W + cx, kd = M.kind[at];
-          L = kd === Wd.WALL ? 0 : lightOf(scene, at);
+        var tx = FL[(((fy - cy) * 64) & 63) * 64 + (((fx - cx) * 64) & 63)] * f;
+        var r = DARK_FLOOR[0], gg = DARK_FLOOR[1], bb = DARK_FLOOR[2];
+        if (cx >= 0 && cy >= 0 && cx < MW && cy < MH) {
+          var at = cy * MW + cx, kd = kind[at];
+          L = kd === Wd.WALL ? 0 : (light ? light[at] : (lit[at] ? 1 : 0));
           if (L > 0) {
-            if (kd === Wd.FLOOR) {
-              var rgb = M.list[M.roomAt[at]].rgb;
-              lit3[0] = rgb[0] * 0.42 + 40; lit3[1] = rgb[1] * 0.42 + 40; lit3[2] = rgb[2] * 0.42 + 40;
-            } else {
-              lit3[0] = 118; lit3[1] = 120; lit3[2] = 126;
-            }
-            tmp[0] = (DARK_FLOOR[0] + (lit3[0] - DARK_FLOOR[0]) * L) * tx;
-            tmp[1] = (DARK_FLOOR[1] + (lit3[1] - DARK_FLOOR[1]) * L) * tx;
-            tmp[2] = (DARK_FLOOR[2] + (lit3[2] - DARK_FLOOR[2]) * L) * tx;
+            var ri = kd === Wd.FLOOR ? roomAt[at] * 3 : -1;
+            var lr = ri >= 0 ? fc[ri] : 118, lg = ri >= 0 ? fc[ri + 1] : 120, lb = ri >= 0 ? fc[ri + 2] : 126;
+            r += (lr - r) * L; gg += (lg - gg) * L; bb += (lb - bb) * L;
           }
         }
-        fogMix(tmp, dist, col);
-        o = (y * w + x) * 4;
-        data[o] = col[0]; data[o + 1] = col[1]; data[o + 2] = col[2]; data[o + 3] = 255;
+        data[o] = f0 + r * tx; data[o + 1] = f1 + gg * tx; data[o + 2] = f2 + bb * tx; data[o + 3] = 255;
       }
     }
 
-    var base = [0, 0, 0];
+    // the walls: 1 distance, so 1 fog, for each column
+    var PL = T.plaster;
+    var b0, b1, b2;
     for (x = 0; x < w; x++) {
       var camX = 2 * x / w - 1;
       var rdx = dirX + planeX * camX, rdy = dirY + planeY * camX;
@@ -159,7 +175,7 @@
         } else {
           sdy += ddy; my += stepY; side = 1;
         }
-        if (mx < 0 || my < 0 || mx >= M.W || my >= M.H || M.kind[my * M.W + mx] === Wd.WALL) {
+        if (mx < 0 || my < 0 || mx >= MW || my >= MH || kind[my * MW + mx] === Wd.WALL) {
           break;
         }
       }
@@ -167,31 +183,30 @@
       z[x] = perp;
       // the wall takes the colour of the tile in front of it
       var fx2 = side === 0 ? mx - stepX : mx, fy2 = side === 1 ? my - stepY : my;
-      var front = fy2 * M.W + fx2, inside = fx2 >= 0 && fy2 >= 0 && fx2 < M.W && fy2 < M.H;
-      L = inside ? lightOf(scene, front) : 0;
+      var front = fy2 * MW + fx2, inside = fx2 >= 0 && fy2 >= 0 && fx2 < MW && fy2 < MH;
+      L = inside ? (light ? light[front] : (lit[front] ? 1 : 0)) : 0;
       var place = null;
-      base[0] = DARK_WALL[0]; base[1] = DARK_WALL[1]; base[2] = DARK_WALL[2];
+      b0 = DARK_WALL[0]; b1 = DARK_WALL[1]; b2 = DARK_WALL[2];
       if (L > 0) {
-        var lw;
-        if (M.roomAt[front] >= 0) {
-          var rc = M.list[M.roomAt[front]].rgb;
-          lw = [rc[0] * 0.62 + 78, rc[1] * 0.62 + 78, rc[2] * 0.62 + 78];
+        var l0, l1, l2;
+        if (roomAt[front] >= 0) {
+          var rc = M.list[roomAt[front]].rgb;
+          l0 = rc[0] * 0.62 + 78; l1 = rc[1] * 0.62 + 78; l2 = rc[2] * 0.62 + 78;
           var face = side === 0 ? (stepX > 0 ? 0 : 2) : (stepY > 0 ? 1 : 3);
           var k = places.at[front * 4 + face];
           if (k >= 0) {
             place = places.list[k];
           }
         } else {
-          lw = CORRIDOR_WALL;
+          l0 = CORRIDOR_WALL[0]; l1 = CORRIDOR_WALL[1]; l2 = CORRIDOR_WALL[2];
         }
-        base[0] = DARK_WALL[0] + (lw[0] - DARK_WALL[0]) * L;
-        base[1] = DARK_WALL[1] + (lw[1] - DARK_WALL[1]) * L;
-        base[2] = DARK_WALL[2] + (lw[2] - DARK_WALL[2]) * L;
+        b0 += (l0 - b0) * L; b1 += (l1 - b1) * L; b2 += (l2 - b2) * L;
       }
-      var shade = side === 1 ? 0.8 : 1;
+      f = fog(perp);
+      f0 = FOG[0] * (1 - f); f1 = FOG[1] * (1 - f); f2 = FOG[2] * (1 - f);
+      var shade = (side === 1 ? 0.8 : 1) * f;
       var along = side === 0 ? py + perp * rdy : px + perp * rdx;
-      var wallX = along - Math.floor(along);
-      var u = Math.floor(wallX * 64) & 63;
+      var u = ((along - Math.floor(along)) * 64) & 63;
       var pic = null, pu = 0;
       if (place) {
         var su = (along - place.start) / 2;
@@ -206,25 +221,21 @@
       var lineH = h / perp;
       var wallTop = half - lineH / 2;
       var top = Math.max(0, Math.floor(wallTop)), bot = Math.min(h, Math.ceil(half + lineH / 2));
-      for (y = top; y < bot; y++) {
+      var ps = shade * (0.85 + 0.15 * L), pd = pic ? pic.data : null;
+      for (y = top, o = (top * w + x) * 4; y < bot; y++, o += w * 4) {
         var v = (y - wallTop) / lineH;
-        if (pic && v >= PIC_V0 && v < PIC_V1) {
-          var pv = Math.min(pic.h - 1, Math.floor((v - PIC_V0) / (PIC_V1 - PIC_V0) * pic.h));
-          var q = (pv * pic.w + pu) * 4;
-          var ps = shade * (0.85 + 0.15 * L);
-          tmp[0] = (DARK_WALL[0] + (pic.data[q] - DARK_WALL[0]) * L) * ps;
-          tmp[1] = (DARK_WALL[1] + (pic.data[q + 1] - DARK_WALL[1]) * L) * ps;
-          tmp[2] = (DARK_WALL[2] + (pic.data[q + 2] - DARK_WALL[2]) * L) * ps;
+        if (pd && v >= PIC_V0 && v < PIC_V1) {
+          var q = (Math.min(pic.h - 1, Math.floor((v - PIC_V0) / (PIC_V1 - PIC_V0) * pic.h)) * pic.w + pu) * 4;
+          data[o] = f0 + (DARK_WALL[0] + (pd[q] - DARK_WALL[0]) * L) * ps;
+          data[o + 1] = f1 + (DARK_WALL[1] + (pd[q + 1] - DARK_WALL[1]) * L) * ps;
+          data[o + 2] = f2 + (DARK_WALL[2] + (pd[q + 2] - DARK_WALL[2]) * L) * ps;
         } else {
-          var s = shade * T.plaster[(Math.floor(v * 64) & 63) * 64 + u] * (0.92 + 0.08 * (1 - v));
-          if (pic && v >= PIC_V1 && v < PIC_V1 + 0.03) {
-            s *= 0.82;                         // the painting's shadow on the wall
+          var sh = shade * PL[((v * 64) & 63) * 64 + u] * (0.92 + 0.08 * (1 - v));
+          if (pd && v >= PIC_V1 && v < PIC_V1 + 0.03) {
+            sh *= 0.82;                        // the painting's shadow on the wall
           }
-          tmp[0] = base[0] * s; tmp[1] = base[1] * s; tmp[2] = base[2] * s;
+          data[o] = f0 + b0 * sh; data[o + 1] = f1 + b1 * sh; data[o + 2] = f2 + b2 * sh;
         }
-        fogMix(tmp, perp, col);
-        o = (y * w + x) * 4;
-        data[o] = col[0]; data[o + 1] = col[1]; data[o + 2] = col[2];
       }
     }
 
