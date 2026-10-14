@@ -3,49 +3,74 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Food rooms</title>
+  <meta name="theme-color" content="#0c1016">
+  <title>Food Rooms</title>
   <link rel="stylesheet" href="css/game.css">
 </head>
 <body>
+  <div id="stage">
+    <canvas id="c3d" hidden></canvas>
+    <canvas id="c2d" hidden></canvas>
+  </div>
+
+  <div id="hud" hidden>
+    <div class="hud-item">
+      <span class="hud-label">energy</span>
+      <span class="bar"><i id="energyBar"></i></span>
+      <span class="hud-value" id="energy"></span>
+      <span id="gain"></span>
+    </div>
+    <div class="hud-item" id="hereItem" hidden>
+      <span class="hud-label">food here</span>
+      <span class="hud-value" id="here"></span>
+      <span class="hud-label" id="worth"></span>
+    </div>
+    <div class="hud-item">
+      <span class="hud-label">eaten</span>
+      <span class="hud-value" id="eaten"></span>
+    </div>
+    <div class="hud-item" id="stepsItem">
+      <span class="hud-label">steps left</span>
+      <span class="hud-value" id="steps"></span>
+    </div>
+  </div>
+  <div id="gameKeys" hidden></div>
+
+  <div id="menu" class="overlay" hidden>
+    <div class="panel">
+      <h1 id="title">Food Rooms</h1>
+      <p class="sub" id="intro"></p>
+      <div class="row-label" id="viewLabel">View</div>
+      <div class="grid two" id="views"></div>
+      <div class="row-label" id="mazeLabel">Maze</div>
+      <div class="grid" id="mazes"></div>
+      <p class="keys" id="menuKeys"></p>
+      <button class="primary" id="play" tabindex="-1" disabled>Play &nbsp;<kbd>Enter</kbd></button>
+      <p class="small" id="menuStatus"></p>
+    </div>
+  </div>
+
+  <div id="end" class="overlay" hidden>
+    <div class="panel">
+      <h2 id="endTitle"></h2>
+      <p class="score" id="endScore"></p>
+      <p class="score-label" id="endLabel"></p>
+      <p class="keys" id="endAgain"></p>
+      <p class="small" id="endStatus"></p>
+    </div>
+  </div>
+
+  <div id="message" class="overlay" hidden>
+    <div class="panel">
+      <h2 id="msgTitle">Food Rooms</h2>
+      <p class="sub" id="msgBody">Loading...</p>
+    </div>
+  </div>
+
   <div id="test-banner" hidden>Test mode: the files are marked TEST_</div>
   <div id="focus-note" hidden>The game does not have the keyboard: click on this page to go on.</div>
-  <main>
-    <section id="text-screen">
-      <h1 id="text-title">Food rooms</h1>
-      <div id="text-body"><p>Loading...</p></div>
-      <input id="text-input" type="text" autocomplete="off" spellcheck="false" hidden>
-      <p id="text-prompt" class="prompt"></p>
-      <p id="text-status" class="status"></p>
-    </section>
-    <section id="game-screen" hidden>
-      <div class="game-head">
-        <span id="game-label"></span>
-        <span id="steps-left"></span>
-      </div>
-      <div class="game-body">
-        <div id="maze-box"><svg id="maze" role="img" aria-label="the maze"></svg></div>
-        <aside id="panel">
-          <div class="block">
-            <div class="block-title">Energy</div>
-            <div class="bar"><div id="energy-fill"></div></div>
-            <div class="bar-text"><span id="energy-text"></span> <span id="gain"></span></div>
-          </div>
-          <div class="block" id="food-block" hidden>
-            <div class="block-title">Food here</div>
-            <div class="bar"><div id="food-fill"></div></div>
-            <div class="bar-text" id="food-text"></div>
-          </div>
-          <div class="block keys">
-            <div><kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&rarr;</kbd> <kbd>&darr;</kbd> move</div>
-            <div><kbd>Space</kbd> stay</div>
-          </div>
-        </aside>
-      </div>
-      <div id="game-message" hidden></div>
-      <p id="game-prompt" class="prompt"></p>
-    </section>
-    <noscript><p>This game needs JavaScript.</p></noscript>
-  </main>
+  <noscript><p>This game needs JavaScript.</p></noscript>
+
   <script src="settings.js"></script>
   <script src="js/mazes.js"></script>
   <script src="js/rules.js"></script>
@@ -53,8 +78,9 @@
   <script src="js/config.js"></script>
   <script src="js/recorder.js"></script>
   <script src="js/datapipe.js"></script>
-  <script src="js/view.js"></script>
-  <script src="js/screens.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/view2d.js"></script>
+  <script src="js/view3d.js"></script>
   <script src="js/game.js"></script>
   <script src="js/main.js"></script>
 </body>

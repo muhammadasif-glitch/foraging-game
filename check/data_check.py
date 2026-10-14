@@ -75,7 +75,7 @@ def check_known(name, g, H):
     move the room entered and, with show.near, the rooms next to it."""
     bad = []
     env = H.GridWorldEnv(g["layout"]["maze"], H.POSSIBLE_ACTIONS, max_steps=False, goal=-1)
-    near = g["settings"]["show"]["near"]
+    near = g["settings"]["show"].get("near", True)
     food = {room(r): n for n, r in g["layout"]["food_rooms"].items()}
     known = set()
     for s in g["steps"]:
@@ -156,6 +156,10 @@ def main(argv):
         bad += b
         b, k = check_known(os.path.basename(path), f["game"], H)
         bad += b
+        for field in ("trial_type", "player", "session_id"):
+            if not f.get(field):
+                bad.append("%s: no %s at the top of the file (DataPipe's validation needs it)"
+                           % (os.path.basename(path), field))
         shown += k
         games += 1
         partial += f["file"] == "partial game"

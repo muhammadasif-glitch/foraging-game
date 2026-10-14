@@ -1,7 +1,7 @@
 /* Settings to games: puts a game's settings together (game, then its
- * condition, then its game plan, then the link), checks them, picks its
- * layout, and gives the numbers the rules need, together with the same game
- * written as the settings of a model run. */
+ * condition, then the link, then the maze the player chose), checks them,
+ * picks its layout, and gives the numbers the rules need, together with the
+ * same game written as the settings of a model run. */
 (function (root) {
   "use strict";
   var FG = root.FG = root.FG || {};
@@ -137,25 +137,21 @@
     return v;
   }
 
-  /* The settings of 1 game: game, then the condition, then the plan's own
-   * keys, then the link. */
-  function gameSettings(all, conditionName, plan, link) {
+  /* The settings of 1 game: game, then the condition, then the link, then
+   * the maze the player chose (null: the maze of the settings). */
+  function gameSettings(all, conditionName, maze, link) {
     var s = copy(all.game);
     if (conditionName !== null) {
-      if (!all.conditions || !(conditionName in all.conditions)) {
+      if (!all.conditions || !Object.prototype.hasOwnProperty.call(all.conditions, conditionName)) {
         throw new SettingsError("no condition '" + conditionName + "'. The conditions are: " +
           Object.keys(all.conditions || {}).join(", "));
       }
       merge(s, all.conditions[conditionName], "conditions." + conditionName, true);
     }
-    var own = {};
-    Object.keys(plan).forEach(function (k) {
-      if (["kind", "of", "seed", "layout"].indexOf(k) < 0) {
-        own[k] = plan[k];
-      }
-    });
-    merge(s, own, "session", true);
     merge(s, link || {}, "link", true);
+    if (maze) {
+      s.maze = maze;
+    }
     return check(s);
   }
 
@@ -215,13 +211,9 @@
     number(st.move_cost, "stomach.move_cost", 0, 1e9);
     number(st.stay_cost, "stomach.stay_cost", 0, 1e9);
     oneOf(st.at_zero, ["end", "continue"], "stomach.at_zero");
-    oneOf(s.show.map, ["found", "full"], "show.map");
     oneOf(s.show.level, ["exact", "bin"], "show.level");
     flag(s.show.food_gained, "show.food_gained");
     flag(s.show.steps_left, "show.steps_left");
-    flag(s.show.near, "show.near");
-    flag(s.show.worth, "show.worth");
-    flag(s.memory_test, "memory_test");
     return s;
   }
 
@@ -232,9 +224,9 @@
     return {eat: eat, refill: refill};
   }
 
-  /* The layout of 1 game: start room and food rooms. fixed: the plan's
-   * layout ({start_room, food_rooms: {name: room}}), or null to pick at
-   * random with rand. */
+  /* The layout of 1 game: start room and food rooms. fixed: a layout
+   * ({start_room, food_rooms: {name: room}}), or null to pick at random with
+   * rand. */
   function layout(s, fixed, rand) {
     var maze = R.maze(s.maze);
     var names = Object.keys(s.food_rooms);
@@ -304,62 +296,40 @@
     };
   }
 
-  /* The fixed seed of a practice or shared game's layout, when the plan
-   * gives no layout: the same layout for every player. */
-  function fixedLayoutSeed(plan, number) {
-    return plan.seed !== undefined ? (plan.seed >>> 0) ^ 0x5bd1e995 : 7919 * number;
-  }
-
   /* Checks the whole settings file, with the link's settings, before anyone
-   * plays: every condition with every game, and the layouts. */
+   * plays: every condition in every maze of the menu, with 20 layouts each. */
   function checkAll(all, link) {
-    if (!all || !all.game || !all.session || !all.session.length) {
-      throw new SettingsError("settings.js must have game and session");
+    if (!all || !all.game || !all.menu) {
+      throw new SettingsError("settings.js must have game and menu");
     }
     if (!all.datapipe || typeof all.datapipe.experiment_id !== "string") {
       throw new SettingsError("datapipe.experiment_id must be the ID of the DataPipe experiment");
     }
     oneOf(all.datapipe.if_no_condition, ["random", "stop"], "datapipe.if_no_condition");
+    if (!Array.isArray(all.menu.mazes) || !all.menu.mazes.length) {
+      throw new SettingsError("menu.mazes must list at least 1 maze");
+    }
+    all.menu.mazes.forEach(function (m) {
+      if (!FG.MAZES[m]) {
+        throw new SettingsError("menu.mazes: no maze " + m + "; the mazes are " + Object.keys(FG.MAZES).join(", "));
+      }
+    });
+    if (!Array.isArray(all.menu.views) || !all.menu.views.length) {
+      throw new SettingsError("menu.views must list 2d, 3d or both");
+    }
+    all.menu.views.forEach(function (v) { oneOf(v, ["2d", "3d"], "menu.views"); });
     var names = Object.keys(all.conditions || {});
     (names.length ? names : [null]).forEach(function (c) {
-      var made = [];
-      all.session.forEach(function (plan, i) {
-        var where = "session[" + (i + 1) + "]" + (c ? " with the condition " + c : "");
-        oneOf(plan.kind, ["practice", "shared", "new", "repeat"], where + ".kind");
-        if (plan.kind === "repeat" && !(plan.of >= 1 && plan.of <= i && all.session[plan.of - 1])) {
-          throw new SettingsError(where + ": repeat needs of: the number of an earlier game");
-        }
-        if ((plan.kind === "new" || plan.kind === "repeat") && plan.layout) {
-          throw new SettingsError(where + ": a " + plan.kind + " game takes no layout (practice and shared games do)");
-        }
-        if (plan.kind === "shared" && plan.seed === undefined) {
-          throw new SettingsError(where + ": a shared game needs a seed, the same for every player");
-        }
-        var s;
+      all.menu.mazes.forEach(function (m) {
+        var where = m + (c ? " with the condition " + c : "");
         try {
-          s = gameSettings(all, c, plan, link);
+          var s = gameSettings(all, c, m, link);
+          for (var k = 0; k < 20; k++) {
+            layout(s, null, FG.random.make(k + 1));
+          }
         } catch (err) {
           throw new SettingsError(where + ": " + err.message);
         }
-        if (plan.kind === "repeat") {
-          var o = made[plan.of - 1];
-          if (o.maze !== s.maze || Object.keys(o.food_rooms).join() !== Object.keys(s.food_rooms).join()) {
-            throw new SettingsError(where + " repeats game " + plan.of + ", which has another maze or other food rooms");
-          }
-        } else {
-          try {
-            if (plan.kind === "new") {
-              for (var k = 0; k < 20; k++) {
-                layout(s, null, FG.random.make(k + 1));
-              }
-            } else {
-              layout(s, plan.layout, FG.random.make(fixedLayoutSeed(plan, i + 1)));
-            }
-          } catch (err) {
-            throw new SettingsError(where + ": " + err.message);
-          }
-        }
-        made.push(s);
       });
     });
     return true;
@@ -371,7 +341,6 @@
     merge: merge,
     fromLink: fromLink,
     roomOf: roomOf,
-    fixedLayoutSeed: fixedLayoutSeed,
     gameSettings: gameSettings,
     speeds: speeds,
     layout: layout,

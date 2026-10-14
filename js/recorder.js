@@ -117,6 +117,15 @@
 
   /* The keys and attention events of 1 phase (or of every phase not in a
    * list of phases). */
+  /* Where the records are now, to take what came after it later. */
+  function mark() {
+    return {keys: keys.length, attention: attention.length};
+  }
+
+  function since(m) {
+    return {keys: keys.slice(m.keys), attention: attention.slice(m.attention)};
+  }
+
   function keysOf(phases) {
     return keys.filter(function (k) { return phases.indexOf(k.phase) >= 0; });
   }
@@ -196,7 +205,7 @@
   FG.recorder = {
     start: start, now: now, at: at, setPhase: setPhase, listen: listen, stop: stop,
     stillTapping: stillTapping,
-    install: install,
+    install: install, mark: mark, since: since,
     keysOf: keysOf, attentionOf: attentionOf, keysNotIn: keysNotIn, attentionNotIn: attentionNotIn,
     shown: shown, browser: browser,
     get phase() { return phase; }

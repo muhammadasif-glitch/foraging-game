@@ -1,34 +1,60 @@
-/* The session: consent, player code, condition, instructions, the games of
- * settings.js in order with the memory test after each, the end question,
- * and the files sent to DataPipe.
+/* The session: the first page (the view and the maze), the games, the end
+ * of each game, and the files sent to DataPipe.
  *
- * Link options: ?player=CODE fills in the code, ?condition=NAME or auto,
- * ?test=1 marks every file as a test (TEST_ in front of its name),
- * ?send=0 sends nothing (the files are printed to the browser console), and
- * ?set.<key>=<value> changes a setting of every game, for trying things out.
+ * Link options: ?condition=NAME or auto, ?view=2d or 3d and ?maze=NAME to
+ * choose for the player at first (they can still change it), ?test=1 marks
+ * every file as a test (TEST_ in front of its name), ?send=0 sends nothing
+ * (the files are printed to the browser console), and ?set.<key>=<value>
+ * changes a setting of every game, for trying things out.
  *
- * Files, each complete on its own:
- *   <player>_<session>_<n>-<kind>.json             game n, with its memory test
- *   <player>_<session>_<n>-<kind>.partial.json     game n, cut short
- *   <player>_<session>_<n>-<kind>.partial-short.json  the same, shortened (sent on closing)
- *   <player>_<session>_end.json                    the rest of the session
- *   <player>_<session>_end.partial.json            the same, for a session cut short
+ * The player code is made by the game and kept in the browser, so that a
+ * player who comes back with the same browser keeps it.
+ *
+ * Files, 1 per game, each complete on its own:
+ *   <player>_<session>_<n>.json                game n
+ *   <player>_<session>_<n>.partial.json        game n, cut short
+ *   <player>_<session>_<n>.partial-short.json  the same, shortened (sent on closing)
  */
 (function (root) {
   "use strict";
   var FG = root.FG = root.FG || {};
-  var REC = FG.recorder, S = FG.screens;
+  var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "1.1.0";
+  FG.VERSION = "2.0.0";
   var FORMAT = "foraging-game";
-  var FORMAT_VERSION = 1;
+  var FORMAT_VERSION = 2;
+  var TRIAL_TYPE = "foraging-game";
+  // keys sooner than this after the first page or the end of a game appear
+  // are taken as left over from the screen before
+  var MENU_GUARD_MS = 400, END_GUARD_MS = 450;
+  var MAZE_TEXT = {
+    grid_4x4: ["4 &times; 4", "16 rooms"],
+    grid_6x6: ["6 &times; 6", "36 rooms"],
+    grid_two_4x4: ["Two 4 &times; 4", "33 rooms, joined by a bridge"]
+  };
 
-  function escape(text) {
-    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  function $(id) {
+    return document.getElementById(id);
   }
 
-  function stop(title, message) {
-    S.page(title, "<p>" + message + "</p>", "");
+  function escape(t) {
+    return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  }
+
+  function text(name) {
+    return (FG.SETTINGS.texts || {})[name] || "";
+  }
+
+  function only(id) {
+    ["menu", "end", "message"].forEach(function (o) { $(o).hidden = o !== id; });
+  }
+
+  function message(title, body) {
+    $("hud").hidden = true;
+    $("gameKeys").hidden = true;
+    $("msgTitle").textContent = title;
+    $("msgBody").innerHTML = body;
+    only("message");
   }
 
   /* What the game needs from the browser. */
@@ -39,7 +65,8 @@
       "URLSearchParams": typeof root.URLSearchParams === "function",
       "performance.now": !!(root.performance && root.performance.now),
       "requestAnimationFrame": typeof root.requestAnimationFrame === "function",
-      "BigInt": typeof root.BigInt === "function"
+      "BigInt": typeof root.BigInt === "function",
+      "canvas": !!document.createElement("canvas").getContext
     };
     return Object.keys(need).filter(function (k) { return !need[k]; });
   }
@@ -67,7 +94,7 @@
           error: r.condition >= names.length ? "DataPipe has more conditions than settings.js" : null};
       }
       if (all.datapipe.if_no_condition === "stop") {
-        stop(FG.text("title"), "The game could not be started. Please try again later.");
+        message(text("title"), "The game could not be started. Please try again later.");
         throw "stopped";
       }
       var pick = FG.random.make(FG.random.freshSeed()).pick(names);
@@ -75,35 +102,35 @@
     });
   }
 
-  function textVars(all, s) {
-    return {start: s.stomach.start, size: s.stomach.size, move_cost: s.stomach.move_cost,
-      stay_cost: s.stomach.stay_cost, steps: s.steps,
-      at_zero_text: FG.text(s.stomach.at_zero === "end" ? "at_zero_end" : "at_zero_continue", {}),
-      map_text: FG.text(s.show.near ? "map_near" : "map_visited", {}),
-      worth_text: s.show.worth ? FG.text("worth", {}) : "",
-      start_text: FG.text(all.session[0].kind === "practice" ? "start_practice" : "start_first", {}),
-      first_game_text: all.session[0].kind === "practice" ? FG.text("first_practice", {}) : ""};
-  }
-
-  function label(all, number) {
-    var plan = all.session[number - 1];
-    if (plan.kind === "practice") {
-      return "Practice game";
+  /* The player code: made once and kept in this browser. */
+  function playerCode(expId) {
+    var k = "foraging-game:" + expId + ":player";
+    try {
+      var v = root.localStorage.getItem(k);
+      if (v && /^[0-9a-f]{8}$/.test(v)) {
+        return {code: v, how: "kept in this browser"};
+      }
+    } catch (err) {
+      // no storage: a new code each time
     }
-    var real = all.session.filter(function (q) { return q.kind !== "practice"; }).length;
-    var before = all.session.slice(0, number).filter(function (q) { return q.kind !== "practice"; }).length;
-    return "Game " + before + " of " + real;
+    var code = FG.random.freshId(8);
+    try {
+      root.localStorage.setItem(k, code);
+    } catch (err) {
+      return {code: code, how: "new, not kept"};
+    }
+    return {code: code, how: "new"};
   }
 
   function run() {
     var lacking = missing();
     if (lacking.length) {
-      stop("Food rooms", "This game needs a recent browser (Chrome, Edge, Firefox or Safari). " +
+      message(text("title"), "This game needs a recent browser (Chrome, Edge, Firefox or Safari). " +
         "This one lacks: " + escape(lacking.join(", ")) + ".");
       return Promise.resolve(null);
     }
     if (touchOnly()) {
-      stop("Food rooms", "This game is played with a keyboard. Please open this page on a computer.");
+      message(text("title"), "This game is played with a keyboard. Please open this page on a computer.");
       return Promise.resolve(null);
     }
     var p = new URLSearchParams(root.location.search);
@@ -120,268 +147,361 @@
           Object.keys(all.conditions || {}).join(", "));
       }
     } catch (err) {
-      stop("Settings error", escape(err.message) + "<br>Fix settings.js or the link and open the page again.");
+      message("Settings error", escape(err.message) + "<br>Fix settings.js or the link and open the page again.");
       return Promise.resolve(null);
     }
     REC.start();
     REC.install();
 
+    var player = playerCode(all.datapipe.experiment_id);
     var session = {
-      session_id: FG.random.freshId(12), player: null, test: test,
-      started: new Date().toISOString(), condition: null, link: p.toString(),
-      browser: null, seed: FG.random.freshSeed()
+      session_id: FG.random.freshId(12), player: player.code, player_code: player.how, test: test,
+      started: new Date().toISOString(), condition: null, link: p.toString(), browser: null,
+      seed: FG.random.freshSeed()
     };
     FG.datapipe.init(all.datapipe.experiment_id, session.session_id, {send: send});
     if (test) {
-      document.getElementById("test-banner").hidden = false;
+      $("test-banner").hidden = false;
     }
-    var earlier = {left: null};
-    FG.datapipe.flush().then(function (left) { earlier.left = left; });
+    FG.datapipe.flush();
 
-    var consentRecord = null, codeRecord = null, visits = null, answer = null;
-    var games = [], breaks = [], sent = [];
-    var phases = [];
-    var running = false;
-    var refreshGame = null;      // keeps the game in progress again, with the time of closing
+    var views = {"2d": FG.view2d.create($("c2d")), "3d": FG.view3d.create($("c3d"))};
+    var current = null;           // the view on the screen
+    var scene = null;             // what it shows
+    var playing = false, failed = false, games = 0;
+    var mark = REC.mark();
+    var refreshGame = null;       // keeps the game in progress again, with the time of closing
+    var ready = false;
+
+    function sizeViews() {
+      views["2d"].resize(root.innerWidth, root.innerHeight, 70, 46);
+      views["3d"].resize(root.innerWidth, root.innerHeight);
+      if (current && scene) {
+        views[current].draw(scene);
+      }
+    }
+
+    function useView(v) {
+      current = v;
+      $("c2d").hidden = v !== "2d";
+      $("c3d").hidden = v !== "3d";
+      return views[v];
+    }
+
+    /* The maze behind the first page: every room in light, no food. */
+    function preview(name, v) {
+      var M = Wd.build(name), all2 = {};
+      M.list.forEach(function (r) { all2[r.i + "," + r.j] = true; });
+      var start = FG.rules.maze(name).rooms()[0];
+      var first = FG.rules.maze(name).legal(start).filter(function (m) { return m !== "STAY"; })[0];
+      var facing = FG.game.FACING.indexOf(first);
+      var c = Wd.centre(M, start);
+      scene = {maze: M, x: c[0], y: c[1], angle: facing * Math.PI / 2, facing: facing,
+        lit: Wd.lit(M, all2, all2), food: [], here: null};
+      useView(v).draw(scene);
+    }
 
     function header(kind) {
-      return {format: FORMAT, format_version: FORMAT_VERSION, file: kind, game_version: FG.VERSION,
-        player: session.player, session_id: session.session_id, test: session.test,
-        session_started: session.started, condition: session.condition, link: session.link,
-        browser: session.browser};
+      return {format: FORMAT, format_version: FORMAT_VERSION, file: kind, trial_type: TRIAL_TYPE,
+        game_version: FG.VERSION, player: session.player, player_code: session.player_code,
+        session_id: session.session_id, test: session.test, session_started: session.started,
+        condition: session.condition, link: session.link, browser: session.browser};
     }
 
     function fileName(rest) {
       return (test ? "TEST_" : "") + session.player + "_" + session.session_id + "_" + rest + ".json";
     }
 
-    function endFile(kind) {
-      var f = header(kind);
-      f.session = {seed: session.seed, settings_file: all, consent: consentRecord, code: codeRecord,
-        instructions: visits, games: games, breaks: breaks, end_question: answer,
-        ended: kind === "end" ? new Date().toISOString() : null, ended_at: REC.now(),
-        earlier_files_left: earlier.left, sending: FG.datapipe.log.slice()};
-      f.keys = REC.keysNotIn(phases);
-      f.attention = REC.attentionNotIn(phases);
-      return JSON.parse(JSON.stringify(f));
-    }
-
-    /* The session so far, kept for the case the page is closed. */
-    function keepSession() {
-      if (session.player) {
-        FG.datapipe.keepSlot("session", fileName("end.partial"), endFile("partial session"));
-      }
-    }
-
-    root.addEventListener("pagehide", function () {
-      if (running) {
-        if (refreshGame) {
-          refreshGame();
+    // ---------------------------------------------------------- status
+    var watching = null;
+    function status(r) {
+      var line;
+      if (r === "saving") {
+        line = text("saving");
+      } else if (r === "slow") {
+        line = text("still_saving");
+      } else if (r.ok) {
+        line = text("saved");
+      } else {
+        line = text(FG.datapipe.state().kept ? "not_saved" : "not_saved_open");
+        if (!watching) {
+          watching = setInterval(function () {
+            if (FG.datapipe.state().left === 0) {
+              clearInterval(watching);
+              watching = null;
+              status({ok: true});
+            }
+          }, 5000);
         }
-        keepSession();
+      }
+      $("endStatus").textContent = line;
+      $("menuStatus").textContent = games ? line : "";
+    }
+
+    // ---------------------------------------------------------- page 1
+    var choice = {
+      view: Math.max(0, all.menu.views.indexOf(p.get("view"))),
+      maze: Math.max(0, all.menu.mazes.indexOf(p.get("maze"))),
+      row: 0
+    };
+
+    function buildMenu() {
+      $("title").textContent = text("title");
+      $("intro").textContent = text("intro");
+      $("menuKeys").innerHTML = text("menu_keys");
+      $("views").innerHTML = all.menu.views.map(function (v) {
+        return '<div class="card"><div class="card-size">' + v.toUpperCase() + '</div>' +
+          '<div class="card-meta">' + text("view_" + v) + '</div></div>';
+      }).join("");
+      $("views").className = "grid" + (all.menu.views.length === 2 ? " two" : "");
+      $("mazes").innerHTML = all.menu.mazes.map(function (m, k) {
+        var t = MAZE_TEXT[m] || [escape(m), ""];
+        return '<div class="card"><div class="card-size">' + t[0] + '</div>' +
+          '<div class="card-meta">' + t[1] + '</div><div class="card-meta"><kbd>' + (k + 1) + '</kbd></div></div>';
+      }).join("");
+    }
+
+    function drawMenu() {
+      Array.prototype.forEach.call($("views").children, function (c, k) { c.classList.toggle("on", k === choice.view); });
+      Array.prototype.forEach.call($("mazes").children, function (c, k) { c.classList.toggle("on", k === choice.maze); });
+      $("viewLabel").classList.toggle("active", choice.row === 0);
+      $("mazeLabel").classList.toggle("active", choice.row === 1);
+      $("play").disabled = !ready;
+      preview(all.menu.mazes[choice.maze], all.menu.views[choice.view]);
+    }
+
+    function menu() {
+      return new Promise(function (resolve) {
+        $("hud").hidden = true;
+        $("gameKeys").hidden = true;
+        only("menu");
+        REC.setPhase("menu");
+        drawMenu();
+        var rec = {shown_at: null, chosen_at: null, view: null, maze: null, actions: []};
+        REC.shown().then(function (at) {
+          rec.shown_at = at;
+          REC.listen(function (e, entry) {
+            if (e.type !== "keydown") {
+              return undefined;
+            }
+            if (e.repeat) {
+              return "ignored: repeat";
+            }
+            if (entry.t - at < MENU_GUARD_MS) {
+              return "ignored: too soon";
+            }
+            var n = {"1": 0, "2": 1, "3": 2, "4": 3}[e.key];
+            var rows = [all.menu.views.length, all.menu.mazes.length];
+            var what = null;
+            if (n !== undefined && n < all.menu.mazes.length) {
+              choice.maze = n;
+              choice.row = 1;
+              what = "maze";
+            } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+              choice.row = 1 - choice.row;
+              what = "row";
+            } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+              var d = e.key === "ArrowLeft" ? -1 : 1;
+              if (choice.row === 0) {
+                choice.view = (choice.view + d + rows[0]) % rows[0];
+              } else {
+                choice.maze = (choice.maze + d + rows[1]) % rows[1];
+              }
+              what = choice.row === 0 ? "view" : "maze";
+            } else if (e.key === "Enter") {
+              if (!ready) {
+                return "ignored: not ready";
+              }
+              REC.listen(null);
+              rec.chosen_at = entry.t;
+              rec.view = all.menu.views[choice.view];
+              rec.maze = all.menu.mazes[choice.maze];
+              resolve(rec);
+              return "play";
+            } else {
+              return "ignored: key";
+            }
+            rec.actions.push({t: entry.t, key: e.key, row: choice.row === 0 ? "view" : "maze",
+              view: all.menu.views[choice.view], maze: all.menu.mazes[choice.maze]});
+            drawMenu();
+            return what;
+          });
+        });
+      });
+    }
+
+    // ---------------------------------------------------------- a game
+    function playGame(menuRec) {
+      var n = games + 1;
+      var settings = FG.config.gameSettings(all, session.condition.name, menuRec.maze, link);
+      var layoutSeed = FG.random.derive(session.seed, n);
+      var seed = FG.random.derive(session.seed, 1000 + n);
+      var lay = FG.config.layout(settings, null, FG.random.make(layoutSeed));
+      var view = useView(menuRec.view);
+      only(null);
+      $("hud").hidden = false;
+      $("gameKeys").innerHTML = text("keys_" + menuRec.view);
+      $("gameKeys").hidden = false;
+      playing = true;
+
+      function gameFile(rec, kind) {
+        var f = header(kind);
+        f.menu = menuRec;
+        f.game = rec;
+        var got = REC.since(mark);
+        f.keys = got.keys;
+        f.attention = got.attention;
+        return JSON.parse(JSON.stringify(f));
+      }
+
+      function keepGame(rec) {
+        var f = gameFile(rec, "partial game");
+        if (!f.game.ended) {
+          f.game.ended = {how: "page closed", step: f.game.steps.length - 1, at: REC.now()};
+        } else {
+          f.game.ended.page_closed_at = REC.now();
+        }
+        if (!f.game.result) {
+          f.game.result = FG.game.modelResult(f.game);
+        }
+        var short = header("partial game");
+        short.menu = menuRec;
+        short.game = FG.game.shortForm(f.game);
+        FG.datapipe.keepSlot("game", fileName(n + ".partial"), f,
+          {filename: fileName(n + ".partial-short"), obj: short});
+      }
+
+      var latest = null;
+      refreshGame = function () {
+        if (latest) {
+          keepGame(latest);
+        }
+      };
+      var g = {number: n, view: menuRec.view, renderer: {draw: function (sc) { scene = sc; view.draw(sc); }},
+        settings: settings, layout: lay, seed: seed, layout_seed: layoutSeed,
+        onChange: function (rec) { latest = rec; keepGame(rec); }};
+      return FG.game.play(g).then(function (rec) {
+        games = n;
+        playing = false;
+        refreshGame = null;
+        var saving = FG.datapipe.save(fileName(String(n)), gameFile(rec, "game"));
+        FG.datapipe.dropSlot("game");
+        mark = REC.mark();
+        if (!send) {
+          root.console.log("send=0: game " + n, root.FG_SENT[root.FG_SENT.length - 1]);
+        }
+        return endOfGame(rec, saving);
+      });
+    }
+
+    /* The end of a game: the food eaten, and Enter back to the first page. */
+    function endOfGame(rec, saving) {
+      var eaten = rec.steps.reduce(function (a, st) { return a + st.paid; }, 0);
+      $("endTitle").textContent = text(rec.ended.how === "starved" ? "starved" : "finished");
+      $("endScore").textContent = (Math.round(eaten * 10) / 10).toFixed(1);
+      $("endLabel").textContent = text("eaten") + " in " + rec.ended.step + " steps";
+      $("endAgain").innerHTML = text("again");
+      $("hud").hidden = true;
+      $("gameKeys").hidden = true;
+      only("end");
+      status("saving");
+      var slow = setTimeout(function () { status("slow"); }, 25000);
+      saving.then(function (r) {
+        clearTimeout(slow);
+        status(r);
+      });
+      REC.setPhase("end " + rec.number);
+      return new Promise(function (resolve) {
+        REC.shown().then(function (at) {
+          REC.listen(function (e, entry) {
+            if (e.type !== "keydown") {
+              return undefined;
+            }
+            if (e.key === "Enter" && !e.repeat && entry.t - at >= END_GUARD_MS) {
+              REC.listen(null);
+              resolve();
+              return "menu";
+            }
+            return entry.t - at < END_GUARD_MS ? "ignored: too soon" : "ignored: key";
+          });
+        });
+      });
+    }
+
+    function loop() {
+      return menu().then(playGame).then(loop);
+    }
+
+    // ---------------------------------------------------------- the page
+    root.addEventListener("resize", sizeViews);
+    root.addEventListener("pagehide", function () {
+      if (refreshGame) {
+        refreshGame();
       }
       FG.datapipe.closeSlots();
     });
     root.addEventListener("beforeunload", function (e) {
-      if (running) {
+      if (playing) {
         e.preventDefault();
         e.returnValue = "";
       }
     });
     root.addEventListener("blur", function () {
-      if (running) {
-        document.getElementById("focus-note").hidden = false;
+      if (playing) {
+        $("focus-note").hidden = false;
       }
     });
     root.addEventListener("focus", function () {
-      document.getElementById("focus-note").hidden = true;
+      $("focus-note").hidden = true;
     });
 
-    var failed = false;
     function fatal(err) {
       if (failed) {
         return;
       }
       failed = true;
-      running = false;
+      playing = false;
       REC.stop();
       try {
-        keepSession();
+        if (refreshGame) {
+          refreshGame();
+        }
         FG.datapipe.closeSlots();
       } catch (e2) {
         // nothing more can be kept
       }
-      stop(FG.text("title"), "Something went wrong, and the game cannot go on. What was played so far is " +
+      message(text("title"), "Something went wrong, and the game cannot go on. What was played so far is " +
         "kept. Please tell the researchers: " + escape(err && err.message ? err.message : err));
     }
 
     // only the game's own errors stop it, not those of other scripts in the
     // page (a browser extension, for example)
-    function ours(where) {
-      return typeof where === "string" && where.indexOf(root.location.href.replace(/[?#].*$/, "").replace(/[^\/]*$/, "")) === 0;
-    }
+    var here = root.location.href.replace(/[?#].*$/, "").replace(/[^\/]*$/, "");
     root.addEventListener("error", function (e) {
-      if (ours(e.filename)) {
+      if (typeof e.filename === "string" && e.filename.indexOf(here) === 0) {
         fatal(e.error || e.message);
       }
     });
     root.addEventListener("unhandledrejection", function (e) {
       var stack = e.reason && e.reason.stack;
-      if (typeof stack === "string" && stack.indexOf(root.location.href.replace(/[?#].*$/, "").replace(/[^\/]*$/, "")) >= 0) {
+      if (typeof stack === "string" && stack.indexOf(here) >= 0) {
         fatal(e.reason);
       }
     });
 
-    return S.consent().then(function (c) {
-      consentRecord = c;
-      if (!c.agreed) {
-        throw "declined";
-      }
-      running = true;
-      return S.code(p.get("player"));
-    }).then(function (c) {
-      codeRecord = c;
-      session.player = c.code;
-      if (c.code.toLowerCase() === "test") {
-        test = session.test = true;
-        document.getElementById("test-banner").hidden = false;
-      }
-      S.page(FG.text("title"), "<p>Getting ready...</p>", "");
-      return Promise.all([REC.browser(), chooseCondition(all, p.get("condition"))]);
-    }).then(function (both) {
+    buildMenu();
+    sizeViews();
+    var start = loop();
+    return Promise.all([REC.browser(), chooseCondition(all, p.get("condition"))]).then(function (both) {
       session.browser = both[0];
       session.condition = both[1];
-      keepSession();
-      var firstReal = all.session.filter(function (q) { return q.kind !== "practice"; })[0] || all.session[0];
-      var vars = textVars(all, FG.config.gameSettings(all, session.condition.name, firstReal, link));
-      return S.instructions(vars);
-    }).then(function (v) {
-      visits = v;
-      keepSession();
-      var chain = Promise.resolve();
-      var layouts = [];
-      all.session.forEach(function (plan, i) {
-        chain = chain.then(function () {
-          var number = i + 1;
-          var settings = FG.config.gameSettings(all, session.condition.name, plan, link);
-          var lay, seed, layoutSeed;
-          if (plan.kind === "repeat") {
-            lay = layouts[plan.of - 1].layout;
-            seed = layouts[plan.of - 1].seed;
-            layoutSeed = layouts[plan.of - 1].layoutSeed;
-          } else if (plan.kind === "new") {
-            seed = plan.seed !== undefined ? plan.seed : FG.random.derive(session.seed, 1000 + number);
-            layoutSeed = FG.random.derive(session.seed, number);
-            lay = FG.config.layout(settings, null, FG.random.make(layoutSeed));
-          } else {
-            seed = plan.seed !== undefined ? plan.seed : FG.random.derive(session.seed, 1000 + number);
-            layoutSeed = FG.config.fixedLayoutSeed(plan, number);
-            lay = FG.config.layout(settings, plan.layout, FG.random.make(layoutSeed));
-          }
-          layouts.push({layout: lay, seed: seed, layoutSeed: layoutSeed});
-          var rest = number + "-" + plan.kind;
-          var phaseNames = ["game " + number, "memory " + number];
-          phases.push.apply(phases, phaseNames);
-
-          function gameFile(rec, kind) {
-            var f = header(kind);
-            f.game = rec;
-            f.keys = REC.keysOf(phaseNames);
-            f.attention = REC.attentionOf(phaseNames);
-            return JSON.parse(JSON.stringify(f));
-          }
-
-          function keepGame(rec) {
-            var f = gameFile(rec, "partial game");
-            if (!f.game.ended) {
-              f.game.ended = {how: "page closed", step: f.game.steps.length - 1, at: REC.now()};
-            } else {
-              f.game.ended.page_closed_at = REC.now();
-            }
-            if (!f.game.result) {
-              f.game.result = FG.game.modelResult(f.game);
-            }
-            var short = header("partial game");
-            short.game = FG.game.shortForm(f.game);
-            FG.datapipe.keepSlot("game", fileName(rest + ".partial"), f,
-              {filename: fileName(rest + ".partial-short"), obj: short});
-          }
-
-          var latest = null;
-          function changed(rec) {
-            latest = rec;
-            keepGame(rec);
-          }
-          refreshGame = function () {
-            if (latest) {
-              keepGame(latest);
-            }
-          };
-          var g = {number: number, kind: plan.kind, label: label(all, number),
-            repeat_of: plan.kind === "repeat" ? plan.of : null, settings: settings, layout: lay,
-            seed: seed, layout_seed: layoutSeed, onChange: changed};
-          return FG.game.play(g).then(function (rec) {
-            var after = settings.memory_test ?
-              FG.game.memoryTest(g, rec, function (test) { rec.memory_test = test; changed(rec); }) :
-              Promise.resolve(null);
-            return after.then(function (memory) {
-              rec.memory_test = memory;
-              games.push({number: number, kind: plan.kind, file: fileName(rest), ended: rec.ended});
-              sent.push(FG.datapipe.save(fileName(rest), gameFile(rec, "game")));
-              FG.datapipe.dropSlot("game");
-              refreshGame = null;
-              keepSession();
-              if (i < all.session.length - 1) {
-                return S.pause(number, g.label).then(function (b) {
-                  breaks.push(b);
-                  keepSession();
-                });
-              }
-              return null;
-            });
-          });
-        });
-      });
-      return chain;
-    }).then(function () {
-      return S.endQuestion();
-    }).then(function (a) {
-      answer = a;
-      running = false;
-      S.thanks();
-      S.status(FG.text("saving", {}));
-      var slow = setTimeout(function () { S.status(FG.text("still_saving", {})); }, 25000);
-      sent.push(FG.datapipe.save(fileName("end"), endFile("end")));
-      FG.datapipe.dropSlot("session");
-      return Promise.all(sent).then(function (results) {
-        clearTimeout(slow);
-        return results;
-      });
-    }).then(function (results) {
-      if (!results) {
-        return results;
+      ready = true;
+      if (!$("menu").hidden) {
+        $("play").disabled = false;
       }
-      var ok = results.every(function (r) { return r.ok; });
-      var st = FG.datapipe.state();
-      S.status(FG.text(ok ? "saved" : (st.kept ? "not_saved" : "not_saved_open"), {}));
-      if (!ok) {
-        // the queue keeps trying; say so when it has got through
-        var watch = setInterval(function () {
-          if (FG.datapipe.state().left === 0) {
-            clearInterval(watch);
-            S.status(FG.text("saved", {}));
-          }
-        }, 5000);
-      }
-      if (!send) {
-        root.console.log("send=0: the files of this session", root.FG_SENT);
-      }
-      return results;
+      return start;
     }).catch(function (err) {
-      if (err === "stopped") {
-        running = false;
-        FG.datapipe.dropSlot("session");
-      } else if (err !== "declined") {
+      if (err !== "stopped") {
         fatal(err);
       }
     });

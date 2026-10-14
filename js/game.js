@@ -1,27 +1,34 @@
-/* 1 game: the player moves with the arrow keys and stays with Space, the
- * world follows js/rules.js, and every step is recorded. Then, if the
- * settings ask for it, the memory test.
+/* 1 game, in the 2D or the 3D view. The world follows js/rules.js, which
+ * gives the numbers of the model; every step and every key is recorded.
+ *
+ * The moves are the model's: LEFT, RIGHT, UP, DOWN and STAY, 1 room a step.
+ *   2D  the arrow keys move in their direction, Space stays.
+ *   3D  the up arrow walks through the door ahead (the move in the direction
+ *       the player faces), the left and right arrows turn, the down arrow
+ *       turns around, Space stays. A turn is not a step: it costs nothing
+ *       and the world does not change; it is recorded.
+ * A move towards a wall is not a step either: nothing changes, the view
+ * shakes, and the key is recorded.
+ *
+ * What the player is shown is what the model's agent knows: the rooms it has
+ * been in and, from the first step on, the rooms next to the room it is in;
+ * a food room among them shows its worth; the level only in the room the
+ * player is in (check/map_check.py).
  *
  * The caller hears of every change (g.onChange(record)), so that the game so
- * far is kept and reaches the researchers even if the page is closed in the
- * middle of the game or of its memory test. */
+ * far is kept and reaches the researchers even if the page is closed. */
 (function (root) {
   "use strict";
   var FG = root.FG = root.FG || {};
-  var R = FG.rules, V = FG.view, REC = FG.recorder;
+  var R = FG.rules, Wd = FG.world, REC = FG.recorder;
 
   var KEY_MOVE = {ArrowLeft: "LEFT", ArrowRight: "RIGHT", ArrowUp: "UP", ArrowDown: "DOWN", " ": "STAY",
     Left: "LEFT", Right: "RIGHT", Up: "UP", Down: "DOWN", Spacebar: "STAY"};
-  // keys pressed sooner than this after a new screen are taken as left over
-  // from the screen before, not as answers to the new one
+  var FACING = ["RIGHT", "DOWN", "LEFT", "UP"];          // facing 0 east, 1 south, 2 west, 3 north
+  // keys pressed sooner than this after a game starts are taken as left over
+  // from the menu
   var TOO_SOON_MS = 300;
-  // the memory test cannot be ended this soon, so that Space tapped on from
-  // the game does not skip it
-  var MEMORY_MIN_MS = 1500;
-  // Space presses that go on from the screen before, less than this apart,
-  // do not end a screen (Space held or tapped on and on goes through
-  // nothing); a pause this long ends such a run
-  var PAUSE_MS = 400;
+  var WALK_MS_2D = 240, WALK_TILES_PER_S_3D = 7.5, TURN_MS = 170;
 
   function $(id) {
     return document.getElementById(id);
@@ -32,6 +39,10 @@
     return Math.round(x * f) / f;
   }
 
+  function copy(x) {
+    return JSON.parse(JSON.stringify(x));
+  }
+
   function levelText(level, show, edges) {
     if (show.level === "bin") {
       return ["empty", "part full", "full"][R.binOf(level, edges)];
@@ -40,43 +51,29 @@
   }
 
   function energyColour(share) {
-    return share >= 0.5 ? "#2f8f4e" : share >= 0.25 ? "#c98a0b" : "#c0392b";
+    return share >= 0.5 ? "#34c759" : share >= 0.25 ? "#ffb340" : "#ff5f57";
   }
 
-  function show(id, on) {
-    $(id).hidden = !on;
-  }
-
-  function shake() {
-    var box = $("maze-box");
-    box.classList.remove("shake");
-    void box.offsetWidth;
-    box.classList.add("shake");
-  }
-
-  function gain(text) {
-    var g = $("gain");
-    g.textContent = text;
-    g.classList.remove("pop");
-    if (text) {
-      void g.offsetWidth;
-      g.classList.add("pop");
-    }
+  function nudge(el, cls) {
+    el.classList.remove(cls);
+    void el.offsetWidth;
+    el.classList.add(cls);
   }
 
   function modified(e) {
     return e.ctrlKey || e.altKey || e.metaKey;
   }
 
-  function copy(x) {
-    return JSON.parse(JSON.stringify(x));
+  function facingOf(move) {
+    return FACING.indexOf(move);
   }
 
-  /* g: {number, kind, label, settings, layout, seed, layout_seed, repeat_of,
-   * onChange(record)}. Resolves to the game's record. */
+  /* g: {number, view ("2d" or "3d"), renderer (draw(scene)), settings,
+   * layout, seed, layout_seed, onChange(record)}. Resolves to the record. */
   function play(g) {
     var s = g.settings;
     var maze = R.maze(g.layout.maze);
+    var M = Wd.build(g.layout.maze);
     var sp = FG.config.speeds(s.food);
     var names = Object.keys(s.food_rooms);
     var foodRooms = {};
@@ -93,24 +90,24 @@
 
     var room = g.layout.start_room.slice();
     var t = 0;
-    var seen = {};
-    seen[V.key(room)] = true;
-    var found = {};
-    // rooms whose food the player has been shown, and the food rooms by key
-    var known = {};
+    var visited = {}, known = {}, found = {};
     var foodAt = {};
-    names.forEach(function (n) { foodAt[V.key(g.layout.food_rooms[n])] = n; });
-    var steps = [];
-    var accepting = false;
-    var over = false;
+    names.forEach(function (n) { foodAt[Wd.key(g.layout.food_rooms[n])] = n; });
+    // the 3D view starts facing a door
+    var facing = g.view === "3d" ? facingOf(maze.legal(room).filter(function (m) { return m !== "STAY"; })[0]) : 0;
+    var c0 = Wd.centre(M, room);
+    var scene = {maze: M, x: c0[0], y: c0[1], angle: facing * Math.PI / 2, facing: facing,
+      lit: null, food: [], here: null};
+    var eaten = 0;
+    var steps = [], turns = [];
+    var accepting = false, over = false, busy = false;
     var shownAt = null;
-    var walls = 0, others = 0;
+    var walls = 0, others = 0, turnsBefore = 0;
     var holding = {};
     var record = {
-      number: g.number, kind: g.kind, label: g.label, practice: g.kind === "practice",
-      repeat_of: g.repeat_of || null, seed: g.seed, layout_seed: g.layout_seed, layout: layoutNames(g.layout),
-      settings: s, speeds: sp, started: new Date().toISOString(), started_at: REC.now(),
-      ended: null, steps: steps, draws: draws, result: null, memory_test: null
+      number: g.number, view: g.view, maze: g.layout.maze, seed: g.seed, layout_seed: g.layout_seed,
+      layout: layoutNames(g.layout), settings: s, speeds: sp, started: new Date().toISOString(),
+      started_at: REC.now(), ended: null, steps: steps, turns: turns, draws: draws, result: null
     };
 
     function levels() {
@@ -126,11 +123,11 @@
       return maze.legal(room);
     }
 
-    /* The player is shown the food of the room it is in and, with show.near
-     * from the first step on, of the rooms next to it through an open side,
-     * as the model's agent adds them to its map. Returns the rooms new to
-     * the player: {rooms: [names], food: [food room names]}. */
+    /* The room the player is in, and, after the first step, the rooms next
+     * to it through a door, as the model's agent adds them to its map.
+     * Returns the rooms new to the player and the food rooms among them. */
     function learn(near) {
+      visited[Wd.key(room)] = true;
       var add = [room];
       if (near) {
         maze.legal(room).forEach(function (m) {
@@ -141,7 +138,7 @@
       }
       var out = {rooms: [], food: []};
       add.forEach(function (r) {
-        var k = V.key(r);
+        var k = Wd.key(r);
         if (!known[k]) {
           known[k] = true;
           out.rooms.push(R.roomName(r));
@@ -153,49 +150,32 @@
       return out;
     }
 
-    /* What the map shows: rooms drawn as outlines, and the food signs. */
-    function mapState() {
-      var outline = {}, food = {};
-      if (s.show.near) {
-        Object.keys(known).forEach(function (k) {
-          if (!seen[k]) {
-            outline[k] = true;
-          }
-        });
-      } else {
-        allowed().forEach(function (m) {
-          var k = V.key(maze.next(room, m));
-          if (m !== "STAY" && !seen[k]) {
-            outline[k] = true;
-          }
-        });
-      }
-      Object.keys(known).forEach(function (k) {
-        if (foodAt[k] !== undefined) {
-          food[k] = s.show.worth ? Number(s.food_rooms[foodAt[k]].worth) : true;
-        }
-      });
-      return {outline: outline, food: food};
+    function updateScene() {
+      scene.lit = Wd.lit(M, known, visited);
+      scene.food = names.filter(function (n) { return known[Wd.key(g.layout.food_rooms[n])]; })
+        .map(function (n) { return {room: g.layout.food_rooms[n], worth: s.food_rooms[n].worth}; });
+      var n = world.nameAt(room);
+      scene.here = n === null ? null : {room: room.slice(), level: world.level[n], worth: s.food_rooms[n].worth};
     }
 
-    function render() {
-      $("game-label").textContent = g.label;
-      $("steps-left").textContent = s.show.steps_left ? "Steps left: " + (s.steps - t) : "";
+    function hud() {
       var e = stomach.energy, share = e / stomach.size;
-      $("energy-fill").style.width = Math.max(0, Math.min(100, share * 100)) + "%";
-      $("energy-fill").style.background = energyColour(share);
-      $("energy-text").textContent = round(e, 1).toFixed(1) + " / " + round(stomach.size, 1);
+      $("energyBar").style.width = Math.max(0, Math.min(100, share * 100)) + "%";
+      $("energyBar").style.background = energyColour(share);
+      $("energy").textContent = round(e, 1).toFixed(1) + " / " + round(stomach.size, 1);
+      $("eaten").textContent = round(eaten, 1).toFixed(1);
+      $("steps").textContent = s.steps - t;
+      $("stepsItem").hidden = !s.show.steps_left;
       var n = world.nameAt(room);
-      show("food-block", n !== null);
+      $("hereItem").hidden = n === null;
       if (n !== null) {
-        var lv = world.level[n];
-        $("food-fill").style.width = (s.show.level === "bin" ? [8, 50, 100][R.binOf(lv, edges)] : lv * 100) + "%";
-        $("food-text").textContent = levelText(lv, s.show, edges);
+        $("here").textContent = levelText(world.level[n], s.show, edges);
+        $("worth").textContent = "worth " + s.food_rooms[n].worth;
       }
-      $("game-prompt").innerHTML = t === 0 && s.first_step_stay ? FG.text("first_step_stay", {}) : "";
-      var m = mapState();
-      V.draw($("maze"), {maze: maze, seen: seen, all: s.show.map === "full", at: room,
-        legal: allowed(), outline: m.outline, food: m.food});
+    }
+
+    function draw() {
+      g.renderer.draw(scene);
     }
 
     function row(extra) {
@@ -204,7 +184,8 @@
         step: t, room: R.roomName(room), energy: stomach.energy, levels: levels(),
         in_food_room: n, seen: n === null ? null : world.level[n],
         shown: n === null ? null : levelText(world.level[n], s.show, edges),
-        energy_shown: round(stomach.energy, 1), steps_left: s.steps - t
+        energy_shown: round(stomach.energy, 1), eaten: eaten, steps_left: s.steps - t,
+        facing: FACING[scene.facing]
       };
       Object.keys(extra || {}).forEach(function (k) { base[k] = extra[k]; });
       return base;
@@ -235,54 +216,69 @@
       }
     }
 
+    /* Moves the view over ms milliseconds; fn(share 0 to 1) sets the scene. */
+    function animate(ms, fn) {
+      return new Promise(function (resolve) {
+        var t0 = performance.now();
+        function frame(now) {
+          var k = ms > 0 ? Math.min(1, (now - t0) / ms) : 1;
+          fn(k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
+          draw();
+          if (k < 1) {
+            requestAnimationFrame(frame);
+          } else {
+            resolve();
+          }
+        }
+        requestAnimationFrame(frame);
+      });
+    }
+
     return new Promise(function (resolve) {
       REC.setPhase("game " + g.number);
       var first = learn(false);
+      updateScene();
       steps.push(row({shown_at: null, key_at: null, decision_ms: null, released_at: null, hold_ms: null,
         key: null, move: null, room_from: null, room_to: R.roomName(room), legal: allowed(),
-        walls_before: 0, other_keys_before: 0, paid: 0, cost: 0, food_lost: 0, change: null, draw: null,
-        found: null, revealed: true, known_new: first.rooms, known_food_new: first.food,
+        facing_before: null, turns_before: 0, walls_before: 0, other_keys_before: 0,
+        paid: 0, cost: 0, food_lost: 0, change: null, draw: null,
+        found: null, known_new: first.rooms, known_food_new: first.food,
         events: first.food.map(function (n) { return {type: "known", room: n}; })}));
       if (world.nameAt(room) !== null) {
-        found[V.key(room)] = true;
+        found[Wd.key(room)] = true;
         steps[0].found = world.nameAt(room);
         steps[0].events.push({type: "found", room: world.nameAt(room)});
       }
-      show("game-message", false);
-      show("text-screen", false);
-      show("game-screen", true);
-      $("panel").classList.remove("dim");
-      gain("");
-      render();
+      $("gain").textContent = "";
+      hud();
+      draw();
       changed();
       afterShown().then(function () { steps[0].shown_at = shownAt; });
 
       function finish(how) {
         accepting = false;
         over = true;
+        REC.listen(null);
         record.ended = {how: how, step: t, at: REC.now()};
         record.result = modelResult(record);
         changed();
-        var m = $("game-message");
-        m.innerHTML = (how === "starved" ? "<b>You ran out of energy.</b>" : "<b>The game is over.</b>") +
-          "<br>Press <b>Space</b> to go on.";
-        show("game-message", true);
-        REC.shown().then(function (at) {
-          REC.listen(function (e, entry) {
-            if (e.type === "keyup") {
-              release(e, entry);
-              return undefined;
-            }
-            if (e.key === " " && !e.repeat && entry.t - at >= TOO_SOON_MS * 1.5 &&
-                !REC.stillTapping(" ", at, entry.t, PAUSE_MS)) {
-              REC.listen(null);
-              show("game-message", false);
-              resolve(record);
-              return "go on";
-            }
-            return entry.t - at < TOO_SOON_MS * 1.5 ? "ignored: too soon" : "ignored: game over";
-          });
+        resolve(record);
+      }
+
+      function turn(by, e, entry) {
+        busy = true;
+        var from = scene.facing, a0 = scene.angle;
+        scene.facing = (scene.facing + by + 4) % 4;
+        turnsBefore += 1;
+        turns.push({t: entry.t, step: t, key: e.key, from: FACING[from], to: FACING[scene.facing]});
+        changed();
+        animate(TURN_MS * Math.abs(by), function (k) { scene.angle = a0 + by * Math.PI / 2 * k; }).then(function () {
+          busy = false;
         });
+      }
+
+      function bump() {
+        nudge($("stage"), "shake");
       }
 
       REC.listen(function (e, entry) {
@@ -290,10 +286,7 @@
           release(e, entry);
           return undefined;
         }
-        var move = KEY_MOVE[e.key];
-        // a key pressed before the screen of this choice was shown (also one
-        // in the same moment, handled just after) is not an answer to it
-        if (!accepting || entry.t < shownAt) {
+        if (!accepting || busy || entry.t < shownAt) {
           return "ignored: busy";
         }
         if (e.repeat) {
@@ -302,16 +295,25 @@
         if (modified(e)) {
           return "ignored: with Ctrl, Alt or Meta";
         }
-        if (!move) {
+        var key = KEY_MOVE[e.key];
+        if (!key) {
           others += 1;
           return "ignored: key";
         }
         if (t === 0 && entry.t - shownAt < TOO_SOON_MS) {
           return "ignored: too soon";
         }
+        var move = key;
+        if (g.view === "3d" && key !== "STAY") {
+          if (key === "LEFT" || key === "RIGHT" || key === "DOWN") {
+            turn(key === "LEFT" ? -1 : key === "RIGHT" ? 1 : 2, e, entry);
+            return "turn";
+          }
+          move = FACING[scene.facing];
+        }
         if (allowed().indexOf(move) < 0) {
           walls += 1;
-          shake();
+          bump();
           return t === 0 && s.first_step_stay && move !== "STAY" ? "not allowed" : "wall";
         }
         step(move, e, entry);
@@ -320,25 +322,29 @@
 
       function step(move, e, entry) {
         accepting = false;
+        busy = true;
         var legal = allowed();
+        var facingBefore = FACING[scene.facing];
         t += 1;
         var from = room;
         var to = maze.next(room, move);
         var what = world.advance(to);
         var paid = world.paid();
         var en = stomach.step(!R.sameRoom(to, from), paid);
+        eaten += paid;
         room = to;
+        if (g.view === "2d" && move !== "STAY") {
+          scene.facing = facingOf(move);
+        }
         var n = world.nameAt(room);
-        var learned = learn(s.show.near);
+        var learned = learn(true);
         var events = learned.food.map(function (f) { return {type: "known", room: f}; });
         var newFound = null;
-        if (n !== null && !found[V.key(room)]) {
-          found[V.key(room)] = true;
+        if (n !== null && !found[Wd.key(room)]) {
+          found[Wd.key(room)] = true;
           newFound = n;
           events.push({type: "found", room: n});
         }
-        var revealed = !seen[V.key(room)];
-        seen[V.key(room)] = true;
         var before = steps[steps.length - 1].levels;
         names.forEach(function (name) {
           var lv = world.level[name];
@@ -356,28 +362,55 @@
           events.push({type: "food lost", amount: en.lost});
         }
         var r = row({
-          shown_at: shownAt, key_at: entry.t, decision_ms: round(entry.t - shownAt, 3),
+          shown_at: shownAt, key_at: entry.t, decision_ms: round(entry.t - shownAt, 3), arrived_at: null,
           released_at: null, hold_ms: null, key: e.key === " " || e.key === "Spacebar" ? "Space" : e.key,
           move: move, room_from: R.roomName(from), room_to: R.roomName(to), legal: legal,
-          walls_before: walls, other_keys_before: others,
+          facing_before: facingBefore, turns_before: turnsBefore, walls_before: walls, other_keys_before: others,
           paid: paid, cost: en.cost, food_lost: en.lost, change: what.rooms, draw: what.draw,
-          found: newFound, revealed: revealed, known_new: learned.rooms, known_food_new: learned.food,
-          events: events
+          found: newFound, known_new: learned.rooms, known_food_new: learned.food, events: events
         });
         walls = 0;
         others = 0;
+        turnsBefore = 0;
         steps.push(r);
         holding[e.code || e.key] = r;
-        render();
-        gain(paid > 0 && s.show.food_gained ? "+" + round(paid, 1).toFixed(1) : "");
-        if (stomach.energy <= 0 && s.stomach.at_zero === "end") {
-          finish("starved");
-        } else if (t >= s.steps) {
-          finish("finished");
+        changed();
+        var walk;
+        if (move === "STAY") {
+          walk = Promise.resolve();
         } else {
-          changed();
-          afterShown();
+          var pts = Wd.pathTo(M, from, Wd.DIRS[move]);
+          var ms = g.view === "3d" ? Wd.pathLength(pts) / WALK_TILES_PER_S_3D * 1000 : WALK_MS_2D;
+          // the food of the room left goes with it; the room entered shows its own on arrival
+          scene.here = null;
+          walk = animate(ms, function (k) {
+            var p = Wd.along(pts, k);
+            scene.x = p[0];
+            scene.y = p[1];
+          });
         }
+        walk.then(function () {
+          updateScene();
+          hud();
+          draw();
+          if (paid > 0 && s.show.food_gained) {
+            $("gain").textContent = "+" + round(paid, 1).toFixed(1);
+            nudge($("gain"), "pop");
+          } else {
+            $("gain").textContent = "";
+          }
+          busy = false;
+          if (stomach.energy <= 0 && s.stomach.at_zero === "end") {
+            REC.shown().then(function (at) { r.arrived_at = at; finish("starved"); });
+          } else if (t >= s.steps) {
+            REC.shown().then(function (at) { r.arrived_at = at; finish("finished"); });
+          } else {
+            afterShown().then(function () {
+              r.arrived_at = shownAt;
+              changed();
+            });
+          }
+        });
       }
     });
   }
@@ -408,174 +441,8 @@
     return {settings: settings, rows: rows, summary: {food_not_as_predicted: null}};
   }
 
-  /* After a game: where were the food rooms, and how full are they now.
-   * The map shows the rooms the player has been in, and as outlines the
-   * other rooms it knew (with show.near), without the food signs.
-   * onChange(test) hears of every answer. */
-  function memoryTest(g, rec, onChange) {
-    var maze = R.maze(rec.layout.maze);
-    function keyOf(name) {
-      var rc = /^s(\d)(\d)$/.exec(name);
-      return rc[1] + "," + rc[2];
-    }
-    var seen = {}, outline = {}, knownFood = [];
-    rec.steps.forEach(function (st) {
-      seen[keyOf(st.room)] = true;
-    });
-    rec.steps.forEach(function (st) {
-      (st.known_new || []).forEach(function (name) {
-        if (!seen[keyOf(name)]) {
-          outline[keyOf(name)] = true;
-        }
-      });
-      knownFood = knownFood.concat(st.known_food_new || []);
-    });
-    var cursor = FG.config.roomOf(rec.steps[rec.steps.length - 1].room, maze, "room");
-    var marked = {}, order = [];
-    var test = {shown_at: null, actions: [], marked: [], levels: [], done_at: null,
-      truth: {food_rooms: rec.layout.food_rooms, levels_now: rec.steps[rec.steps.length - 1].levels,
-        found: rec.steps.filter(function (st) { return st.found; }).map(function (st) { return st.found; }),
-        known: knownFood}};
-    REC.setPhase("memory " + g.number);
-
-    function draw(asking) {
-      V.draw($("maze"), {maze: maze, seen: seen, outline: outline, at: null, legal: [], food: {},
-        cursor: asking ? null : cursor, marked: marked, asking: asking || null});
-    }
-
-    function moveCursor(dir) {
-      var d = {LEFT: [0, -1], RIGHT: [0, 1], UP: [-1, 0], DOWN: [1, 0]}[dir];
-      var r = cursor[0] + d[0], c = cursor[1] + d[1];
-      while (r >= 0 && c >= 0 && r < maze.rows && c < maze.cols) {
-        if (seen[r + "," + c] || outline[r + "," + c]) {
-          cursor = [r, c];
-          return true;
-        }
-        r += d[0];
-        c += d[1];
-      }
-      return false;
-    }
-
-    function digit(e) {
-      var m = /^(?:Digit|Numpad)([0-9])$/.exec(e.code || "");
-      if (m) {
-        return Number(m[1]);
-      }
-      return /^[0-9]$/.test(e.key) ? Number(e.key) : null;
-    }
-
-    return new Promise(function (resolve) {
-      show("text-screen", false);
-      show("game-screen", true);
-      show("food-block", false);
-      show("game-message", false);
-      $("game-label").textContent = g.label + ": questions";
-      $("steps-left").textContent = "";
-      $("panel").classList.add("dim");
-      gain("");
-      $("game-prompt").innerHTML = FG.text("memory_where", {});
-      draw(null);
-      onChange(test);
-      var stage = "where", question = null, readyAt = Infinity;
-      REC.shown().then(function (at) {
-        test.shown_at = at;
-        readyAt = at + TOO_SOON_MS;
-      });
-
-      function ask() {
-        if (test.levels.length >= order.length) {
-          test.done_at = REC.now();
-          REC.listen(null);
-          $("panel").classList.remove("dim");
-          $("game-prompt").innerHTML = "";
-          onChange(test);
-          resolve(test);
-          return;
-        }
-        var room = order[test.levels.length];
-        question = {room: R.roomName(room), shown_at: null, key_at: null, answer: null, ms: null};
-        test.levels.push(question);
-        readyAt = Infinity;
-        $("game-prompt").innerHTML = FG.text("memory_level", {});
-        draw(room);
-        var q = question;
-        REC.shown().then(function (at) {
-          q.shown_at = at;
-          if (question === q) {
-            readyAt = at + TOO_SOON_MS;
-          }
-        });
-      }
-
-      REC.listen(function (e, entry) {
-        if (e.type !== "keydown") {
-          return undefined;
-        }
-        if (e.repeat) {
-          return "ignored: repeat";
-        }
-        if (modified(e)) {
-          return "ignored: with Ctrl, Alt or Meta";
-        }
-        if (entry.t < readyAt) {
-          return "ignored: too soon";
-        }
-        if (stage === "where") {
-          var dir = KEY_MOVE[e.key];
-          if (dir && dir !== "STAY") {
-            var moved = moveCursor(dir);
-            test.actions.push({t: entry.t, what: moved ? "cursor" : "cursor blocked", room: R.roomName(cursor)});
-            draw(null);
-            onChange(test);
-            return moved ? "cursor" : "cursor blocked";
-          }
-          if (e.key === "Enter") {
-            var kk = V.key(cursor);
-            var what;
-            if (marked[kk]) {
-              delete marked[kk];
-              order = order.filter(function (r) { return V.key(r) !== kk; });
-              what = "unmark";
-            } else {
-              marked[kk] = true;
-              order.push(cursor.slice());
-              what = "mark";
-            }
-            test.actions.push({t: entry.t, what: what, room: R.roomName(cursor)});
-            draw(null);
-            onChange(test);
-            return what;
-          }
-          if (dir === "STAY") {
-            if (entry.t - test.shown_at < MEMORY_MIN_MS || REC.stillTapping(e.key, test.shown_at, entry.t, PAUSE_MS)) {
-              shake();
-              return "ignored: too soon";
-            }
-            test.actions.push({t: entry.t, what: "done"});
-            test.marked = order.map(R.roomName);
-            stage = "level";
-            ask();
-            return "done";
-          }
-          return "ignored: key";
-        }
-        var d = digit(e);
-        if (d !== null && question) {
-          question.key_at = entry.t;
-          question.answer = d;
-          question.ms = question.shown_at === null ? null : round(entry.t - question.shown_at, 3);
-          onChange(test);
-          ask();
-          return "answer";
-        }
-        return "ignored: key";
-      });
-    });
-  }
-
-  /* The short form of a game cut short, for sending on closing when the
-   * whole file is too long: the moves and their times, and the draws. */
+  /* A shorter form of a game cut short, for the send on closing when the
+   * whole file is too long: only the moves and their times. */
   function shortForm(rec) {
     var out = {};
     Object.keys(rec).forEach(function (k) {
@@ -590,5 +457,5 @@
     return copy(out);
   }
 
-  FG.game = {play: play, memoryTest: memoryTest, modelResult: modelResult, shortForm: shortForm};
+  FG.game = {play: play, modelResult: modelResult, shortForm: shortForm, FACING: FACING};
 })(typeof window !== "undefined" ? window : globalThis);

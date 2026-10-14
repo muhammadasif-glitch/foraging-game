@@ -1,17 +1,19 @@
-/* Plays whole sessions in a real browser (Playwright with Chromium) and
- * checks every file the game sends. DataPipe is stood in for: the requests
- * are caught in the browser and answered here, so nothing leaves this
- * machine. The game files are written to a folder for check/data_check.py.
+/* Plays the game in a real browser (Playwright with Chromium), in the 2D and
+ * the 3D view, and checks every file the game sends. DataPipe is stood in
+ * for: the requests are caught in the browser and answered here, nothing
+ * leaves this machine. The stand-in validates as DataPipe does with the
+ * required fields trial_type, player and session_id: a file without them at
+ * its top is refused with INVALID_DATA. The game files are written to a
+ * folder for check/data_check.py.
  *
  *   node check/play_check.js <out folder> [--playwright <path to playwright>]
  *
- * Scenarios: a full session with the condition from DataPipe; one where
- * energy stays at 0, so that every game runs all its steps; one with
- * random refill on a 6 x 6 maze, set in the link; a player who runs out of
- * energy; DataPipe that cannot hand out a condition; DataPipe down (with
- * show.near and show.worth off), then the files sent on the next visit; a tab closed in the middle of a game, then
- * the partial game sent; the page opened from a file (file://); a player who
- * says no to the consent.
+ * Scenarios: 3 games in a row (2D 4 x 4, 3D 6 x 6, 2D two 4 x 4) with the
+ * condition from DataPipe; a 3D game played to its last step with turns;
+ * running out of energy; keys pressed while the view moves; DataPipe that
+ * cannot hand out a condition; DataPipe down, then the file sent on the next
+ * visit; a tab closed in the middle of a game, then the partial game sent;
+ * the page opened from a file.
  */
 "use strict";
 var fs = require("fs");
@@ -24,9 +26,13 @@ var OUT = args[0];
 var pwPath = args.indexOf("--playwright") >= 0 ? args[args.indexOf("--playwright") + 1] : "playwright";
 var chromium = require(pwPath).chromium;
 
+globalThis.window = globalThis;
 require(path.join(ROOT, "js", "mazes.js"));
 require(path.join(ROOT, "js", "rules.js"));
+require(path.join(ROOT, "settings.js"));
 var R = globalThis.FG.rules;
+var SETTINGS = globalThis.FG.SETTINGS;
+var FACING = ["RIGHT", "DOWN", "LEFT", "UP"];
 
 var problems = [];
 function expect(ok, what) {
@@ -34,6 +40,17 @@ function expect(ok, what) {
     problems.push(what);
   }
   return ok;
+}
+
+function sleep(ms) {
+  return new Promise(function (r) { setTimeout(r, ms); });
+}
+
+function seeded(seed) {
+  return function () {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
 }
 
 function serve() {
@@ -59,7 +76,7 @@ function serve() {
 }
 
 /* DataPipe as the test wants it: mode "ok", "down" or "no condition". */
-function pipe(page, store, mode, condition) {
+function pipe(page, store, mode, condition, log) {
   return page.route("https://pipe.jspsych.org/**", function (route) {
     var req = route.request();
     var body = null;
@@ -85,11 +102,29 @@ function pipe(page, store, mode, condition) {
     }
     expect(body && body.experimentID && body.filename && typeof body.data === "string",
       "a request to DataPipe without experimentID, filename and data");
+    var data = null;
+    try {
+      data = JSON.parse(body.data);
+    } catch (err) {
+      data = null;
+    }
+    // DataPipe's validation: valid JSON, and for a single object the
+    // required fields must be keys at its top
+    var valid = data && typeof data === "object" && !Array.isArray(data) &&
+      ["trial_type", "player", "session_id"].every(function (k) { return Object.prototype.hasOwnProperty.call(data, k); });
+    if (log) {
+      log.push(body.filename + (valid ? "" : " INVALID"));
+    }
+    if (!valid) {
+      expect(false, "DataPipe would refuse " + body.filename + " (INVALID_DATA)");
+      return route.fulfill({status: 400, contentType: "application/json",
+        body: JSON.stringify({error: "INVALID_DATA", message: "The data are not valid"})});
+    }
     if (store[body.filename]) {
       return route.fulfill({status: 400, contentType: "application/json",
         body: JSON.stringify({error: "FILE_EXISTS", message: "exists"})});
     }
-    store[body.filename] = JSON.parse(body.data);
+    store[body.filename] = data;
     return route.fulfill({status: 201, contentType: "application/json", body: JSON.stringify({message: "Success"})});
   });
 }
@@ -100,137 +135,131 @@ function ui(page) {
       var e = document.getElementById(id);
       return !!e && !e.hidden;
     }
+    function on(id) {
+      var kids = Array.prototype.slice.call(document.getElementById(id).children);
+      return kids.findIndex(function (c) { return c.classList.contains("on"); });
+    }
     return {
-      text: vis("text-screen"), game: vis("game-screen"), message: vis("game-message"),
-      input: vis("text-input"), prompt: (document.getElementById("game-prompt") || {}).textContent || "",
-      textPrompt: (document.getElementById("text-prompt") || {}).textContent || "",
-      body: (document.getElementById("text-body") || {}).textContent || "",
-      status: (document.getElementById("text-status") || {}).textContent || "",
-      food: vis("food-block"),
+      menu: vis("menu"), end: vis("end"), message: vis("message"), hud: vis("hud"),
+      ready: !document.getElementById("play").disabled,
+      view: on("views"), maze: on("mazes"),
+      row: document.getElementById("viewLabel").classList.contains("active") ? 0 : 1,
+      here: vis("hereItem"),
+      status: (document.getElementById("endStatus") || {}).textContent || "",
+      msg: (document.getElementById("msgBody") || {}).textContent || "",
       phase: window.FG && window.FG.recorder ? window.FG.recorder.phase : ""
     };
   });
 }
 
-function sleep(ms) {
-  return new Promise(function (r) { setTimeout(r, ms); });
-}
-
-/* Plays until the thank-you page (or until stopAfterSteps steps of game
- * stopGame, to close the tab there). rnd: a seeded random function. */
-async function playSession(page, rnd, opts) {
-  opts = opts || {};
-  var steps = 0, games = 0, inGame = 0, lastOver = "";
-  var keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " ", " ", " "];
-  for (var guard = 0; guard < 20000; guard++) {
-    var s = await ui(page);
-    if (opts.stopAt === "end question" && s.text && s.input && /how did you play/i.test(s.textPrompt)) {
-      return {steps: steps, games: games, done: false};
-    }
-    if (opts.stopAt === s.phase && s.game && /Where were/.test(s.prompt)) {
-      return {steps: steps, games: games, done: false};
-    }
-    if (opts.stopAt === "game over " + s.phase.replace("game ", "") && /^game /.test(s.phase) && s.game && s.message) {
-      await sleep(500);
-      return {steps: steps, games: games, done: false};
-    }
-    if (s.text && /Thank you/.test(s.body)) {
-      return {steps: steps, games: games, done: true};
-    }
-    if (s.text && /consent|agree/i.test(s.textPrompt)) {
-      await page.keyboard.press(opts.decline ? "n" : "y");
-      if (opts.decline) {
-        await sleep(200);
-        return {declined: true};
-      }
-    } else if (s.text && s.input && /player code/.test(s.textPrompt)) {
-      opts.typed = opts.code || "P" + Math.floor(rnd() * 1000);
-      await page.keyboard.type(opts.typed);
-      await page.keyboard.press("Enter");
-    } else if (s.text && /Page \d+ of \d+/.test(s.textPrompt)) {
-      var last = /start the practice/.test(s.textPrompt);
-      if (last) {
-        await page.keyboard.press(" ");
-      } else {
-        await page.keyboard.press(rnd() < 0.2 && !/Page 1 /.test(s.textPrompt) ? "ArrowLeft" : "ArrowRight");
-      }
-    } else if (s.text && /is over/.test(s.body)) {
-      await sleep(1100 + Math.floor(rnd() * 300));
-      await page.keyboard.press(" ");
-    } else if (s.text && s.input && /how did you play/i.test(s.textPrompt)) {
-      await sleep(600);
-      await page.keyboard.type("I went to the big room and stayed, test " + Math.floor(rnd() * 100));
-      await page.keyboard.press("Backspace");
-      await page.keyboard.press("Enter");
-    } else if (s.game && s.message) {
-      if (s.phase !== lastOver) {
-        games += 1;
-        lastOver = s.phase;
-      }
-      inGame = 0;
-      await sleep(450);
-      await page.keyboard.press(" ");
-    } else if (s.game && /Where were/.test(s.prompt)) {
-      await sleep(700);
-      var n = Math.floor(rnd() * 8);
-      for (var i = 0; i < n; i++) {
-        var k = rnd() < 0.3 ? "Enter" : keys[Math.floor(rnd() * 4)];
-        await page.keyboard.press(k);
-        await sleep(10);
-      }
-      await sleep(1000);
-      await page.keyboard.press(" ");
-    } else if (s.game && /How full/.test(s.prompt)) {
-      await sleep(350);
-      await page.keyboard.press(String(Math.floor(rnd() * 10)));
-    } else if (s.game) {
-      if (opts.stopGame && s.phase === "game " + opts.stopGame && inGame >= opts.stopAfterSteps) {
-        return {steps: steps, games: games, done: false};
-      }
-      var key = rnd() < 0.03 ? "x" : keys[Math.floor(rnd() * keys.length)];
-      if (opts.towards && rnd() < 0.7) {
-        key = opts.towards[Math.floor(rnd() * opts.towards.length)];
-      } else if (s.food && rnd() < (opts.stay || 0.85)) {
-        key = " ";
-      }
-      await page.keyboard.press(key);
-      steps += 1;
-      inGame += 1;
-      // sometimes faster than a frame, to meet the "busy" case
-      await sleep(rnd() < 0.1 ? 0 : 18 + Math.floor(rnd() * 25));
-      continue;
-    }
-    await sleep(40);
+/* Chooses view and maze on the first page and presses Enter. */
+async function choose(page, view, maze) {
+  var views = SETTINGS.menu.views, mazes = SETTINGS.menu.mazes;
+  await sleep(450);
+  var s = await ui(page);
+  for (var w = 0; !s.ready && w < 60; w++) {
+    await sleep(200);
+    s = await ui(page);
   }
-  return {steps: steps, games: games, done: false};
+  if (s.row !== 0) {
+    await page.keyboard.press("ArrowUp");
+    await sleep(60);
+  }
+  for (var k = 0; k < 4 && (await ui(page)).view !== views.indexOf(view); k++) {
+    await page.keyboard.press("ArrowRight");
+    await sleep(60);
+  }
+  await page.keyboard.press(String(mazes.indexOf(maze) + 1));
+  await sleep(60);
+  s = await ui(page);
+  expect(s.view === views.indexOf(view) && s.maze === mazes.indexOf(maze), "menu: chose " + view + " " + maze);
+  await page.keyboard.press("Enter");
 }
 
-function seeded(seed) {
-  return function () {
-    seed = (seed * 1103515245 + 12345) % 2147483648;
-    return seed / 2147483648;
-  };
+/* Plays the games of plan in turn: [{view, maze, stopAfter}] (stopAfter:
+ * leave the game after this many keys). rnd: a seeded random function. */
+async function play(page, rnd, plan, opts) {
+  opts = opts || {};
+  var keys = 0, games = 0;
+  for (var gi = 0; gi < plan.length; gi++) {
+    var gp = plan[gi];
+    var s = await ui(page);
+    for (var w = 0; !s.menu && w < 100; w++) {
+      await sleep(100);
+      s = await ui(page);
+    }
+    if (!expect(s.menu, "game " + (gi + 1) + ": the first page is shown")) {
+      return {keys: keys, games: games};
+    }
+    await choose(page, gp.view, gp.maze);
+    var inGame = 0;
+    for (var guard = 0; guard < 4000; guard++) {
+      s = await ui(page);
+      if (s.end) {
+        break;
+      }
+      if (gp.stopAfter && inGame >= gp.stopAfter) {
+        return {keys: keys, games: games, stopped: true};
+      }
+      if (!/^game /.test(s.phase)) {
+        await sleep(50);
+        continue;
+      }
+      var k;
+      if (gp.view === "3d") {
+        var pick = rnd();
+        k = s.here && pick < (opts.stay || 0.6) ? " " : pick < 0.62 ? "ArrowUp" : pick < 0.78 ? "ArrowLeft" :
+          pick < 0.92 ? "ArrowRight" : pick < 0.96 ? "ArrowDown" : " ";
+      } else {
+        var dirs = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
+        k = s.here && rnd() < (opts.stay || 0.6) ? " " : rnd() < 0.08 ? " " : dirs[Math.floor(rnd() * 4)];
+      }
+      if (rnd() < 0.03) {
+        k = "x";
+      }
+      await page.keyboard.press(k);
+      keys += 1;
+      inGame += 1;
+      if (opts.fast && rnd() < 0.3) {
+        // while the view still moves: these keys must be ignored as busy
+        await sleep(10);
+        await page.keyboard.press(gp.view === "3d" ? "ArrowUp" : "ArrowRight");
+        keys += 1;
+      }
+      var moving = k !== " " && k !== "x";
+      await sleep(gp.view === "3d" ? (moving ? 1050 : 260) + Math.floor(rnd() * 120) :
+        (moving ? 330 : 120) + Math.floor(rnd() * 80));
+    }
+    games += 1;
+    await sleep(550);
+    await page.keyboard.press("Enter");
+    await sleep(200);
+  }
+  return {keys: keys, games: games};
 }
 
 function roomOf(text) {
   return [Number(text[1]), Number(text[2])];
 }
 
-/* Every game file: the steps against the rules, the layout, the keys. */
-function checkGameFile(name, f, expectSessionLength) {
-  var g = f.game;
+/* A game file: the header, the steps against the rules and the map rule,
+ * the moves against the keys and the view. */
+function checkGameFile(name, f) {
   var where = name;
-  expect(f.format === "foraging-game" && f.format_version === 1, where + ": format");
-  expect(typeof f.player === "string" && f.player.length > 0, where + ": player");
+  var g = f.game;
+  expect(f.format === "foraging-game" && f.format_version === 2, where + ": format");
+  expect(f.trial_type === "foraging-game", where + ": trial_type");
+  expect(/^[0-9a-f]{8}$/.test(f.player), where + ": player code " + f.player);
   expect(/^[0-9a-f]{12}$/.test(f.session_id), where + ": session id");
   expect(f.condition && typeof f.condition.how === "string", where + ": condition");
   expect(f.browser && f.browser.user_agent && f.browser.refresh_hz > 0, where + ": browser");
+  expect(f.menu && f.menu.view === g.view && f.menu.maze === g.maze && g.layout.maze === g.maze, where + ": menu choice");
   var s = g.settings;
   var steps = g.steps;
   var partial = /partial/.test(name);
   expect(g.ended && typeof g.ended.how === "string", where + ": ended " + JSON.stringify(g.ended));
   if (!partial) {
-    expect(g.ended && steps.length === g.ended.step + 1, where + ": steps " + steps.length + " vs ended at " + (g.ended && g.ended.step));
+    expect(steps.length === g.ended.step + 1, where + ": steps " + steps.length + " vs ended at " + g.ended.step);
     expect(g.ended.how === "finished" ? g.ended.step === s.steps : g.ended.how === "starved", where + ": end " + g.ended.how);
   }
   var maze = R.maze(g.layout.maze);
@@ -245,9 +274,7 @@ function checkGameFile(name, f, expectSessionLength) {
   var stomach = new R.Stomach(s.stomach);
   var room = roomOf(g.layout.start_room);
   expect(steps[0].room === g.layout.start_room && steps[0].step === 0, where + ": step 0");
-  var found = {};
-  // the rooms whose food the player was shown: as the model's agent maps them
-  var known = {};
+  var known = {}, eaten = 0;
   function learn(near) {
     var add = [room];
     if (near) {
@@ -272,126 +299,68 @@ function checkGameFile(name, f, expectSessionLength) {
   function expectKnown(st, want, t) {
     expect(JSON.stringify(st.known_new) === JSON.stringify(want.rooms),
       where + " step " + t + ": known rooms " + JSON.stringify(st.known_new) + " vs " + JSON.stringify(want.rooms));
-    expect(JSON.stringify(st.known_food_new) === JSON.stringify(want.food),
-      where + " step " + t + ": known food rooms " + JSON.stringify(st.known_food_new) + " vs " + JSON.stringify(want.food));
-    var events = (st.events || []).filter(function (e) { return e.type === "known"; }).map(function (e) { return e.room; });
-    expect(JSON.stringify(events) === JSON.stringify(want.food), where + " step " + t + ": known events");
+    expect(JSON.stringify(st.known_food_new) === JSON.stringify(want.food), where + " step " + t + ": known food rooms");
   }
   expectKnown(steps[0], learn(false), 0);
+  var facing = steps[0].facing;
   for (var t = 1; t < steps.length; t++) {
     var st = steps[t];
     expect(st.step === t, where + ": step number " + t);
     expect(maze.legal(room).indexOf(st.move) >= 0, where + " step " + t + ": move " + st.move + " not open");
     expect(st.legal.join() === maze.legal(room).join(), where + " step " + t + ": legal");
+    if (g.view === "3d") {
+      // the up arrow moves the way the player faces, Space stays; turns in between
+      expect(st.key === "Space" ? st.move === "STAY" : st.key === "ArrowUp" && st.move === st.facing_before,
+        where + " step " + t + ": 3D key " + st.key + " facing " + st.facing_before + " gave " + st.move);
+      var turned = g.turns.filter(function (tr) { return tr.step === t - 1; });
+      expect(turned.length === st.turns_before, where + " step " + t + ": turns " + turned.length + " vs " + st.turns_before);
+      var f2 = facing;
+      turned.forEach(function (tr) {
+        expect(tr.from === f2, where + " step " + t + ": a turn from " + tr.from + ", facing " + f2);
+        f2 = tr.to;
+      });
+      expect(st.facing_before === f2 && st.facing === f2, where + " step " + t + ": facing " + st.facing_before + " vs " + f2);
+      facing = st.facing;
+    } else {
+      var byKey = {ArrowLeft: "LEFT", ArrowRight: "RIGHT", ArrowUp: "UP", ArrowDown: "DOWN", Space: "STAY"};
+      expect(byKey[st.key] === st.move, where + " step " + t + ": 2D key " + st.key + " gave " + st.move);
+    }
     var to = maze.next(room, st.move);
     world.advance(to);
     var paid = world.paid();
     var e = stomach.step(!R.sameRoom(to, room), paid);
+    eaten += paid;
     room = to;
     expect(st.room === R.roomName(room) && st.room_to === st.room, where + " step " + t + ": room");
-    expectKnown(st, learn(s.show.near), t);
     expect(st.paid === paid, where + " step " + t + ": paid " + st.paid + " vs " + paid);
     expect(st.energy === e.energy, where + " step " + t + ": energy " + st.energy + " vs " + e.energy);
+    expect(Math.abs(st.eaten - eaten) < 1e-9, where + " step " + t + ": eaten");
     Object.keys(world.level).forEach(function (n) {
       expect(st.levels[n] === world.level[n], where + " step " + t + ": level " + n);
     });
-    var n = world.nameAt(room);
-    expect(st.in_food_room === n, where + " step " + t + ": in food room");
-    expect((n === null) === (st.seen === null), where + " step " + t + ": seen");
-    if (n !== null && !found[n]) {
-      found[n] = true;
-      expect(st.found === n, where + " step " + t + ": found " + n);
-    } else {
-      expect(st.found === null, where + " step " + t + ": found twice");
-    }
-    expect(typeof st.decision_ms === "number" && st.decision_ms >= 0 && st.decision_ms < 600000,
-      where + " step " + t + ": decision " + st.decision_ms);
+    expect(st.in_food_room === world.nameAt(room), where + " step " + t + ": in food room");
+    expectKnown(st, learn(true), t);
+    expect(typeof st.decision_ms === "number" && st.decision_ms >= 0, where + " step " + t + ": decision " + st.decision_ms);
     expect(st.key_at >= st.shown_at, where + " step " + t + ": key before shown");
+    if (t < steps.length - 1 || !partial) {
+      expect(typeof st.arrived_at === "number" && st.arrived_at >= st.key_at, where + " step " + t + ": arrived_at");
+    }
   }
   expect(g.draws.length === steps.length - 1, where + ": draws " + g.draws.length);
-  // the model's form of the game
-  expect(g.result || partial, where + ": result");
-  if (g.result) {
-    expect(g.result.rows.length === steps.length, where + ": result rows");
-    expect(g.result.settings.world.eat_per_step === g.speeds.eat, where + ": result speeds");
-  }
-  // keys of this game
+  expect(g.result && g.result.rows.length === steps.length, where + ": result rows");
   var downs = f.keys.filter(function (k) { return k.type === "down" && k.phase === "game " + g.number; });
   var moves = downs.filter(function (k) { return k.outcome === "move" || k.outcome === "stay"; });
   expect(moves.length === steps.length - 1, where + ": " + moves.length + " move keys for " + (steps.length - 1) + " steps");
-  expect(f.keys.every(function (k) { return typeof k.t === "number"; }), where + ": key times");
-  if (!partial && s.memory_test) {
-    expect(g.memory_test && g.memory_test.truth && Array.isArray(g.memory_test.marked), where + ": memory test");
-    var knownFood = [];
-    steps.forEach(function (st) { knownFood = knownFood.concat(st.known_food_new); });
-    expect(JSON.stringify(g.memory_test.truth.known) === JSON.stringify(knownFood), where + ": memory test known");
-    expect((g.memory_test.marked || []).every(function (m) {
-      var k = (typeof m === "string" ? m : m.room);
-      return !k || steps.some(function (st) { return st.known_new.indexOf(k) >= 0; });
-    }), where + ": memory test marks only known rooms");
-    expect(g.memory_test.levels.length === g.memory_test.marked.length &&
-      g.memory_test.levels.every(function (a) { return a.answer >= 0 && a.answer <= 9; }), where + ": memory answers");
-  }
+  var turnKeys = downs.filter(function (k) { return k.outcome === "turn"; });
+  expect(turnKeys.length === (g.turns || []).length, where + ": " + turnKeys.length + " turn keys, " + (g.turns || []).length + " turns");
+  expect(downs.every(function (k) { return k.outcome !== null; }), where + ": every game key has an outcome");
   return g;
 }
 
-function checkSession(label, files, settingsSession) {
-  var names = Object.keys(files).sort();
-  var games = names.filter(function (n) { return /_\d+-[a-z]+\.json$/.test(n); });
-  names.filter(function (n) { return /partial\.json$/.test(n) && !/end\.partial/.test(n); }).forEach(function (n) {
-    checkGameFile(label + " " + n, files[n]);
+function gameFiles(files) {
+  return Object.keys(files).filter(function (n) { return /_\d+\.json$/.test(n); }).sort(function (a, b) {
+    return Number(/_(\d+)\.json$/.exec(a)[1]) - Number(/_(\d+)\.json$/.exec(b)[1]);
   });
-  var end = names.filter(function (n) { return /_end\.json$/.test(n); });
-  expect(games.length === settingsSession.length, label + ": " + games.length + " game files");
-  expect(end.length === 1, label + ": end file");
-  var byNumber = {};
-  games.forEach(function (n) {
-    var g = checkGameFile(label + " " + n, files[n]);
-    byNumber[g.number] = g;
-  });
-  settingsSession.forEach(function (plan, i) {
-    var g = byNumber[i + 1];
-    if (!g) {
-      return;
-    }
-    expect(g.kind === plan.kind, label + " game " + (i + 1) + ": kind");
-    if (plan.layout) {
-      expect(g.layout.start_room === plan.layout.start_room, label + " game " + (i + 1) + ": fixed start");
-      Object.keys(plan.layout.food_rooms).forEach(function (n) {
-        expect(g.layout.food_rooms[n] === plan.layout.food_rooms[n], label + " game " + (i + 1) + ": fixed " + n);
-      });
-    }
-    if (plan.kind === "repeat") {
-      var o = byNumber[plan.of];
-      expect(JSON.stringify(o.layout) === JSON.stringify(g.layout) && o.seed === g.seed,
-        label + " game " + (i + 1) + ": repeats game " + plan.of);
-    }
-    if (plan.kind === "shared") {
-      expect(g.seed === plan.seed, label + " game " + (i + 1) + ": shared seed");
-    }
-    if (plan.kind === "new") {
-      var fr = Object.values(g.layout.food_rooms);
-      expect(fr.indexOf(g.layout.start_room) < 0 && new Set(fr).size === fr.length,
-        label + " game " + (i + 1) + ": random layout");
-      var st = roomOf(g.layout.start_room);
-      expect(st[0] < 4 && st[1] < 4, label + " game " + (i + 1) + ": start area");
-    }
-  });
-  if (end.length) {
-    var e = files[end[0]];
-    expect(e.session && e.session.end_question && typeof e.session.end_question.text === "string", label + ": end question");
-    expect(e.session.consent.agreed === true, label + ": consent");
-    expect(e.session.instructions.length >= FG_SETTINGS_PAGES(), label + ": instruction visits");
-    expect(e.session.games.length === settingsSession.length, label + ": games listed");
-    var phases = e.keys.map(function (k) { return k.phase; });
-    expect(phases.every(function (p) { return !/^(game|memory) /.test(p); }), label + ": end keys hold no game keys");
-  }
-  return names;
-}
-
-var SETTINGS = null;
-function FG_SETTINGS_PAGES() {
-  return SETTINGS.texts.instructions.length;
 }
 
 function save(label, files) {
@@ -404,15 +373,14 @@ function save(label, files) {
 
 (async function main() {
   fs.mkdirSync(OUT, {recursive: true});
-  require(path.join(ROOT, "settings.js"));
-  SETTINGS = globalThis.FG.SETTINGS;
   var server = await serve();
   var base = "http://localhost:" + server.address().port + "/index.html";
   var browser = await chromium.launch(fs.existsSync("/opt/pw-browsers/chromium") ? {executablePath: "/opt/pw-browsers/chromium"} : {});
   var report = [];
 
-  async function session(label, query, opts) {
-    var context = await browser.newContext({viewport: {width: 1200, height: 800}});
+  async function session(label, query, plan, opts) {
+    opts = opts || {};
+    var context = opts.context || await browser.newContext({viewport: {width: 1200, height: 800}});
     var page = await context.newPage();
     var errors = [];
     page.on("pageerror", function (e) { errors.push(String(e)); });
@@ -421,182 +389,139 @@ function save(label, files) {
         errors.push(m.text());
       }
     });
-    var files = {};
-    var mode = {value: opts.mode || "ok"};
-    if (opts.init) {
-      await page.addInitScript(opts.init);
-    }
-    await pipe(page, files, mode, opts.condition || 0);
+    var files = opts.files || {};
+    var mode = opts.modeRef || {value: opts.mode || "ok"};
+    await pipe(page, files, mode, opts.condition || 0, opts.log);
     await page.goto(base + query);
     var t0 = Date.now();
-    var r = await playSession(page, seeded(opts.seed || 1), opts);
+    var r = await play(page, seeded(opts.seed || 1), plan, opts);
     var status = (await ui(page)).status;
-    for (var w = 0; r.done && /aving/.test(status) && w < 120; w++) {
+    for (var w = 0; !r.stopped && /aving/.test(status) && w < 80; w++) {
       await sleep(500);
       status = (await ui(page)).status;
     }
-    report.push(label + ": " + (r.steps || 0) + " keys in game, " + (r.games || 0) + " games, " +
-      Object.keys(files).length + " files, " + Math.round((Date.now() - t0) / 1000) + " s" + (status ? " (" + status + ")" : ""));
+    report.push(label + ": " + r.keys + " keys, " + r.games + " games, " + Object.keys(files).length + " files, " +
+      Math.round((Date.now() - t0) / 1000) + " s" + (status ? " (" + status + ")" : ""));
     expect(errors.length === 0, label + ": page errors " + JSON.stringify(errors));
     return {context: context, page: page, files: files, mode: mode, result: r, status: status};
   }
 
-  // 1. a full session; DataPipe hands out condition 1
-  var aOpts = {seed: 11, condition: 1};
-  var a = await session("full", "?test=1", aOpts);
-  checkSession("full", a.files, SETTINGS.session);
-  Object.keys(a.files).forEach(function (k) {
-    expect(a.files[k].player === aOpts.typed, "full: player code " + a.files[k].player + " is what was typed, " + aOpts.typed);
+  // 1. 3 games in a row, 2D and 3D, the condition from DataPipe
+  var a = await session("three_games", "?test=1&set.steps=40", [
+    {view: "2d", maze: "grid_4x4"}, {view: "3d", maze: "grid_6x6"}, {view: "2d", maze: "grid_two_4x4"}
+  ], {seed: 11, condition: 1});
+  var an = gameFiles(a.files);
+  expect(an.length === 3, "three_games: 3 files, got " + Object.keys(a.files).join(" "));
+  an.forEach(function (n) { checkGameFile(n, a.files[n]); });
+  expect(an.every(function (n) { return n.indexOf("TEST_") === 0; }), "three_games: TEST_ names");
+  expect(an.length === 3 && a.files[an[0]].player === a.files[an[2]].player &&
+    a.files[an[0]].session_id === a.files[an[2]].session_id, "three_games: 1 player and 1 session");
+  expect(an.length === 3 && a.files[an[1]].game.view === "3d" && a.files[an[2]].game.maze === "grid_two_4x4",
+    "three_games: views and mazes as chosen");
+  expect(an.length && a.files[an[0]].condition.name === Object.keys(SETTINGS.conditions)[1] &&
+    a.files[an[0]].condition.how === "datapipe", "three_games: condition 1 from DataPipe");
+  expect(/saved/.test(a.status), "three_games: saved message, got " + a.status);
+  // the menu keys of game 2 are in file 2, not in file 1
+  if (an.length === 3) {
+    expect(a.files[an[0]].keys.every(function (k) { return k.phase === "menu" || k.phase === "game 1"; }),
+      "three_games: file 1 holds the menu and game 1 only");
+    expect(a.files[an[1]].keys.some(function (k) { return k.phase === "end 1"; }) &&
+      a.files[an[1]].keys.every(function (k) { return k.phase !== "game 1"; }), "three_games: file 2 starts after game 1");
+  }
+  // a second visit keeps the player code
+  var a2page = await a.context.newPage();
+  await pipe(a2page, {}, {value: "ok"}, 0);
+  await a2page.goto(base + "?test=1");
+  await sleep(1500);
+  var kept = await a2page.evaluate(function () {
+    return Object.keys(localStorage).filter(function (k) { return /:player$/.test(k); }).map(function (k) { return localStorage.getItem(k); });
   });
-  var endText = a.files[Object.keys(a.files).filter(function (k) { return /_end\.json$/.test(k); })[0]].session.end_question.text;
-  expect(/^I went to the big room/.test(endText), "full: end answer as typed: " + JSON.stringify(endText));
-  var first = a.files[Object.keys(a.files)[0]];
-  expect(first.condition.name === Object.keys(SETTINGS.conditions)[1] && first.condition.how === "datapipe", "full: condition 1 from DataPipe");
-  expect(Object.keys(a.files).every(function (n) { return n.indexOf("TEST_") === 0; }), "full: TEST_ names");
-  expect(/saved/.test(a.status), "full: saved message");
-  save("full", a.files);
+  expect(an.length && kept.length === 1 && kept[0] === a.files[an[0]].player, "three_games: the player code is kept for the next visit");
+  save("three_games", a.files);
   await a.context.close();
 
-  // 1b. energy stays at 0, so that every game runs its full steps
-  var a2 = await session("full_length", "?condition=linear_fast&set.stomach.at_zero=continue", {seed: 12});
-  checkSession("full_length", a2.files, SETTINGS.session);
-  Object.keys(a2.files).filter(function (k) { return /_\d+-[a-z]+\.json$/.test(k); }).forEach(function (k) {
-    var g = a2.files[k].game;
-    expect(g.ended.how === "finished" && g.steps.length === g.settings.steps + 1, "full_length: " + k + " ran all its steps");
+  // 2. a 3D game to its last step, with turns; energy stays at 0
+  var b = await session("full_3d", "?condition=exponential_slow&set.stomach.at_zero=continue", [
+    {view: "3d", maze: "grid_two_4x4"}
+  ], {seed: 12, stay: 0.4});
+  var bn = gameFiles(b.files);
+  expect(bn.length === 1, "full_3d: 1 file");
+  bn.forEach(function (n) {
+    var g = checkGameFile(n, b.files[n]);
+    expect(g.ended.how === "finished" && g.steps.length === g.settings.steps + 1, "full_3d: all " + g.settings.steps + " steps");
+    expect(g.turns.length > 10, "full_3d: turns recorded (" + g.turns.length + ")");
   });
-  save("full_length", a2.files);
-  await a2.context.close();
-
-  // 2. random refill on 6 x 6, set in the link
-  var b = await session("refill_6x6", "?condition=linear_fast&set.maze=grid_6x6&set.food.random_refill=true&set.food.refill_chance=0.4",
-    {seed: 22});
-  checkSession("refill_6x6", b.files, SETTINGS.session);
-  var g6 = b.files[Object.keys(b.files).filter(function (n) { return /3-new/.test(n); })[0]].game;
-  expect(g6.layout.maze === "grid_6x6" && g6.settings.food.random_refill === true, "refill_6x6: settings from the link");
-  expect(g6.steps.some(function (s) { return s.events.some(function (e) { return e.type === "refill skipped"; }); }), "refill_6x6: skipped refills");
-  save("refill_6x6", b.files);
+  save("full_3d", b.files);
   await b.context.close();
 
-  // 3. running out of energy
-  var c = await session("starve", "?condition=linear_fast&set.stomach.start=3&set.stomach.move_cost=1",
-    {seed: 33, towards: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]});
-  var cg = Object.keys(c.files).filter(function (n) { return /_\d+-[a-z]+\.json$/.test(n); }).map(function (n) { return c.files[n].game; });
-  expect(cg.some(function (g) { return g.ended.how === "starved"; }), "starve: a game ended starved");
-  checkSession("starve", c.files, SETTINGS.session);
-  save("starve", c.files);
+  // 3. running out of energy, 2D, keys while the view moves
+  var c = await session("starve_fast", "?condition=linear_fast&set.stomach.start=4", [
+    {view: "2d", maze: "grid_6x6"}, {view: "3d", maze: "grid_4x4"}
+  ], {seed: 13, stay: 0.05, fast: true});
+  var cn = gameFiles(c.files);
+  expect(cn.length === 2, "starve_fast: 2 files");
+  cn.forEach(function (n) {
+    var g = checkGameFile(n, c.files[n]);
+    expect(g.ended.how === "starved", "starve_fast: " + n + " ended " + g.ended.how);
+    var busy = c.files[n].keys.filter(function (k) { return k.type === "down" && k.outcome === "ignored: busy"; });
+    expect(busy.length > 0, "starve_fast: " + n + " keys while moving were ignored (" + busy.length + ")");
+  });
+  save("starve_fast", c.files);
   await c.context.close();
 
-  // 4. DataPipe cannot hand out a condition
-  var d = await session("no_condition", "", {seed: 44, mode: "no condition"});
-  var dfirst = d.files[Object.keys(d.files)[0]];
-  expect(dfirst.condition.how === "random" && /CONDITION_ASSIGNMENT_NOT_ACTIVE/.test(dfirst.condition.error), "no_condition: random, error kept");
-  checkSession("no_condition", d.files, SETTINGS.session);
+  // 4. DataPipe hands out no condition: one is picked at random
+  var d = await session("no_condition", "?set.steps=5", [{view: "2d", maze: "grid_4x4"}], {seed: 14, mode: "no condition"});
+  var dn = gameFiles(d.files);
+  expect(dn.length === 1 && d.files[dn[0]].condition.how === "random", "no_condition: a random condition");
+  dn.forEach(function (n) { checkGameFile(n, d.files[n]); });
   await d.context.close();
 
-  // 5. DataPipe down for the whole session, then the next visit sends it all
-  var e = await session("down", "?condition=exponential_slow&set.show.near=false&set.show.worth=false", {seed: 55, mode: "down"});
-  expect(Object.keys(e.files).length === 0, "down: nothing arrived");
-  expect(/could not be sent/.test(e.status), "down: not-saved message");
-  var kept = await e.page.evaluate(function () {
-    var k = Object.keys(localStorage).filter(function (x) { return /:queue$/.test(x); })[0];
-    return k ? Object.keys(JSON.parse(localStorage.getItem(k))).length : 0;
-  });
-  expect(kept === SETTINGS.session.length + 1, "down: " + kept + " files kept in the browser");
-  e.mode.value = "ok";
-  await e.page.goto(base + "?condition=exponential_slow");
-  await sleep(1500);
-  expect(Object.keys(e.files).length === SETTINGS.session.length + 1, "down: " + Object.keys(e.files).length + " files sent on the next visit");
-  checkSession("down", e.files, SETTINGS.session);
-  save("down", e.files);
+  // 5. DataPipe down for a game, then the next visit sends it
+  var mode = {value: "down"};
+  var ef = {};
+  var e = await session("down", "?condition=linear_fast&set.steps=6", [{view: "3d", maze: "grid_4x4"}],
+    {seed: 15, modeRef: mode, files: ef});
+  expect(Object.keys(ef).length === 0, "down: nothing arrived while down");
+  expect(/could not be sent/.test(e.status), "down: not-saved message, got " + e.status);
+  mode.value = "ok";
+  await e.page.goto(base + "?condition=linear_fast");
+  await sleep(2000);
+  var en = gameFiles(ef);
+  expect(en.length === 1, "down: the game arrived on the next visit (" + Object.keys(ef).join(" ") + ")");
+  en.forEach(function (n) { checkGameFile(n, ef[n]); });
+  save("down", ef);
   await e.context.close();
 
-  // 6. the tab closed in game 3, after 25 steps; the next visit sends the partial game
-  var f = await session("closed", "?condition=linear_fast&set.stomach.at_zero=continue", {seed: 66, stopGame: 3, stopAfterSteps: 25});
-  var context = f.context;
+  // 6. the tab closed in the middle of a game: the partial game arrives
+  var ff = {};
+  var f = await session("closed", "?condition=linear_fast&set.stomach.at_zero=continue", [
+    {view: "2d", maze: "grid_4x4"}, {view: "3d", maze: "grid_6x6", stopAfter: 25}
+  ], {seed: 16, files: ff});
   await f.page.close({runBeforeUnload: true});
-  await sleep(500);
-  var page2 = await context.newPage();
-  await pipe(page2, f.files, f.mode, 0);
-  await sleep(600);
-  await page2.goto(base + "?condition=linear_fast");
-  await sleep(1500);
-  var partial = Object.keys(f.files).filter(function (n) { return /3-new\.partial\.json$/.test(n); });
-  expect(partial.length === 1, "closed: " + partial.length + " partial files of game 3");
-  expect(Object.keys(f.files).some(function (n) { return /end\.partial\.json$/.test(n); }), "closed: the session so far (end.partial)");
-  if (partial.length) {
-    var pg = checkGameFile("closed " + partial[0], f.files[partial[0]]);
-    expect(pg.number === 3 && pg.steps.length > 5, "closed: partial game 3 with its steps (" + pg.steps.length + ")");
-    expect(pg.ended.how === "page closed", "closed: ended " + JSON.stringify(pg.ended));
-    save("closed", f.files);
-  }
-  report.push("closed: " + Object.keys(f.files).length + " files after the next visit");
-  await context.close();
-
-  // 6b. closed during the memory test of game 2: the finished game arrives
-  var m = await session("closed_memory", "?condition=linear_fast&set.stomach.at_zero=continue&set.steps=8",
-    {seed: 67, stopAt: "memory 2"});
-  await m.page.close({runBeforeUnload: true});
-  await sleep(500);
-  var mp = await m.context.newPage();
-  await pipe(mp, m.files, m.mode, 0);
-  await mp.goto(base + "?condition=linear_fast");
-  await sleep(1500);
-  var mpart = Object.keys(m.files).filter(function (n) { return /2-shared\.partial\.json$/.test(n); });
-  expect(mpart.length === 1, "closed_memory: the game of the memory test arrived (" + Object.keys(m.files).join(" ") + ")");
-  if (mpart.length) {
-    var mg = m.files[mpart[0]].game;
-    expect(mg.ended.how === "finished" && mg.steps.length === 9, "closed_memory: the whole game, " + JSON.stringify(mg.ended));
-  }
-  await m.context.close();
-
-  // 6c. closed during the end question: the session arrives as end.partial
-  var q = await session("closed_end", "?condition=linear_fast&set.steps=4&set.stomach.at_zero=continue",
-    {seed: 68, stopAt: "end question"});
-  await q.page.close({runBeforeUnload: true});
-  await sleep(500);
-  var qp = await q.context.newPage();
-  await pipe(qp, q.files, q.mode, 0);
-  await qp.goto(base + "?condition=linear_fast");
-  await sleep(1500);
-  var qend = Object.keys(q.files).filter(function (n) { return /end\.partial\.json$/.test(n); });
-  expect(qend.length === 1 && q.files[qend[0]].session.games.length === SETTINGS.session.length,
-    "closed_end: the session so far arrived with its " + SETTINGS.session.length + " games");
-  await q.context.close();
-
-  // 6d. Space tapped fast for 5 s after a game: the memory test is not skipped
-  var r = await session("fast_space", "?condition=linear_fast&set.steps=5&set.stomach.at_zero=continue",
-    {seed: 69, stopAt: "game over 2"});
-  for (var tap = 0; tap < 40; tap++) {
-    await r.page.keyboard.press(" ");
-    await sleep(120);
-  }
-  var rs = await ui(r.page);
-  expect(r.page && /Where were/.test(rs.prompt), "fast_space: the memory test is still there after 5 s of quick taps (" + rs.prompt + ")");
-  await r.context.close();
-
-  // 6e. the browser's storage full and DataPipe down: the player is asked to keep the page open
-  var u = await session("storage_full", "?condition=linear_fast&set.steps=3", {seed: 70, mode: "down",
-    init: function () {
-      Storage.prototype.setItem = function () { throw new DOMException("full", "QuotaExceededError"); };
-    }});
-  expect(/keep this page open/.test(u.status), "storage_full: " + u.status);
-  await u.context.close();
+  var again = await f.context.newPage();
+  await pipe(again, ff, {value: "ok"}, 0);
+  await again.goto(base + "?condition=linear_fast");
+  await sleep(2500);
+  var parts = Object.keys(ff).filter(function (n) { return /_2\.partial\.json$/.test(n); });
+  expect(gameFiles(ff).length === 1 && parts.length === 1, "closed: game 1 whole and game 2 partial (" + Object.keys(ff).join(" ") + ")");
+  parts.forEach(function (n) {
+    var g = checkGameFile(n, ff[n]);
+    expect(g.ended.how === "page closed" && g.view === "3d", "closed: " + n + " ended " + g.ended.how);
+  });
+  gameFiles(ff).forEach(function (n) { checkGameFile(n, ff[n]); });
+  save("closed", ff);
+  await f.context.close();
 
   // 7. opened from a file, nothing sent
   var ctx = await browser.newContext();
   var fp = await ctx.newPage();
   var ferr = [];
   fp.on("pageerror", function (err) { ferr.push(String(err)); });
-  await fp.goto("file://" + path.join(ROOT, "index.html") + "?send=0");
-  await sleep(500);
+  await fp.goto("file://" + path.join(ROOT, "index.html") + "?send=0&condition=linear_fast");
+  await sleep(1800);
   var fs1 = await ui(fp);
-  expect(/agree/i.test(fs1.textPrompt) && ferr.length === 0, "file://: the consent page, no errors " + JSON.stringify(ferr));
+  expect(fs1.menu && fs1.ready && ferr.length === 0, "file://: the first page, ready, no errors " + JSON.stringify(ferr));
   await ctx.close();
-
-  // 8. no consent: nothing recorded or sent
-  var h = await session("declined", "", {decline: true});
-  expect(Object.keys(h.files).length === 0, "declined: nothing sent");
-  await h.context.close();
 
   await browser.close();
   server.close();
