@@ -219,6 +219,8 @@
     oneOf(s.show.level, ["exact", "bin"], "show.level");
     flag(s.show.food_gained, "show.food_gained");
     flag(s.show.steps_left, "show.steps_left");
+    flag(s.show.near, "show.near");
+    flag(s.show.worth, "show.worth");
     flag(s.memory_test, "memory_test");
     return s;
   }

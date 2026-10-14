@@ -1,6 +1,7 @@
 /* Drawing the maze as SVG: the rooms the player has been in (or all of
- * them), the player, the open sides of the player's room, the food rooms
- * found, and for the memory test a frame and the rooms marked. */
+ * them), other rooms as outlines, the player, the open sides of the
+ * player's room, the food signs, and for the memory test a frame and the
+ * rooms marked. */
 (function (root) {
   "use strict";
   var FG = root.FG = root.FG || {};
@@ -20,9 +21,10 @@
     return room[0] + "," + room[1];
   }
 
-  /* state: {maze, seen: {key: true}, at: room or null, legal: [moves],
-   * food: {key: true} (found food rooms), cursor: room or null,
-   * marked: {key: true}, asking: room or null, all: bool (whole map)} */
+  /* state: {maze, seen: {key: true}, outline: {key: true}, at: room or null,
+   * legal: [moves], food: {key: worth or true} (the food signs), cursor:
+   * room or null, marked: {key: true}, asking: room or null, all: bool
+   * (whole map)} */
   function draw(svg, state) {
     var maze = state.maze;
     while (svg.firstChild) {
@@ -41,23 +43,13 @@
     function x(c) { return pad + c * cell + gap / 2; }
     function y(r) { return pad + r * cell + gap / 2; }
 
-    // rooms next to the player's room through an open side, not yet seen
-    var near = {};
-    if (state.at) {
-      (state.legal || []).forEach(function (m) {
-        if (m !== "STAY") {
-          near[key(maze.next(state.at, m))] = true;
-        }
-      });
-    }
-
     maze.rooms().forEach(function (room) {
       var k = key(room);
       var seen = state.all || state.seen[k];
       if (seen) {
         el("rect", {x: x(room[1]), y: y(room[0]), width: size, height: size, rx: size * 0.12,
           fill: maze.colourOf(room), stroke: "#2b2b2b", "stroke-width": 1.5}, svg);
-      } else if (near[k]) {
+      } else if ((state.outline || {})[k]) {
         el("rect", {x: x(room[1]), y: y(room[0]), width: size, height: size, rx: size * 0.12,
           fill: "none", stroke: "#8a8a8a", "stroke-width": 1.5, "stroke-dasharray": "6 5"}, svg);
       }
@@ -85,10 +77,18 @@
       });
     }
 
-    // food rooms found
+    // food signs, with the room's worth
     Object.keys(state.food || {}).forEach(function (k) {
       var rc = k.split(",").map(Number);
-      foodMark(svg, x(rc[1]) + size * 0.78, y(rc[0]) + size * 0.22, size * 0.15, false);
+      var fy = y(rc[0]) + size * 0.22;
+      foodMark(svg, x(rc[1]) + size * 0.22, fy, size * 0.15, false);
+      if (typeof state.food[k] === "number") {
+        var label = el("text", {x: x(rc[1]) + size * 0.78, y: fy, "text-anchor": "middle",
+          "dominant-baseline": "central", "font-size": Math.max(10, Math.round(size * 0.22)),
+          "font-weight": "bold", "font-family": "sans-serif", fill: "#1d1d1d", stroke: "#ffffff",
+          "stroke-width": Math.max(2, size * 0.04), "paint-order": "stroke"}, svg);
+        label.textContent = worthText(state.food[k]);
+      }
     });
 
     // memory test: rooms marked, the room asked about, the frame
@@ -113,6 +113,10 @@
       el("circle", {cx: px, cy: py, r: size * 0.2, fill: "#ffffff", stroke: "#000000", "stroke-width": 3}, svg);
       el("circle", {cx: px, cy: py, r: size * 0.07, fill: "#000000"}, svg);
     }
+  }
+
+  function worthText(w) {
+    return Number.isInteger(w) ? String(w) : String(Math.round(w * 100) / 100);
   }
 
   function foodMark(svg, cx, cy, r, big) {

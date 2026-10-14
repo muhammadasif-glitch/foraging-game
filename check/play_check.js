@@ -8,8 +8,8 @@
  * Scenarios: a full session with the condition from DataPipe; one where
  * energy stays at 0, so that every game runs all its steps; one with
  * random refill on a 6 x 6 maze, set in the link; a player who runs out of
- * energy; DataPipe that cannot hand out a condition; DataPipe down, then the
- * files sent on the next visit; a tab closed in the middle of a game, then
+ * energy; DataPipe that cannot hand out a condition; DataPipe down (with
+ * show.near and show.worth off), then the files sent on the next visit; a tab closed in the middle of a game, then
  * the partial game sent; the page opened from a file (file://); a player who
  * says no to the consent.
  */
@@ -246,6 +246,38 @@ function checkGameFile(name, f, expectSessionLength) {
   var room = roomOf(g.layout.start_room);
   expect(steps[0].room === g.layout.start_room && steps[0].step === 0, where + ": step 0");
   var found = {};
+  // the rooms whose food the player was shown: as the model's agent maps them
+  var known = {};
+  function learn(near) {
+    var add = [room];
+    if (near) {
+      maze.legal(room).forEach(function (m) {
+        if (m !== "STAY") {
+          add.push(maze.next(room, m));
+        }
+      });
+    }
+    var out = {rooms: [], food: []};
+    add.forEach(function (r) {
+      if (!known[r.join()]) {
+        known[r.join()] = true;
+        out.rooms.push(R.roomName(r));
+        if (world.nameAt(r) !== null) {
+          out.food.push(world.nameAt(r));
+        }
+      }
+    });
+    return out;
+  }
+  function expectKnown(st, want, t) {
+    expect(JSON.stringify(st.known_new) === JSON.stringify(want.rooms),
+      where + " step " + t + ": known rooms " + JSON.stringify(st.known_new) + " vs " + JSON.stringify(want.rooms));
+    expect(JSON.stringify(st.known_food_new) === JSON.stringify(want.food),
+      where + " step " + t + ": known food rooms " + JSON.stringify(st.known_food_new) + " vs " + JSON.stringify(want.food));
+    var events = (st.events || []).filter(function (e) { return e.type === "known"; }).map(function (e) { return e.room; });
+    expect(JSON.stringify(events) === JSON.stringify(want.food), where + " step " + t + ": known events");
+  }
+  expectKnown(steps[0], learn(false), 0);
   for (var t = 1; t < steps.length; t++) {
     var st = steps[t];
     expect(st.step === t, where + ": step number " + t);
@@ -257,6 +289,7 @@ function checkGameFile(name, f, expectSessionLength) {
     var e = stomach.step(!R.sameRoom(to, room), paid);
     room = to;
     expect(st.room === R.roomName(room) && st.room_to === st.room, where + " step " + t + ": room");
+    expectKnown(st, learn(s.show.near), t);
     expect(st.paid === paid, where + " step " + t + ": paid " + st.paid + " vs " + paid);
     expect(st.energy === e.energy, where + " step " + t + ": energy " + st.energy + " vs " + e.energy);
     Object.keys(world.level).forEach(function (n) {
@@ -289,6 +322,13 @@ function checkGameFile(name, f, expectSessionLength) {
   expect(f.keys.every(function (k) { return typeof k.t === "number"; }), where + ": key times");
   if (!partial && s.memory_test) {
     expect(g.memory_test && g.memory_test.truth && Array.isArray(g.memory_test.marked), where + ": memory test");
+    var knownFood = [];
+    steps.forEach(function (st) { knownFood = knownFood.concat(st.known_food_new); });
+    expect(JSON.stringify(g.memory_test.truth.known) === JSON.stringify(knownFood), where + ": memory test known");
+    expect((g.memory_test.marked || []).every(function (m) {
+      var k = (typeof m === "string" ? m : m.room);
+      return !k || steps.some(function (st) { return st.known_new.indexOf(k) >= 0; });
+    }), where + ": memory test marks only known rooms");
     expect(g.memory_test.levels.length === g.memory_test.marked.length &&
       g.memory_test.levels.every(function (a) { return a.answer >= 0 && a.answer <= 9; }), where + ": memory answers");
   }
@@ -454,7 +494,7 @@ function save(label, files) {
   await d.context.close();
 
   // 5. DataPipe down for the whole session, then the next visit sends it all
-  var e = await session("down", "?condition=exponential_slow", {seed: 55, mode: "down"});
+  var e = await session("down", "?condition=exponential_slow&set.show.near=false&set.show.worth=false", {seed: 55, mode: "down"});
   expect(Object.keys(e.files).length === 0, "down: nothing arrived");
   expect(/could not be sent/.test(e.status), "down: not-saved message");
   var kept = await e.page.evaluate(function () {
@@ -467,6 +507,7 @@ function save(label, files) {
   await sleep(1500);
   expect(Object.keys(e.files).length === SETTINGS.session.length + 1, "down: " + Object.keys(e.files).length + " files sent on the next visit");
   checkSession("down", e.files, SETTINGS.session);
+  save("down", e.files);
   await e.context.close();
 
   // 6. the tab closed in game 3, after 25 steps; the next visit sends the partial game

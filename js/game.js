@@ -96,6 +96,10 @@
     var seen = {};
     seen[V.key(room)] = true;
     var found = {};
+    // rooms whose food the player has been shown, and the food rooms by key
+    var known = {};
+    var foodAt = {};
+    names.forEach(function (n) { foodAt[V.key(g.layout.food_rooms[n])] = n; });
     var steps = [];
     var accepting = false;
     var over = false;
@@ -122,6 +126,58 @@
       return maze.legal(room);
     }
 
+    /* The player is shown the food of the room it is in and, with show.near
+     * from the first step on, of the rooms next to it through an open side,
+     * as the model's agent adds them to its map. Returns the rooms new to
+     * the player: {rooms: [names], food: [food room names]}. */
+    function learn(near) {
+      var add = [room];
+      if (near) {
+        maze.legal(room).forEach(function (m) {
+          if (m !== "STAY") {
+            add.push(maze.next(room, m));
+          }
+        });
+      }
+      var out = {rooms: [], food: []};
+      add.forEach(function (r) {
+        var k = V.key(r);
+        if (!known[k]) {
+          known[k] = true;
+          out.rooms.push(R.roomName(r));
+          if (foodAt[k] !== undefined) {
+            out.food.push(foodAt[k]);
+          }
+        }
+      });
+      return out;
+    }
+
+    /* What the map shows: rooms drawn as outlines, and the food signs. */
+    function mapState() {
+      var outline = {}, food = {};
+      if (s.show.near) {
+        Object.keys(known).forEach(function (k) {
+          if (!seen[k]) {
+            outline[k] = true;
+          }
+        });
+      } else {
+        allowed().forEach(function (m) {
+          var k = V.key(maze.next(room, m));
+          if (m !== "STAY" && !seen[k]) {
+            outline[k] = true;
+          }
+        });
+      }
+      Object.keys(known).forEach(function (k) {
+        if (foodAt[k] !== undefined) {
+          food[k] = s.show.worth ? Number(s.food_rooms[foodAt[k]].worth) : true;
+        }
+      });
+      return {outline: outline, food: food};
+    }
+
     function render() {
       $("game-label").textContent = g.label;
       $("steps-left").textContent = s.show.steps_left ? "Steps left: " + (s.steps - t) : "";
@@ -137,8 +193,9 @@
         $("food-text").textContent = levelText(lv, s.show, edges);
       }
       $("game-prompt").innerHTML = t === 0 && s.first_step_stay ? FG.text("first_step_stay", {}) : "";
+      var m = mapState();
       V.draw($("maze"), {maze: maze, seen: seen, all: s.show.map === "full", at: room,
-        legal: allowed(), food: found});
+        legal: allowed(), outline: m.outline, food: m.food});
     }
 
     function row(extra) {
@@ -180,10 +237,12 @@
 
     return new Promise(function (resolve) {
       REC.setPhase("game " + g.number);
+      var first = learn(false);
       steps.push(row({shown_at: null, key_at: null, decision_ms: null, released_at: null, hold_ms: null,
         key: null, move: null, room_from: null, room_to: R.roomName(room), legal: allowed(),
         walls_before: 0, other_keys_before: 0, paid: 0, cost: 0, food_lost: 0, change: null, draw: null,
-        found: null, revealed: true, events: []}));
+        found: null, revealed: true, known_new: first.rooms, known_food_new: first.food,
+        events: first.food.map(function (n) { return {type: "known", room: n}; })}));
       if (world.nameAt(room) !== null) {
         found[V.key(room)] = true;
         steps[0].found = world.nameAt(room);
@@ -270,7 +329,8 @@
         var en = stomach.step(!R.sameRoom(to, from), paid);
         room = to;
         var n = world.nameAt(room);
-        var events = [];
+        var learned = learn(s.show.near);
+        var events = learned.food.map(function (f) { return {type: "known", room: f}; });
         var newFound = null;
         if (n !== null && !found[V.key(room)]) {
           found[V.key(room)] = true;
@@ -301,7 +361,8 @@
           move: move, room_from: R.roomName(from), room_to: R.roomName(to), legal: legal,
           walls_before: walls, other_keys_before: others,
           paid: paid, cost: en.cost, food_lost: en.lost, change: what.rooms, draw: what.draw,
-          found: newFound, revealed: revealed, events: events
+          found: newFound, revealed: revealed, known_new: learned.rooms, known_food_new: learned.food,
+          events: events
         });
         walls = 0;
         others = 0;
@@ -348,24 +409,37 @@
   }
 
   /* After a game: where were the food rooms, and how full are they now.
-   * The map shows the rooms the player has been in, without the food marks.
+   * The map shows the rooms the player has been in, and as outlines the
+   * other rooms it knew (with show.near), without the food signs.
    * onChange(test) hears of every answer. */
   function memoryTest(g, rec, onChange) {
     var maze = R.maze(rec.layout.maze);
-    var seen = {};
+    function keyOf(name) {
+      var rc = /^s(\d)(\d)$/.exec(name);
+      return rc[1] + "," + rc[2];
+    }
+    var seen = {}, outline = {}, knownFood = [];
     rec.steps.forEach(function (st) {
-      var rc = /^s(\d)(\d)$/.exec(st.room);
-      seen[rc[1] + "," + rc[2]] = true;
+      seen[keyOf(st.room)] = true;
+    });
+    rec.steps.forEach(function (st) {
+      (st.known_new || []).forEach(function (name) {
+        if (!seen[keyOf(name)]) {
+          outline[keyOf(name)] = true;
+        }
+      });
+      knownFood = knownFood.concat(st.known_food_new || []);
     });
     var cursor = FG.config.roomOf(rec.steps[rec.steps.length - 1].room, maze, "room");
     var marked = {}, order = [];
     var test = {shown_at: null, actions: [], marked: [], levels: [], done_at: null,
       truth: {food_rooms: rec.layout.food_rooms, levels_now: rec.steps[rec.steps.length - 1].levels,
-        found: rec.steps.filter(function (st) { return st.found; }).map(function (st) { return st.found; })}};
+        found: rec.steps.filter(function (st) { return st.found; }).map(function (st) { return st.found; }),
+        known: knownFood}};
     REC.setPhase("memory " + g.number);
 
     function draw(asking) {
-      V.draw($("maze"), {maze: maze, seen: seen, at: null, legal: [], food: {},
+      V.draw($("maze"), {maze: maze, seen: seen, outline: outline, at: null, legal: [], food: {},
         cursor: asking ? null : cursor, marked: marked, asking: asking || null});
     }
 
@@ -373,7 +447,7 @@
       var d = {LEFT: [0, -1], RIGHT: [0, 1], UP: [-1, 0], DOWN: [1, 0]}[dir];
       var r = cursor[0] + d[0], c = cursor[1] + d[1];
       while (r >= 0 && c >= 0 && r < maze.rows && c < maze.cols) {
-        if (seen[r + "," + c]) {
+        if (seen[r + "," + c] || outline[r + "," + c]) {
           cursor = [r, c];
           return true;
         }

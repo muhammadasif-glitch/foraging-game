@@ -2,15 +2,17 @@
 
 The foraging task of [active-inference-foraging](https://github.com/muhammadasif-glitch/active-inference-foraging)
 (version 3), played by people in the browser. A player walks through a maze
-of rooms one step at a time, finds food rooms that are hidden and can be in
-other places in every game, and keeps up an energy bar. Every key press is
+of rooms one step at a time, finds food rooms that can be in other places in
+every game, and keeps up an energy bar. Every key press is
 recorded, with its time, and sent to [DataPipe](https://pipe.jspsych.org),
 which saves the files into the study's Google Drive folder.
 
 The maze, the food and the energy follow exactly the rules of the model's
 runs: `check/rules_check.py` compares the two on 2,000 random runs, number
 for number, and `check/data_check.py` replays recorded games through the
-model's own code. A game file also holds the game in the form of a model run,
+model's own code. What the player is shown of the food rooms is what the
+model's agent knows of them (`check/map_check.py`). A game file also holds the
+game in the form of a model run,
 so the measures of the agents' runs (`forage.lab.measures`) score people's
 games the same way.
 
@@ -38,7 +40,8 @@ use `?send=0` then (see below).
    steps, the shared game (the same layout and seed for every player), 3
    games with new random layouts, and a repeat of the first of those (not
    announced). After each game except the practice, the memory test: the map
-   of the rooms the player was in, without the food marks; the player marks
+   of the rooms the player was in (and as outlines the other rooms it was
+   shown), without the food signs; the player marks
    the food rooms with **Enter** (again to unmark), finishes with **Space**,
    then says how full each marked room is now, **0** (empty) to **9** (full).
    A break page between games.
@@ -47,12 +50,25 @@ use `?send=0` then (see below).
 
 In a game the arrow keys move and **Space** stays. Arrows on the player's
 room show the open sides; a key towards a wall moves nothing, costs nothing,
-shakes the maze and is recorded. Rooms appear on the map once visited (or all
-from the start: `show.map: "full"`), and the rooms next to the player's room
-through an open side are drawn as dashed outlines. A food room is hidden until
-the player walks in; from then on it is marked on the map, and while the
-player is in it the panel shows how full it is. The panel shows the energy,
-the steps left, and a short "+0.9" on a step that pays food.
+shakes the maze and is recorded. Rooms the player has been in are drawn in
+their colour (or all rooms from the start: `show.map: "full"`).
+
+What the player is shown of the food rooms is what the model's agent knows
+(`show.near`, on by default). The agent adds a room to its map as soon as it
+stands next to it (through an open side), and from then on knows whether the
+room holds food and what it is worth; how full it is, it learns only by going
+in. So from the first step on, the rooms next to the player's room appear as
+dashed outlines and stay on the map, and a food room among them shows a food
+sign with its worth (`show.worth`): the most food it gives in a step, when
+full. At step 0 only the start room is shown: the agent's first move is made
+before it has mapped any other room, and the rooms next to the start room
+appear only when the player is in the start room again after a step. While
+the player is in a food room the panel shows how full it is. With
+`show.near: false` a food room is marked only once the player has been in it,
+and only the rooms next to the player's room are outlined.
+
+The panel shows the energy, the steps left, and a short "+0.9" on a step that
+pays food.
 
 So that keys meant for one screen do not answer the next: a key pressed
 before a game's screen has changed is ignored ("busy"); the first step of a
@@ -98,9 +114,9 @@ Everything a study changes is in `settings.js`, with a comment on every key:
 - `texts`: everything the player reads, the consent text first. **Replace the
   consent text with your institute's before collecting data.** The texts are
   not changed by the settings, apart from what is in `{...}` (the stomach
-  numbers, the steps, what happens at 0, and whether there is a practice
-  game): check them when you change what is shown, the memory test, or the
-  food rule.
+  numbers, the steps, what happens at 0, what the map shows, and whether
+  there is a practice game): check them when you change what is shown, the
+  memory test, or the food rule.
 
 The keys have the names of the experiment files of the `forage` command, so a
 game and a model run are set up alike. The game refuses what the model
@@ -222,13 +238,14 @@ A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
 | `draw` | the step's random draw |
 | `in_food_room`, `seen`, `shown` | the food room the player is in, its level, and what the panel showed (`74%`, or `part full`) |
 | `energy_shown`, `steps_left` | what the panel showed |
-| `found`, `revealed`, `events` | a food room found on this step, a room visited for the first time, and events: `found`, `empty`, `full again`, `refill skipped`, `food lost` |
+| `known_new`, `known_food_new` | the rooms whose food the player is shown from this step on (at step 0 the start room; then the room entered and, with `show.near`, the rooms next to it), and the food rooms among them |
+| `found`, `revealed`, `events` | a food room entered for the first time on this step, a room visited for the first time, and events: `known` (a food room shown for the first time), `found`, `empty`, `full again`, `refill skipped`, `food lost` |
 
 `memory_test`: `shown_at`, `actions` (cursor moves, marks, unmarks, done, with
 times), `marked` (the rooms marked, in order), `levels` (for each marked room:
 `answer` 0 to 9, `shown_at`, `key_at`, `ms`), `done_at`, and `truth` (where
-the food rooms were, their levels at the end of the game, and which the player
-had found).
+the food rooms were, their levels at the end of the game, which the player
+had `found` (been in) and which it had been shown, `known`).
 
 `keys`: every key press and release: `t`, `type` (`down` or `up`), `key` (as
 the browser names it; Space is `" "`), `code`, `repeat`, `with` (Shift, Ctrl,
@@ -297,14 +314,21 @@ python check/rules_check.py          # the rules against the model, 2,000 random
 python check/export_mazes.py --check # js/mazes.js is the model's mazes
 node check/play_check.js out/        # whole sessions in Chromium (needs Playwright)
 python check/data_check.py out/      # the recorded games replayed through the model
+python check/map_check.py            # the map shown against the model's agent (a few minutes)
 ```
+
+`data_check.py` also checks that the rooms shown at each step are the ones
+the rule above gives, with the open sides from the model's maze;
+`map_check.py` runs the model's agent in each maze and checks before every
+move that the rooms in its map are exactly those, and that among them the
+food rooms, and only they, carry a preference.
 
 `play_check.js` plays sessions in a real browser and checks every file the
 game sends, with DataPipe stood in for:
 
 - a full session, and one with every game played to its last step;
 - random refill on 6 x 6, and running out of energy;
-- no condition from DataPipe, and DataPipe down with the files sent on the next visit;
+- no condition from DataPipe, and DataPipe down (with `show.near` and `show.worth` off) with the files sent on the next visit;
 - a tab closed in the middle of a game, during a memory test, and during the end question;
 - Space tapped fast after a game, and the browser's storage full;
 - the page opened from a file, and a player who declines.
@@ -321,8 +345,10 @@ game sends, with DataPipe stood in for:
   so far are sent as partial files. If it then goes on and finishes, the full
   files follow and the partial ones can be ignored; if it is cut short again,
   the later `.partial.json` files do not replace the ones already sent.
-- The task is not the agent's in every respect. The agent of the model knows
-  where the food rooms are and what they are worth, and the food rule; the
-  player knows none of these and sees a map of the rooms visited. Both are
-  told the open sides of their room. Measures of searching (`never_found`,
-  `<room>_first`, `rooms_visited`) are not comparable as they are.
+- The player is shown of the food rooms what the agent knows (with
+  `show.near`), but the task is not the agent's in every respect: the agent
+  also knows the food rule and its speeds, while the player is told in words
+  that food runs down and grows back, and learns how fast by playing. With
+  `show.near: false` the player has to walk in to find out whether a room
+  holds food, which the agent never has to, and measures of searching
+  (`never_found`, `<room>_first`, `rooms_visited`) are not comparable.

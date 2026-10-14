@@ -6,7 +6,10 @@ the game's settings are valid settings of a model run
 (forage.v3.settings.check). Then scores each game with
 forage.lab.measures.of_run(), the measures of the agents' runs, with the
 energy score set to the game's own stomach, and checks the food total and,
-for games that end at 0 energy, the energy score against the game.
+for games that end at 0 energy, the energy score against the game. Checks
+that the rooms the game showed the player at each step (known_new) are the
+ones the model's agent adds to its map (see check/map_check.py), with the
+open sides taken from the model's maze.
 
     PYTHONPATH=<checkout>/src:<checkout>/third_party/high_level_nav_planning \\
         python check/data_check.py <folder with game files> ...
@@ -32,7 +35,7 @@ def setup():
     from forage.v3 import settings as S
     from forage.lab import measures as M
     from forage.lab import config as C
-    return W, S, M, C
+    return W, S, M, C, agent
 
 
 class Draws:
@@ -61,6 +64,34 @@ def measures_for(res, C):
     m["energy"] = {"start": sat["start"], "stomach": sat["stomach"],
                    "move_cost": sat["move_cost"], "stay_cost": sat["stay_cost"]}
     return m
+
+
+def name_of(room):
+    return "s%d%d" % room
+
+
+def check_known(name, g, H):
+    """The rooms shown at each step: at step 0 the start room; after each
+    move the room entered and, with show.near, the rooms next to it."""
+    bad = []
+    env = H.GridWorldEnv(g["layout"]["maze"], H.POSSIBLE_ACTIONS, max_steps=False, goal=-1)
+    near = g["settings"]["show"]["near"]
+    food = {room(r): n for n, r in g["layout"]["food_rooms"].items()}
+    known = set()
+    for s in g["steps"]:
+        here = room(s["room"])
+        add = {here}
+        if near and s["step"] > 0:
+            add |= {tuple(int(v) for v in env.hypo_step(a, here)[1])
+                    for a in env.get_next_possible_motions(here, no_stay=True)}
+        fresh = add - known
+        known |= fresh
+        if sorted(s["known_new"]) != sorted(name_of(r) for r in fresh):
+            bad.append("%s step %d: known rooms %s, model %s"
+                       % (name, s["step"], s["known_new"], sorted(name_of(r) for r in fresh)))
+        if sorted(s["known_food_new"]) != sorted(food[r] for r in fresh if r in food):
+            bad.append("%s step %d: known food rooms %s" % (name, s["step"], s["known_food_new"]))
+    return bad, sum(len(s["known_new"]) for s in g["steps"])
 
 
 def check_game(name, f, W, S, M, C):
@@ -111,11 +142,11 @@ def check_game(name, f, W, S, M, C):
 
 
 def main(argv):
-    W, S, M, C = setup()
+    W, S, M, C, H = setup()
     files = []
     for folder in argv:
         files += sorted(glob.glob(os.path.join(folder, "**", "*.json"), recursive=True))
-    bad, games, steps, partial = [], 0, 0, 0
+    bad, games, steps, partial, shown = [], 0, 0, 0, 0
     for path in files:
         with open(path) as fh:
             f = json.load(fh)
@@ -123,11 +154,14 @@ def main(argv):
             continue
         b, n = check_game(os.path.basename(path), f, W, S, M, C)
         bad += b
+        b, k = check_known(os.path.basename(path), f["game"], H)
+        bad += b
+        shown += k
         games += 1
         partial += f["file"] == "partial game"
         steps += n
-    print("%d games (%d of them cut short), %d steps replayed through the model's world: %d differ"
-          % (games, partial, steps, len(bad)))
+    print("%d games (%d of them cut short), %d steps replayed through the model's world, "
+          "%d rooms shown on the map checked: %d differ" % (games, partial, steps, shown, len(bad)))
     for b in bad[:30]:
         print("  " + b)
     return 1 if bad or not games else 0

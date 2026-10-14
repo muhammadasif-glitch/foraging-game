@@ -58,6 +58,10 @@
       show: {
         map: "found",             // found: rooms appear once visited; full: the whole maze from the start
         level: "exact",           // exact: how full a food room is, in %; bin: only empty, part or full
+        near: true,               // true: from the first step on, the rooms next to the player's room appear
+                                  // on the map and stay, a food room with its food sign, as the model's agent
+                                  // learns them; false: a food room is marked only once it has been visited
+        worth: true,              // the food sign shows the room's worth (the most food it gives in a step)
         food_gained: true,        // a short "+0.9" when food is eaten
         steps_left: true
       },
@@ -101,20 +105,24 @@
       code_question: "Type your player code and press <b>Enter</b>.",
       instructions: [
         "<p>In this game you walk through a building of rooms, one step at a time.</p>" +
-        "<p>Some rooms hold food. You do not know which: you find out by walking in. " +
-        "The food rooms can be in other places in every game.</p>",
+        "<p>Some rooms hold food. The food rooms can be in other places in every game.</p>",
         "<p>Move with the <b>arrow keys</b>. Press <b>Space</b> to stay where you are.</p>" +
-        "<p>The open sides of your room show where you can go. Rooms appear on the map once you have been in them.</p>",
+        "<p>The open sides of your room show where you can go. {map_text} {worth_text}</p>",
         "<p>Your <b>energy</b> is shown on the right. It starts at {start} and holds at most {size}. " +
         "Every move costs {move_cost}, staying costs {stay_cost}. Food fills it up again; " +
         "food beyond a full bar is lost. {at_zero_text}</p>",
         "<p>Every step you are in a food room, you eat from it: the fuller it is, the more you get. " +
         "Its food runs down while you stay, and grows back while you are away. You only see how full " +
-        "a food room is while you are in it. A food room you have found stays marked on the map.</p>",
+        "a food room is while you are in it.</p>",
         "<p>Your goal: collect as much food as you can without running out of energy.</p>" +
         "<p>Each game has {steps} steps. After each game there are a few quick questions.</p>" +
         "{first_game_text}"
       ],
+      map_near: "From your first step on, the rooms next to your room appear on the map and stay there. " +
+        "A room with food shows a food sign.",
+      map_visited: "Rooms appear on the map once you have been in them. You find out which rooms hold food " +
+        "by walking in; a food room you have found shows a food sign.",
+      worth: "The number on a food sign is the most food the room gives in one step, when it is full.",
       at_zero_end: "If it reaches 0, the game is over.",
       at_zero_continue: "If it reaches 0, it stays at 0 until you eat again.",
       start_practice: "Press <b>Space</b> to start the practice game.",
@@ -123,7 +131,7 @@
       first_step_stay: "On the first step you can only stay: press <b>Space</b>.",
       next_game: "Press <b>Space</b> to start the next game.",
       memory_where: "Where were the food rooms? Move the frame with the arrow keys and press " +
-        "<b>Enter</b> on each room where you found food (Enter again removes it). Press <b>Space</b> when you are done.",
+        "<b>Enter</b> on each food room (Enter again removes it). Press <b>Space</b> when you are done.",
       memory_level: "How full do you think this food room is now? Press a key from <b>0</b> (empty) to <b>9</b> (full).",
       end_question: "In a few words: how did you play? Type your answer and press <b>Enter</b>.",
       thanks: "<p>Thank you for playing.</p>",

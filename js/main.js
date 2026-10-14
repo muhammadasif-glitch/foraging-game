@@ -19,7 +19,7 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, S = FG.screens;
 
-  FG.VERSION = "1.0.0";
+  FG.VERSION = "1.1.0";
   var FORMAT = "foraging-game";
   var FORMAT_VERSION = 1;
 
@@ -79,6 +79,8 @@
     return {start: s.stomach.start, size: s.stomach.size, move_cost: s.stomach.move_cost,
       stay_cost: s.stomach.stay_cost, steps: s.steps,
       at_zero_text: FG.text(s.stomach.at_zero === "end" ? "at_zero_end" : "at_zero_continue", {}),
+      map_text: FG.text(s.show.near ? "map_near" : "map_visited", {}),
+      worth_text: s.show.worth ? FG.text("worth", {}) : "",
       start_text: FG.text(all.session[0].kind === "practice" ? "start_practice" : "start_first", {}),
       first_game_text: all.session[0].kind === "practice" ? FG.text("first_practice", {}) : ""};
   }
