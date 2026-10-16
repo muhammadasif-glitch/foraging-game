@@ -68,10 +68,20 @@ The player walks freely, as in other games, while a key is held:
 **What is a step.** A move is a step when the player walks onto the floor of
 the next room: the world changes then, as in the model, and the rooms next
 to it come into light. Walking out into a door or a corridor and back into
-the same room is no step; it is recorded in `walks_back`. A stay is a step
-when Space is pressed in a room; it takes a moment (0.24 s in 2D, 0.42 s in
-3D), and held, Space stays again after each one. Turns and walking into
-walls are not steps.
+the same room is no step; it is recorded in `walks_back`. A stay is a step,
+in 2 ways: standing still (no key held at all) is a stay every second
+(`idle_stay_ms`), so energy runs down while the player waits; and Space is a
+stay at once, then every second while it is held. A stay never holds the
+player up. Holding keys, turning and walking into walls cost nothing and are
+not steps; time itself costs nothing.
+
+**Eating until full.** In a food room the player eats on every step, as in
+the model (entering pays the level, each stay eats a bite and pays the level
+after), until the energy bar is full. Then eating stops for the rest of that
+visit (`stomach.when_full: "stop"`): the food is left, the room does not run
+down, nothing is paid, and the bar shows "full"; walking out does not take a
+last bite either. Coming back starts eating again. `"keep"` eats on as the
+model does (food beyond a full bar is lost).
 
 **What the player sees** is what the model's agent knows. The agent has the
 room it is in on its map and, after its first step, every room next to the
@@ -130,7 +140,8 @@ Everything a study changes is in `settings.js`, with a comment on every key:
   `s33` or `environment`, worth, level at the start, and the food it shows),
   the food rule and its speed (`half_empty_in`, or `eat_per_step` and
   `refill_speed`), random refill, the stomach (start, size, costs, what
-  happens at 0), what the bar shows, and whether a session starts with sound.
+  happens at 0, `when_full`), what the bar shows, `idle_stay_ms` (a stay every
+  this many ms with no key held) and whether a session starts with sound.
 - `conditions`: the versions of the game. A condition changes any key of
   `game`; under `food_rooms` it changes rooms or adds new ones.
 - `texts`: everything the player reads.
@@ -295,8 +306,10 @@ A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
 | `shown_at` | when the player could act: the room before entered (or the stay before over), or the game shown for step 1 |
 | `key_at`, `decision_ms` | when the walk to this room began (when the player last set off from standing, or the room before was entered while walking on), and the time since `shown_at`; for a stay, when Space was pressed |
 | `entered_at`, `left_at` | when the step was taken: the floor of the room entered (for a stay, Space pressed); the world changes then. And when the player left the floor of the room before |
-| `held`, `press_at`, `stops`, `walked_tiles` | whether the walk began with a key held on from before the step before, when that key was pressed, how often the player stood still since the step before, and how far the player walked |
-| `arrived_at` | for a stay, when it was over |
+| `by` | how the step came: `walk` (a room entered), `Space`, or `idle` (a second with no key held) |
+| `held`, `press_at`, `stops`, `walked_tiles` | whether the walk began with a key held on from before the step before, when that key was pressed (null for an idle stay), how often the player stood still since the step before, and how far the player walked |
+| `kept`, `full` | the food room not eaten from on this step because the player was full there, and whether nothing was paid because the player was full (`stomach.when_full: "stop"`) |
+| `arrived_at` | for a stay, its time (a stay is at once) |
 | `released_at`, `hold_ms`, `released_by` | when the key was let go, and for how long it was held after the step; `released_by: blur` when the window lost the keyboard while it was down |
 | `key`, `move` | `ArrowUp`, ... or `Space`; `UP`, `DOWN`, `LEFT`, `RIGHT` or `STAY` |
 | `facing_before`, `facing`, `angle_before`, `angle`, `turns_before` | the way the player faced when the walk began and at the step (`RIGHT`, `DOWN`, `LEFT`, `UP`; in 2D the way walked), in 3D also as angles in degrees (0 east, 90 south), and the turns made since the step before (3D) |
@@ -305,12 +318,12 @@ A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
 | `walls_before`, `other_keys_before` | keys towards a wall, and other keys, pressed while choosing |
 | `paid`, `cost`, `food_lost`, `energy`, `eaten` | food eaten on the step, its energy cost, food lost to a full stomach, energy after the step, food eaten so far |
 | `levels` | the true level (0 to 1) of every food room after the step, also the ones the player cannot see |
-| `change` | what happened to each food room: `eaten`, `refilled` or `skipped` (random refill) |
+| `change` | what happened to each food room: `eaten`, `refilled`, `skipped` (random refill) or `kept (full)` (the player was full there) |
 | `draw` | the step's random draw |
 | `in_food_room`, `seen`, `shown` | the food room the player is in, its level, and what the bar showed (`74%`, or `part full`) |
 | `energy_shown`, `steps_left` | what the bar showed |
 | `known_new`, `known_food_new` | the rooms the player is shown from this step on (at step 0 the start room; then the room entered and the rooms next to it), and the food rooms among them |
-| `found`, `events` | a food room entered for the first time on this step, and events: `known` (a food room shown for the first time), `found`, `empty`, `full again`, `refill skipped`, `food lost` |
+| `found`, `events` | a food room entered for the first time on this step, and events: `known` (a food room shown for the first time), `found`, `empty`, `full again`, `refill skipped`, `food lost`, `full` (the bar full in a food room: eating stops) |
 
 `keys`: every key press and release: `t`, `type` (`down` or `up`), `key` (as
 the browser names it; Space is `" "`), `code`, `repeat`, `repeats` (how many
@@ -318,7 +331,7 @@ times the browser repeated the press while the key was held; the repeats are
 not recorded 1 by 1), `with` (Shift, Ctrl, Alt, Meta, when held), `phase`
 (`menu`, `game 3`, `end 3`) and `outcome`: in a game `walk`, `back` (3D, the
 down arrow), `stay`, `turn`, `not allowed` (a move on a first step that must
-be a stay), `ignored: between rooms` (Space in a door or corridor), `ignored: busy` (during a stay), `ignored: too soon`, `ignored: key`,
+be a stay), `ignored: too soon`, `ignored: key`,
 `ignored: with Ctrl, Alt or Meta`; on the first page `view`, `maze`, `row`, `play`, `ignored: not
 ready`; at the end of a game `menu`; anywhere `sound on` or `sound off` (M),
 `ignored: too soon` or `ignored: key`, or null for a key nothing listens to (a
@@ -350,6 +363,11 @@ and the stomach of `src/forage/v3/run.py`), in `js/rules.js`:
   its level; each step of staying eats from it and pays the level after; and
   the step of leaving eats from it once more, without paying.
 - A step in a food room pays its worth times its level after that step.
+- One rule is the game's own: with `stomach.when_full: "stop"` (the default)
+  a player whose bar is full in a food room eats no more there until it
+  walks out: that room is neither eaten from nor paid for on those steps
+  (`kept`, `full`). The model eats on; `check/data_check.py` replays such
+  steps the game's way. `"keep"` plays exactly as the model.
 - Energy: minus `move_cost` for a move or `stay_cost` for a stay, plus the
   food paid, at most `size` (the rest is lost), at least 0.
 - The moves open from a room are those of the model's maze, in the model's

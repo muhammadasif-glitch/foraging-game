@@ -228,13 +228,13 @@ async function play(page, rnd, plan, opts) {
         continue;
       }
       if (opts.fast && inGame === 0) {
-        // a stay in the start room, and a key during it: ignored as busy
-        // (after the moment in which keys are taken as left over from the menu)
-        await sleep(450);
+        // standing still in the start room: a stay with no key held, then
+        // Space and a walking key straight after it (a stay never holds the player up)
+        await sleep(1300);
         await page.keyboard.press(" ");
         await sleep(30);
         await page.keyboard.press(gp.view === "3d" ? "ArrowUp" : "ArrowRight");
-        await sleep(600);
+        await sleep(300);
         keys += 2;
         inGame += 1;
         continue;
@@ -250,6 +250,12 @@ async function play(page, rnd, plan, opts) {
       }
       if (rnd() < 0.03) {
         k = "x";
+      }
+      if (rnd() < (s.here ? 0.45 : 0.18)) {
+        // stands still: a stay every second with no key held
+        await sleep(1100 + Math.floor(rnd() * 2400));
+        inGame += 1;
+        continue;
       }
       var walking = k === "ArrowUp" || (gp.view === "3d" && k === "ArrowDown") ||
         (gp.view === "2d" && k !== " " && k !== "x");
@@ -375,10 +381,21 @@ function checkGameFile(name, f) {
     expect(st.step === t, where + ": step number " + t);
     expect(maze.legal(room).indexOf(st.move) >= 0, where + " step " + t + ": move " + st.move + " not open");
     expect(st.legal.join() === maze.legal(room).join(), where + " step " + t + ": legal");
-    // Space stays; a move was walked with a key that walks
+    // a stay by Space or by standing with no key; a move was walked with a key that walks
     var walkKeys = g.view === "3d" ? ["ArrowUp", "ArrowDown"] : ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
-    expect(st.move === "STAY" ? st.key === "Space" : walkKeys.indexOf(st.key) >= 0,
-      where + " step " + t + ": key " + st.key + " gave " + st.move);
+    expect(st.move === "STAY" ? (st.by === "idle" ? st.key === null : st.key === "Space" && st.by === "Space") :
+      walkKeys.indexOf(st.key) >= 0 && st.by === "walk", where + " step " + t + ": key " + st.key + " by " + st.by +
+      " gave " + st.move);
+    if (st.by === "idle" && t > 1) {
+      // no key held since the step before, for idle_stay_ms
+      var prevStep = steps[t - 1];
+      expect(st.entered_at - prevStep.entered_at >= s.idle_stay_ms - 40 || prevStep.move !== "STAY",
+        where + " step " + t + ": an idle stay " + Math.round(st.entered_at - prevStep.entered_at) + " ms after the step before");
+      var keyBetween = f.keys.some(function (k) {
+        return k.t > st.entered_at - s.idle_stay_ms + 40 && k.t < st.entered_at - 5;
+      });
+      expect(!keyBetween, where + " step " + t + ": no key in the second before an idle stay");
+    }
     if (g.view === "3d") {
       // the turns since the step before, the one going on cut at the step;
       // the walk began facing its door, and the turns lead to the facing at the step
@@ -393,8 +410,13 @@ function checkGameFile(name, f) {
       facing = st.facing;
     }
     var to = maze.next(room, st.move);
-    world.advance(to);
-    var paid = world.paid();
+    var kept = Object.keys(st.change || {}).filter(function (n) { return st.change[n] === "kept (full)"; })[0] || null;
+    expect(kept === (st.kept || null), where + " step " + t + ": the room kept when full");
+    world.advance(to, kept);
+    var paid = st.full ? 0 : world.paid();
+    if (st.full) {
+      expect(st.paid === 0 && world.nameAt(to) !== null, where + " step " + t + ": full in a food room, nothing paid");
+    }
     var e = stomach.step(!R.sameRoom(to, room), paid);
     eaten += paid;
     room = to;
@@ -425,9 +447,10 @@ function checkGameFile(name, f) {
       });
       expect(pressedThen, where + " step " + t + ": the press of a held step is in the keys");
     } else {
-      // a stay at its press; a walk sets off at its press or later (pressed facing a wall, then turned)
-      expect(st.move === "STAY" ? st.press_at === st.key_at : st.key_at >= st.press_at && st.press_at >= st.shown_at,
-        where + " step " + t + ": a pressed step begins at its press");
+      // a stay at its press (or with no key at all); a walk sets off at its press or later
+      // (pressed facing a wall, then turned)
+      expect(st.move === "STAY" ? (st.by === "idle" ? st.press_at === null : st.press_at === st.key_at) :
+        st.key_at >= st.press_at && st.press_at >= st.shown_at, where + " step " + t + ": a pressed step begins at its press");
     }
     if (st.move === "STAY" && (t < steps.length - 1 || !partial)) {
       expect(typeof st.arrived_at === "number" && st.arrived_at >= st.entered_at, where + " step " + t +
@@ -442,7 +465,7 @@ function checkGameFile(name, f) {
   expect(g.result && g.result.rows.length === steps.length, where + ": result rows");
   var downs = f.keys.filter(function (k) { return k.type === "down" && k.phase === "game " + g.number; });
   var stayKeys = downs.filter(function (k) { return k.outcome === "stay"; });
-  var pressedStays = steps.slice(1).filter(function (st) { return st.move === "STAY" && !st.held; }).length;
+  var pressedStays = steps.slice(1).filter(function (st) { return st.move === "STAY" && !st.held && st.by === "Space"; }).length;
   expect(stayKeys.length === pressedStays, where + ": " + stayKeys.length + " stay keys for " + pressedStays + " stays pressed");
   steps.slice(1).forEach(function (st) {
     if (st.move !== "STAY" && !st.held) {
@@ -650,8 +673,8 @@ function checkSaved(folder) {
   cn.forEach(function (n) {
     var g = checkGameFile(n, c.files[n]);
     expect(g.ended.how === "starved", "starve_fast: " + n + " ended " + g.ended.how);
-    var busy = c.files[n].keys.filter(function (k) { return k.type === "down" && k.outcome === "ignored: busy"; });
-    expect(busy.length > 0, "starve_fast: " + n + " keys during a stay were ignored (" + busy.length + ")");
+    var idle = g.steps.filter(function (st) { return st.by === "idle"; });
+    expect(idle.length > 0, "starve_fast: " + n + " stays while no key was held (" + idle.length + ")");
   });
   save("starve_fast", c.files);
   await c.context.close();

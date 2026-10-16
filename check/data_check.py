@@ -117,8 +117,14 @@ def check_game(name, f, W, S, M, C):
     for s in g["steps"][1:]:
         previous = here
         here = room(s["room"])
+        before = dict(world.level)
         world.advance(here)
-        paid = world.paid()
+        # the game's player was full (stomach.when_full "stop"): that room was
+        # not eaten from, and nothing was paid
+        for n, what in (s.get("change") or {}).items():
+            if what == "kept (full)":
+                world.level[n] = before[n]
+        paid = 0.0 if s.get("full") else world.paid()
         cost = st["stay_cost"] if here == previous else st["move_cost"]
         energy = max(0.0, min(st["stomach"], energy - cost + float(paid)))
         if paid != s["paid"]:

@@ -10,8 +10,14 @@
   little.
 - A move is a step when the player walks onto the floor of the next room
   (the world changes then); out into a door or corridor and back is no step
-  and is recorded in `walks_back`. A stay is a step when Space is pressed in
-  a room; held, Space stays again after each stay.
+  and is recorded in `walks_back`. Standing still with no key held is a stay
+  every second (`idle_stay_ms`), so energy runs down while the player waits;
+  Space is a stay at once and every second while held. Stays never hold the
+  player up; holding keys and time cost nothing.
+- Eating until full: in a food room the player eats on every step until the
+  energy bar is full, then stops for the rest of that visit; the food is left
+  and the room does not run down (`stomach.when_full: "stop"`; `"keep"` eats
+  on as the model). Steps record `by` (walk, Space, idle), `kept` and `full`.
 - 3D turning speeds up while the key is held and slows down when it is let
   go: a tap turns a few degrees, a hold turns steadily, also while walking.
   Turns are recorded with their angles.

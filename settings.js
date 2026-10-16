@@ -39,6 +39,8 @@
       maze: "grid_4x4",           // set by the player's choice on the first page
       steps: 120,                 // or "environment": the steps the maze's environment file gives
       first_step_stay: false,     // true: step 1 can only be a stay, as in the model's runs
+      idle_stay_ms: 1000,         // with no key held, a stay (a step that costs stay_cost) every this
+                                  // many ms; Space held stays at the same pace
       sound: true,                // music and sounds when the session starts; the player
                                   // switches them with M or the button in the corner
       start_rooms: "random",      // random, a room such as "s00", or "environment": 1 of the start rooms
@@ -66,7 +68,9 @@
         size: 20.0,               // the most energy; food beyond it is lost
         move_cost: 1.0,
         stay_cost: 0.25,
-        at_zero: "end"            // end: the game ends when energy reaches 0; continue: it stays at 0
+        at_zero: "end",           // end: the game ends when energy reaches 0; continue: it stays at 0
+        when_full: "stop"         // stop: once the bar is full in a food room, the player eats no more
+                                  // there until it walks out (the food is left); keep: eats on, as the model
       },
       show: {
         level: "exact",           // exact: how full the food room you are in is, in %; bin: empty, part or full
@@ -86,8 +90,9 @@
     // What the player reads.
     texts: {
       title: "Food Rooms",
-      intro: "Walk through the rooms and eat to keep your energy up. A food room runs empty while you " +
-        "eat from it and fills up again while you are away.",
+      intro: "Walk through the rooms and eat to keep your energy up. Standing still uses energy too. " +
+        "In a food room you eat until you are full. A food room runs empty while you eat from it and fills up " +
+        "again while you are away.",
       keys_2d: "<kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&rarr;</kbd> <kbd>&darr;</kbd> walk (hold) &middot; " +
         "<kbd>Space</kbd> stay &middot; <kbd>M</kbd> sound",
       keys_3d: "<kbd>&uarr;</kbd> walk &middot; <kbd>&darr;</kbd> back &middot; <kbd>&larr;</kbd> <kbd>&rarr;</kbd> turn &middot; " +

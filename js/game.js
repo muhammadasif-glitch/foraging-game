@@ -13,8 +13,15 @@
  * a step. A move is a step when the player walks onto the floor of the next
  * room: the world changes then, as in the model. Walking out into a door or
  * a corridor and back is no step (it is recorded in walks_back). A stay is a
- * step when Space is pressed in a room; held, it stays again after each
- * stay. Turns and walking into walls are not steps; they are recorded.
+ * step: every idle_stay_ms with no key held at all (standing still costs
+ * energy), or Space, again every idle_stay_ms while it is held. A stay never
+ * holds the player up. Turns, holding keys and walking into walls cost
+ * nothing and are not steps; they are recorded.
+ *
+ * Eating. In a food room the player eats on every step, as in the model,
+ * until the energy bar is full; then eating stops for the rest of that visit
+ * (stomach.when_full "stop"): the food is left, the room does not run down,
+ * and nothing is paid. "keep" eats on, as the model does.
  *
  * What the player is shown is what the model's agent knows: the rooms it has
  * been in and, from the first step on, the rooms next to the room it is in;
@@ -37,10 +44,9 @@
   var TOO_SOON_MS = 300;
   // how the player moves; written into every game file
   var CONTROLS = {
-    "2d": {walk_tiles_per_s: 7, speed_up_tiles_per_s2: 45, slow_down_tiles_per_s2: 60, stay_ms: 240,
-      body_radius_tiles: 0.3},
+    "2d": {walk_tiles_per_s: 7, speed_up_tiles_per_s2: 45, slow_down_tiles_per_s2: 60, body_radius_tiles: 0.3},
     "3d": {walk_tiles_per_s: 4.5, back_tiles_per_s: 2.5, speed_up_tiles_per_s2: 16, slow_down_tiles_per_s2: 22,
-      stay_ms: 420, turn_degrees_per_s: 130, turn_speed_up_degrees_per_s2: 1000, body_radius_tiles: 0.3}
+      turn_degrees_per_s: 130, turn_speed_up_degrees_per_s2: 1000, body_radius_tiles: 0.3}
   };
   // the food stands in the middle of its room, this wide (tiles)
   var FOOD_RADIUS = {cheese: 0.42, bread: 0.32};
@@ -148,7 +154,7 @@
     var eaten = 0;
     var steps = [], turns = [], back = [];
     var over = false;
-    var shownAt = null;           // when the player could last act: entering a room, the end of a stay
+    var shownAt = null;           // when the player could last act: the step before
     var walls = 0, others = 0, turnsBefore = 0, stops = 0;
     var holding = {};             // key code -> the rows its press made
     var down = {};                // key code -> {key, code, t, order}
@@ -157,7 +163,13 @@
     var moveStart = null;         // the walk since the player last stood still: {t, press, key, code, held, angle}
     var away = null;              // the player out of the floor of its room: {left_at, side, furthest}
     var leftAt = null;            // when the player last left the floor of its room
-    var turning = null, stay = null, ending = null;
+    var turning = null, ending = null;
+    var IDLE_MS = s.idle_stay_ms;
+    var keysDown = {};            // every key held now, for the idle clock
+    var idleSince = null;         // since when no key has been held (performance.now)
+    var lastSpace = null;         // when Space last made a stay
+    var visitFull = false;        // the energy bar has been full during this visit of a food room
+    var STOP_FULL = s.stomach.when_full !== "keep";
     var lastBump = -1e9;
     var fade = null;              // {from, to, t0}: new rooms coming into light
     var shown = {};               // food room -> {level, from, to, t0, ms}: the level drawn
@@ -167,7 +179,8 @@
     var soundToggles = [];
     var record = {
       number: g.number, view: g.view, maze: g.layout.maze, seed: g.seed, layout_seed: g.layout_seed,
-      layout: layoutNames(g.layout), settings: s, speeds: sp, controls: copy(C), food_kinds: copy(kinds),
+      layout: layoutNames(g.layout), settings: s, speeds: sp, food_kinds: copy(kinds),
+      controls: (function () { var c = copy(C); c.idle_stay_ms = s.idle_stay_ms; return c; })(),
       started: new Date().toISOString(), started_at: REC.now(), ended: null, steps: steps, turns: turns,
       walks_back: back, draws: draws, sound: {on_at_start: SND ? SND.on : null, toggles: soundToggles},
       path: null, known_rooms: null, result: null
@@ -599,12 +612,18 @@
       REC.listen(function (e, entry) {
         var code = e.code || e.key;
         if (e.type === "keyup") {
+          delete keysDown[code];
+          if (!Object.keys(keysDown).length) {
+            idleSince = performance.now();
+          }
           release(code, entry.t);
           return undefined;
         }
         if (e.repeat) {
           return "ignored: repeat";
         }
+        keysDown[code] = true;
+        idleSince = null;
         if (modified(e)) {
           return "ignored: with Ctrl, Alt or Meta";
         }
@@ -631,17 +650,9 @@
           return "turn";
         }
         if (key === "STAY") {
-          if (stay) {
-            return "ignored: busy";
-          }
-          if (!onFloorOf(room, scene.x, scene.y)) {
-            return "ignored: between rooms";
-          }
-          stayStep({key: e.key, code: code, at: entry.t, press: entry.t, held: false});
+          stayStep({key: e.key, code: code, at: entry.t, press: entry.t, held: false, by: "Space"});
+          lastSpace = performance.now();
           return "stay";
-        }
-        if (stay) {
-          return "ignored: busy";
         }
         if (t === 0 && s.first_step_stay) {
           return "not allowed";
@@ -653,6 +664,8 @@
       function onBlur() {
         // keys let go while the page had no keyboard are never heard
         Object.keys(down).forEach(function (code) { release(code, REC.now(), "blur"); });
+        keysDown = {};
+        idleSince = performance.now();
       }
 
       /* A step: the world changes now, as in the model. Returns its row. */
@@ -663,8 +676,17 @@
         var from = room;
         var to = maze.next(room, move);
         var leftName = world.nameAt(from);
-        var what = world.advance(to);
+        var energyBefore = stomach.energy;
+        // full in this food room: it is not eaten from, also on the way out
+        var keep = STOP_FULL && visitFull && leftName !== null ? leftName : null;
+        var what = world.advance(to, keep);
         var paid = world.paid();
+        var nextFood = world.nameAt(to);
+        var fullNow = STOP_FULL && nextFood !== null &&
+          (move === "STAY" ? visitFull : energyBefore >= stomach.size);
+        if (fullNow) {
+          paid = 0;
+        }
         var en = stomach.step(!R.sameRoom(to, from), paid);
         eaten += paid;
         room = to;
@@ -693,11 +715,22 @@
         if (en.lost > 0) {
           events.push({type: "food lost", amount: en.lost});
         }
+        if (move !== "STAY") {
+          visitFull = false;
+        }
+        var wasFull = visitFull;
+        if (STOP_FULL && n !== null && (fullNow || stomach.energy >= stomach.size)) {
+          visitFull = true;
+        }
+        if (visitFull && !wasFull) {
+          events.push({type: "full", room: n});
+        }
         var now = REC.now();
         var r = row({
           shown_at: shownAt, key_at: h.at, decision_ms: round(h.at - shownAt, 3), entered_at: now, arrived_at: null,
           left_at: extra.left_at === undefined ? null : extra.left_at, released_at: null, hold_ms: null,
-          key: h.key === " " || h.key === "Spacebar" ? "Space" : h.key,
+          key: h.key === " " || h.key === "Spacebar" ? "Space" : h.key, by: h.by || "walk",
+          kept: keep, full: fullNow,
           move: move, held: h.held, press_at: h.press, stops: stops, walked_tiles: round(walked, 2),
           room_from: R.roomName(from), room_to: R.roomName(to),
           legal: legal, facing_before: extra.facing, angle_before: extra.angle,
@@ -713,9 +746,9 @@
         walked = 0;
         goOn();
         steps.push(r);
-        if (down[h.code]) {
+        if (h.code && down[h.code]) {
           (holding[h.code] = holding[h.code] || []).push(r);
-        } else {
+        } else if (h.code) {
           r.released_at = now;
           r.hold_ms = round(now - r.key_at, 3);
         }
@@ -724,6 +757,9 @@
         hud();
         if (paid > 0 && s.show.food_gained) {
           $("gain").textContent = "+" + round(paid, 1).toFixed(1);
+          nudge($("gain"), "pop");
+        } else if (fullNow && s.show.food_gained) {
+          $("gain").textContent = "full";
           nudge($("gain"), "pop");
         } else {
           $("gain").textContent = "";
@@ -746,10 +782,7 @@
 
       function stayStep(h) {
         var st = takeStep("STAY", h, {facing: FACING[scene.facing], angle: three ? degrees(scene.angle) : null});
-        stay = {t0: performance.now(), row: st.row};
-        vx = 0;
-        vy = 0;
-        moveStart = null;
+        st.row.arrived_at = st.row.entered_at;
         if (st.food !== null) {
           setHere(st.food, false);
           var shownNow = shown[st.food] ? shown[st.food].level : world.level[st.food];
@@ -807,7 +840,7 @@
        * sliding along walls, guided through doors. */
       function updateBody(dt) {
         var wx = 0, wy = 0, top = C.walk_tiles_per_s;
-        if (!stay && !ending) {
+        if (!ending) {
           if (three) {
             var f = (isDown("UP") ? 1 : 0) - (isDown("DOWN") ? 1 : 0);
             if (f < 0) {
@@ -1023,18 +1056,25 @@
         if (shownAt !== null) {
           updateBody(dt);
         }
-        if (stay && now - stay.t0 >= C.stay_ms) {
-          stay.row.arrived_at = REC.now();
-          shownAt = stay.row.arrived_at;
-          stay = null;
-          changed();
-          // Space still held: stay again
-          if (!ending && isDown("STAY") && onFloorOf(room, scene.x, scene.y)) {
-            var sk = Object.keys(down).filter(function (c) { return KEY_MOVE[down[c].key] === "STAY"; })[0];
-            stayStep({key: down[sk].key, code: sk, at: REC.now(), press: down[sk].t, held: true});
+        if (shownAt !== null && !ending && IDLE_MS) {
+          if (isDown("STAY")) {
+            // Space held: a stay every idle_stay_ms
+            if (lastSpace !== null && now - lastSpace >= IDLE_MS) {
+              var sk = Object.keys(down).filter(function (c) { return KEY_MOVE[down[c].key] === "STAY"; })[0];
+              lastSpace = now;
+              stayStep({key: down[sk].key, code: sk, at: REC.now(), press: down[sk].t, held: true, by: "Space"});
+            }
+          } else if (!Object.keys(keysDown).length) {
+            // no key held: standing still is a stay every idle_stay_ms
+            if (idleSince === null) {
+              idleSince = now;
+            } else if (now - idleSince >= IDLE_MS) {
+              idleSince = now;
+              stayStep({key: null, code: null, at: REC.now(), press: null, held: false, by: "idle"});
+            }
           }
         }
-        if (ending && !stay && now - ending.t0 >= END_MS) {
+        if (ending && now - ending.t0 >= END_MS) {
           var e = ending;
           ending = null;
           REC.shown().then(function (at) {

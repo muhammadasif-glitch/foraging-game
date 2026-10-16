@@ -178,6 +178,8 @@
     }
     flag(s.first_step_stay, "first_step_stay");
     flag(s.sound, "sound");
+    number(s.idle_stay_ms, "idle_stay_ms", 200, 60000);
+    oneOf(s.stomach.when_full, ["stop", "keep"], "stomach.when_full");
     var maze = R.maze(s.maze);
     var env = environment(s.maze);
     if (s.start_rooms === "environment") {

@@ -285,12 +285,16 @@
   /* 1 step, right after the player has moved to roomNow. Returns what
    * happened to each food room: "eaten", "refilled" or "skipped", and the
    * draw. */
-  World.prototype.advance = function (roomNow) {
+  /* keep: the name of a food room not eaten from on this step although the
+   * player was in it (the game: the player was full); null as in the model. */
+  World.prototype.advance = function (roomNow, keep) {
     var draw = this.draw();
     var what = {};
     for (var i = 0; i < this.names.length; i++) {
       var n = this.names[i];
-      if (sameRoom(this.rooms[n].room, this.previous)) {
+      if (keep === n && sameRoom(this.rooms[n].room, this.previous)) {
+        what[n] = "kept (full)";
+      } else if (sameRoom(this.rooms[n].room, this.previous)) {
         this.level[n] = eaten(this.level[n], this.eat, this.rule);
         what[n] = "eaten";
       } else if (this.randomDraw && draw >= this.drawRate) {
