@@ -9,11 +9,12 @@
  *   node check/play_check.js <out folder> [--playwright <path to playwright>] [--only name,name]
  *
  * Scenarios: 3 games in a row (2D 4 x 4, 3D 6 x 6, 2D two 4 x 4) with the
- * condition from DataPipe; a 3D game played to its last step with turns;
+ * condition from DataPipe; a 3D game played to its last move with turns;
  * running out of energy; keys pressed during a stay; keys held down
  * (walking on from room to room, steering while walking, stays repeated) in
  * both views; the environments of the model, with their start and food
- * rooms; the sound switched with M and with the button; DataPipe that cannot
+ * rooms; every step counted as in the model (count_steps all); the sound
+ * switched with M and with the button; DataPipe that cannot
  * hand out a condition; DataPipe down, then the file sent on the next visit;
  * a tab closed in the middle of a game, then the partial game sent; the page
  * opened from a file.
@@ -39,10 +40,12 @@ var chromium = filesOnly ? null : require(pwPath).chromium;
 globalThis.window = globalThis;
 require(path.join(ROOT, "js", "mazes.js"));
 require(path.join(ROOT, "js", "rules.js"));
+require(path.join(ROOT, "js", "world.js"));
 require(path.join(ROOT, "settings.js"));
 require(path.join(ROOT, "js", "random.js"));
 require(path.join(ROOT, "js", "config.js"));
 var R = globalThis.FG.rules;
+var Wd = globalThis.FG.world;
 var SETTINGS = globalThis.FG.SETTINGS;
 var FACING = ["RIGHT", "DOWN", "LEFT", "UP"];
 
@@ -320,7 +323,7 @@ function roomOf(text) {
 function checkGameFile(name, f) {
   var where = name;
   var g = f.game;
-  expect(f.format === "foraging-game" && f.format_version === 3, where + ": format");
+  expect(f.format === "foraging-game" && f.format_version === 4, where + ": format");
   expect(f.trial_type === "foraging-game", where + ": trial_type");
   expect(/^[0-9a-f]{8}$/.test(f.player), where + ": player code " + f.player);
   expect(/^[0-9a-f]{12}$/.test(f.session_id), where + ": session id");
@@ -331,10 +334,22 @@ function checkGameFile(name, f) {
   var steps = g.steps;
   var partial = /partial/.test(name);
   expect(g.ended && typeof g.ended.how === "string", where + ": ended " + JSON.stringify(g.ended));
+  // with count_steps "moves" only the moves use up the steps
+  var countAll = s.count_steps === "all";
   if (!partial) {
     expect(steps.length === g.ended.step + 1, where + ": steps " + steps.length + " vs ended at " + g.ended.step);
-    expect(g.ended.how === "finished" ? g.ended.step === s.steps : g.ended.how === "starved", where + ": end " + g.ended.how);
+    var usedUp = countAll ? g.ended.step : g.ended.moves;
+    expect(g.ended.how === "finished" ? usedUp === s.steps : g.ended.how === "starved",
+      where + ": end " + g.ended.how + " with " + usedUp + " of " + s.steps + " used");
   }
+  var counted = {moves: 0, idle_stays: 0, space_stays: 0};
+  steps.slice(1).forEach(function (st) {
+    counted[st.move !== "STAY" ? "moves" : st.by === "idle" ? "idle_stays" : "space_stays"] += 1;
+  });
+  expect(g.ended.moves === counted.moves && g.ended.idle_stays === counted.idle_stays &&
+    g.ended.space_stays === counted.space_stays, where + ": moves and stays at the end " + JSON.stringify(g.ended));
+  expect(steps[0].moves === 0 && steps[0].steps_left === s.steps, where + ": step 0 moves and steps left");
+  var movesSoFar = 0;
   var maze = R.maze(g.layout.maze);
   var foodRooms = {};
   Object.keys(g.layout.food_rooms).forEach(function (n) {
@@ -379,6 +394,12 @@ function checkGameFile(name, f) {
   for (var t = 1; t < steps.length; t++) {
     var st = steps[t];
     expect(st.step === t, where + ": step number " + t);
+    movesSoFar += st.move !== "STAY" ? 1 : 0;
+    expect(st.moves === movesSoFar && st.steps_left === s.steps - (countAll ? t : movesSoFar),
+      where + " step " + t + ": moves " + st.moves + ", steps left " + st.steps_left);
+    if (t < steps.length - 1) {
+      expect(st.steps_left > 0, where + " step " + t + ": the game went on with no steps left");
+    }
     expect(maze.legal(room).indexOf(st.move) >= 0, where + " step " + t + ": move " + st.move + " not open");
     expect(st.legal.join() === maze.legal(room).join(), where + " step " + t + ": legal");
     // a stay by Space or by standing with no key; a move was walked with a key that walks
@@ -462,6 +483,7 @@ function checkGameFile(name, f) {
     }
   }
   expect(g.draws.length === steps.length - 1, where + ": draws " + g.draws.length);
+  checkTrack(where, g);
   expect(g.result && g.result.rows.length === steps.length, where + ": result rows");
   var downs = f.keys.filter(function (k) { return k.type === "down" && k.phase === "game " + g.number; });
   var stayKeys = downs.filter(function (k) { return k.outcome === "stay"; });
@@ -499,6 +521,46 @@ function checkGameFile(name, f) {
     });
   }
   return g;
+}
+
+/* The place and the view of the player every track_ms: never in a wall, the
+ * angle in 3D only, the steps taken by then, and about track_ms apart. */
+function checkTrack(where, g) {
+  var s = g.settings, steps = g.steps;
+  if (!s.track_ms) {
+    expect(g.track === null, where + ": no track when track_ms is 0");
+    return;
+  }
+  var tr = g.track;
+  if (!expect(tr && tr.every_ms === s.track_ms && tr.fields.join() === "t,x,y,angle,step" && tr.rows.length > 1,
+    where + ": track")) {
+    return;
+  }
+  var M = Wd.build(g.layout.maze);
+  var start = Wd.centre(M, R.roomFromName(g.layout.start_room));
+  var first = tr.rows[0];
+  expect(Math.abs(first[1] - start[0]) < 0.5 && Math.abs(first[2] - start[1]) < 0.5 && first[4] === 0,
+    where + ": the track starts in the middle of the start room " + JSON.stringify(first));
+  expect(first[0] >= steps[0].shown_at - 0.05, where + ": the track starts when the game is shown");
+  var gaps = [], k = 0;
+  tr.rows.forEach(function (p, i) {
+    expect(M.kind[Math.floor(p[2]) * M.W + Math.floor(p[1])] !== Wd.WALL, where + ": track " + i + " in a wall");
+    expect(g.view === "3d" ? typeof p[3] === "number" && p[3] >= 0 && p[3] < 360 : p[3] === null,
+      where + ": track " + i + " angle " + p[3]);
+    // the steps taken by then (t is rounded to 0.1 ms)
+    while (k + 1 < steps.length && steps[k + 1].entered_at <= p[0] + 0.051) {
+      k += 1;
+    }
+    expect(p[4] === k, where + ": track " + i + " at step " + p[4] + ", the steps say " + k);
+    if (i) {
+      gaps.push(p[0] - tr.rows[i - 1][0]);
+    }
+  });
+  expect(gaps.every(function (d) { return d > 0; }), where + ": track times go up");
+  var usual = gaps.filter(function (d) { return d < 3 * s.track_ms; });
+  var mean = usual.reduce(function (a, b) { return a + b; }, 0) / Math.max(1, usual.length);
+  expect(usual.length >= 0.95 * gaps.length && Math.abs(mean - s.track_ms) < 0.15 * s.track_ms,
+    where + ": track every " + mean.toFixed(1) + " ms (" + (gaps.length - usual.length) + " long gaps of " + gaps.length + ")");
 }
 
 function gameFiles(files) {
@@ -547,6 +609,16 @@ function checkEnvironmentSettings() {
   expect(C.layout(far, null, globalThis.FG.random.make(1)).start_room.join() === "6,6", "a start in row 6");
 }
 
+/* The problems by kind, numbers left out. */
+function problemKinds() {
+  var kinds = {};
+  problems.forEach(function (p) {
+    var k = p.replace(/^\S+\.json( step \d+)?: /, "").replace(/[0-9.]+/g, "N");
+    kinds[k] = (kinds[k] || 0) + 1;
+  });
+  Object.keys(kinds).forEach(function (k) { console.log("  " + kinds[k] + " x " + k); });
+}
+
 function checkSaved(folder) {
   var n = 0;
   fs.readdirSync(folder).forEach(function (sub) {
@@ -559,13 +631,8 @@ function checkSaved(folder) {
       n += 1;
     });
   });
-  var kinds = {};
-  problems.forEach(function (p) {
-    var k = p.replace(/^\S+\.json( step \d+)?: /, "").replace(/[0-9.]+/g, "N");
-    kinds[k] = (kinds[k] || 0) + 1;
-  });
   console.log(n + " files, " + problems.length + " problems");
-  Object.keys(kinds).forEach(function (k) { console.log("  " + kinds[k] + " x " + k); });
+  problemKinds();
   problems.slice(0, 15).forEach(function (p) { console.log("    " + p); });
   process.exit(problems.length ? 1 : 0);
 }
@@ -649,14 +716,16 @@ function checkSaved(folder) {
   }
   if (want("full_3d")) {
   // 2. a 3D game to its last step, with turns; energy stays at 0
-  var b = await session("full_3d", "?condition=exponential_slow&set.stomach.at_zero=continue", [
+  var b = await session("full_3d", "?condition=exponential_slow&set.steps=40&set.stomach.at_zero=continue", [
     {view: "3d", maze: "grid_two_4x4"}
   ], {seed: 12, stay: 0.4});
   var bn = gameFiles(b.files);
   expect(bn.length === 1, "full_3d: 1 file");
   bn.forEach(function (n) {
     var g = checkGameFile(n, b.files[n]);
-    expect(g.ended.how === "finished" && g.steps.length === g.settings.steps + 1, "full_3d: all " + g.settings.steps + " steps");
+    expect(g.ended.how === "finished" && g.ended.moves === g.settings.steps, "full_3d: all " + g.settings.steps + " moves");
+    expect(g.ended.idle_stays + g.ended.space_stays > 0 && g.steps.length > g.settings.steps + 1,
+      "full_3d: stays did not use up moves (" + (g.steps.length - 1) + " steps)");
     expect(g.turns.length > 10, "full_3d: turns recorded (" + g.turns.length + ")");
   });
   save("full_3d", b.files);
@@ -728,16 +797,19 @@ function checkSaved(folder) {
         await sleep(200);
       }
     }
-    // into a room (Space does nothing between 2 rooms), then stay to the end;
-    // in 2D between 2 rooms only the arrows along the corridor walk
+    // walk on to the last move (stays do not use up moves), with a stay now
+    // and then; in 2D between 2 rooms only the arrows along the corridor walk
     var arrows = view === "3d" ? ["ArrowUp"] : ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"];
-    for (var w = 0; w < 100 && !(await ui(page)).end; w++) {
-      if (w % 8 === 0) {
-        await hold(arrows[(w / 8) % arrows.length], view === "3d" ? 1800 : 900);
-        await sleep(700);
+    for (var w = 0; w < 120 && !(await ui(page)).end; w++) {
+      await hold(arrows[Math.floor(w / 2) % arrows.length], view === "3d" ? 1800 : 1500);
+      if (view === "3d" && w % 2) {
+        await hold("ArrowLeft", 500);
       }
-      await page.keyboard.press(" ");
-      await sleep(view === "3d" ? 480 : 320);
+      await sleep(300);
+      if (w % 3 === 0) {
+        await page.keyboard.press(" ");
+        await sleep(300);
+      }
     }
     await sleep(800);
     var route = await page.evaluate(function () {
@@ -774,8 +846,8 @@ function checkSaved(folder) {
     await ctx.close();
   }
   if (want("hold")) {
-  await holdGame("2d", "corridors_7x7", "?test=1&condition=linear_fast&set.steps=45&set.stomach.at_zero=continue");
-  await holdGame("3d", "holes_6x6", "?test=1&condition=linear_fast&set.steps=30&set.stomach.at_zero=continue");
+  await holdGame("2d", "corridors_7x7", "?test=1&condition=linear_fast&set.steps=20&set.stomach.at_zero=continue");
+  await holdGame("3d", "holes_6x6", "?test=1&condition=linear_fast&set.steps=14&set.stomach.at_zero=continue");
   }
 
   if (want("environments")) {
@@ -796,11 +868,26 @@ function checkSaved(folder) {
   }
   if (want("no_condition")) {
   // 4. DataPipe hands out no condition: one is picked at random
-  var d = await session("no_condition", "?set.steps=5", [{view: "2d", maze: "grid_4x4"}], {seed: 14, mode: "no condition"});
+  var d = await session("no_condition", "?set.steps=5&set.track_ms=0", [{view: "2d", maze: "grid_4x4"}], {seed: 14, mode: "no condition"});
   var dn = gameFiles(d.files);
   expect(dn.length === 1 && d.files[dn[0]].condition.how === "random", "no_condition: a random condition");
   dn.forEach(function (n) { checkGameFile(n, d.files[n]); });
   await d.context.close();
+
+  }
+  if (want("count_all")) {
+  // 4b. every step uses up the steps, as in the model
+  var ca = await session("count_all", "?test=1&condition=linear_fast&set.steps=20&set.count_steps=all",
+    [{view: "3d", maze: "grid_4x4"}], {seed: 24, stay: 0.4});
+  var can = gameFiles(ca.files);
+  expect(can.length === 1, "count_all: 1 file");
+  can.forEach(function (n) {
+    var g = checkGameFile(n, ca.files[n]);
+    expect(g.ended.how === "starved" || (g.ended.step === 20 && g.ended.moves < 20),
+      "count_all: ended at step " + g.ended.step + " with " + g.ended.moves + " moves");
+  });
+  save("count_all", ca.files);
+  await ca.context.close();
 
   }
   if (want("down")) {
@@ -824,7 +911,7 @@ function checkSaved(folder) {
   if (want("closed")) {
   // 6. the tab closed in the middle of a game: the partial game arrives
   var ff = {};
-  var f = await session("closed", "?condition=linear_fast&set.stomach.at_zero=continue", [
+  var f = await session("closed", "?condition=linear_fast&set.steps=40&set.stomach.at_zero=continue", [
     {view: "2d", maze: "grid_4x4"}, {view: "3d", maze: "grid_6x6", stopAfter: 25}
   ], {seed: 16, files: ff});
   await f.page.close({runBeforeUnload: true});
@@ -919,6 +1006,7 @@ function checkSaved(folder) {
   server.close();
   report.forEach(function (r) { console.log(r); });
   console.log(problems.length ? problems.length + " problems:" : "no problems");
+  problemKinds();
   problems.slice(0, 40).forEach(function (p) { console.log("  " + p); });
   process.exit(problems.length ? 1 : 0);
 })().catch(function (err) {

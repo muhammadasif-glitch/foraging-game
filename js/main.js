@@ -20,9 +20,9 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "2.1.0";
+  FG.VERSION = "2.2.0";
   var FORMAT = "foraging-game";
-  var FORMAT_VERSION = 3;
+  var FORMAT_VERSION = 4;
   var TRIAL_TYPE = "foraging-game";
   // keys sooner than this after the first page or the end of a game appear
   // are taken as left over from the screen before
@@ -378,7 +378,7 @@
       function keepGame(rec) {
         var f = gameFile(rec, "partial game");
         if (!f.game.ended) {
-          f.game.ended = {how: "page closed", step: f.game.steps.length - 1, at: REC.now()};
+          f.game.ended = FG.game.ended(f.game, "page closed", REC.now());
         } else {
           f.game.ended.page_closed_at = REC.now();
         }
@@ -424,7 +424,8 @@
       var eaten = rec.steps.reduce(function (a, st) { return a + st.paid; }, 0);
       $("endTitle").textContent = text(rec.ended.how === "starved" ? "starved" : "finished");
       $("endScore").textContent = (Math.round(eaten * 10) / 10).toFixed(1);
-      $("endLabel").textContent = text("eaten") + " in " + rec.ended.step + " steps";
+      $("endLabel").textContent = text("eaten") + " in " +
+        (rec.settings.count_steps === "all" ? rec.ended.step + " steps" : rec.ended.moves + " moves");
       $("endAgain").innerHTML = text("again");
       $("routeTitle").textContent = text("route");
       var rw = Math.max(260, Math.min(520, root.innerWidth - 90)), rh = Math.round(rw * 0.62);

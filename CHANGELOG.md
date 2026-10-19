@@ -1,5 +1,19 @@
 # Changes
 
+## 2.2.0
+
+- Only moves use up the steps (`count_steps: "moves"`): a game is 120 moves
+  or ends when the energy runs out. A stay still costs energy, eats in a food
+  room and lets food grow back, but leaves the moves as they were. The bar
+  shows the moves left. `count_steps: "all"` counts every step as the model.
+- The place and the view of the player are recorded every 100 ms
+  (`track_ms`, in `track`).
+- File format 4: `ended` has `moves`, `idle_stays` and `space_stays`; every
+  step has `moves`; `steps_left` counts moves; new `track`. In the game as a
+  model run (`result`), `run.steps` is at least the steps the game took.
+- The route map at the end says first and last instead of step numbers.
+- An angle just under 0 degrees was recorded as 360; it is 0 now.
+
 ## 2.1.0
 
 - Walking: the player walks freely, as in other games, while a key is

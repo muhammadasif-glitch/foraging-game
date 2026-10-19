@@ -206,9 +206,9 @@
     g.fillStyle = "#8b9bb0";
     g.textBaseline = "top";
     g.textAlign = "right";
-    g.fillText("step 1", lx0 - 6, ly - 2);
+    g.fillText("first", lx0 - 6, ly - 2);
     g.textAlign = "left";
-    g.fillText("step " + n, lx1 + 6, ly - 2);
+    g.fillText("last", lx1 + 6, ly - 2);
     g.textAlign = "center";
     g.fillText("S start, E end, ring: stayed, +food eaten in the room; only the rooms you knew",
       w / 2, ly + 11);

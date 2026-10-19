@@ -38,9 +38,13 @@
     game: {
       maze: "grid_4x4",           // set by the player's choice on the first page
       steps: 120,                 // or "environment": the steps the maze's environment file gives
+      count_steps: "moves",       // moves: only a move into the next room uses up 1 of the steps (a stay
+                                  // still costs energy); all: every move and stay does, as in the model
       first_step_stay: false,     // true: step 1 can only be a stay, as in the model's runs
       idle_stay_ms: 1000,         // with no key held, a stay (a step that costs stay_cost) every this
                                   // many ms; Space held stays at the same pace
+      track_ms: 100,              // the place and the view of the player recorded every this many ms
+                                  // (0: not recorded)
       sound: true,                // music and sounds when the session starts; the player
                                   // switches them with M or the button in the corner
       start_rooms: "random",      // random, a room such as "s00", or "environment": 1 of the start rooms

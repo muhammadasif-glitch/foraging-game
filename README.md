@@ -47,9 +47,9 @@ down arrows go between the 2 rows, the left and right arrows choose, the keys
 instructions: one line says what to do, and the keys are shown during the
 game. The player code is made by the game and kept in the browser.
 
-**A game**: 120 steps (or until the energy runs out). The bar at the top shows
+**A game**: 120 moves, or until the energy runs out. The bar at the top shows
 the energy, how full the food room the player is in is, its food and worth,
-the food eaten and the steps left.
+the food eaten and the moves left.
 
 The player walks freely, as in other games, while a key is held:
 
@@ -74,6 +74,13 @@ in 2 ways: standing still (no key held at all) is a stay every second
 stay at once, then every second while it is held. A stay never holds the
 player up. Holding keys, turning and walking into walls cost nothing and are
 not steps; time itself costs nothing.
+
+**Moves and stays.** Only a move uses up 1 of the game's 120 steps
+(`count_steps: "moves"`): a stay costs energy (`stay_cost`, a move
+`move_cost`), eats in a food room and lets the world go on (food grows back),
+but leaves the moves as they were. So a game ends after 120 moves or when
+the energy runs out. `count_steps: "all"` counts every move and stay, as the
+model does.
 
 **Eating until full.** In a food room the player eats on every step, as in
 the model (entering pays the level, each stay eats a bite and pays the level
@@ -141,7 +148,10 @@ Everything a study changes is in `settings.js`, with a comment on every key:
   the food rule and its speed (`half_empty_in`, or `eat_per_step` and
   `refill_speed`), random refill, the stomach (start, size, costs, what
   happens at 0, `when_full`), what the bar shows, `idle_stay_ms` (a stay every
-  this many ms with no key held) and whether a session starts with sound.
+  this many ms with no key held), `count_steps` (`moves`: only moves use up
+  the steps; `all`: every step, as in the model), `track_ms` (the player's
+  place and view recorded every this many ms; 0: not at all) and whether a
+  session starts with sound.
 - `conditions`: the versions of the game. A condition changes any key of
   `game`; under `food_rooms` it changes rooms or adds new ones.
 - `texts`: everything the player reads.
@@ -291,7 +301,8 @@ adds up to about one frame (`frame_ms`).
 | `sound` | `on_at_start`, and `toggles`: every switch during the game, `{t, step, on, by}` |
 | `path`, `known_rooms` | the room of every step from step 0, and the rooms the player knew at the end (what the end page draws) |
 | `walks_back` | every time the player went out into a door or corridor and back into the same room: `{left_at, back_at, step (steps taken before), room, toward, move, furthest (the share of the way to the next room's floor reached)}` |
-| `started`, `started_at`, `ended` | `ended`: `{how, step, at}`; how is `finished`, `starved` or `page closed` (then `at` is when the page closed) |
+| `started`, `started_at`, `ended` | `ended`: `{how, step, moves, idle_stays, space_stays, at}`: how is `finished`, `starved` or `page closed` (then `at` is when the page closed); `step` the steps of the world (moves and stays), `moves` the moves, `idle_stays` and `space_stays` the stays standing still and by Space |
+| `track` | the place and the view of the player every `track_ms` (100) during the game: `{every_ms, fields, rows}`, a row `[t, x, y, angle, step]` taken at the first screen frame from each mark on (so about 100 ms apart, more while the tab is hidden): `x`, `y` in tiles from the top left of the maze (a room is 4 tiles, a corridor 3, `x` to the right, `y` down), `angle` the way the player looks in degrees (0 east, 90 south; null in 2D), `step` the steps taken by then. Null when `track_ms` is 0. Not in the short form |
 | `steps` | 1 row per step, step 0 being the start (below) |
 | `turns` | 3D: every turn, `{t, step (steps taken before it), key, from, to, from_angle, to_angle, ms, held_ms}`: `from` and `to` are the doors faced (`RIGHT`, `DOWN`, `LEFT`, `UP`), the angles in degrees (0 east, 90 south), `held_ms` how long the key was held. A turn still going on when a step is taken ends there (`split`), and the rest is a turn of its own (`continued`, with no key press of its own) |
 | `result` | the game as a model run: `settings` (world, run, satiety) and `rows` as in `forage.v3.record`, for `forage.lab.measures.of_run`; laid over the defaults of `forage.v3.settings` they are valid settings of a model run |
@@ -321,7 +332,8 @@ A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
 | `change` | what happened to each food room: `eaten`, `refilled`, `skipped` (random refill) or `kept (full)` (the player was full there) |
 | `draw` | the step's random draw |
 | `in_food_room`, `seen`, `shown` | the food room the player is in, its level, and what the bar showed (`74%`, or `part full`) |
-| `energy_shown`, `steps_left` | what the bar showed |
+| `energy_shown`, `steps_left` | what the bar showed: the energy and the moves left (with `count_steps: "all"` the steps left) |
+| `moves` | the moves taken so far, this step included |
 | `known_new`, `known_food_new` | the rooms the player is shown from this step on (at step 0 the start room; then the room entered and the rooms next to it), and the food rooms among them |
 | `found`, `events` | a food room entered for the first time on this step, and events: `known` (a food room shown for the first time), `found`, `empty`, `full again`, `refill skipped`, `food lost`, `full` (the bar full in a food room: eating stops) |
 
@@ -383,7 +395,7 @@ python check/rules_check.py          # the rules against the model, 2,000 random
 python check/export_mazes.py --check # js/mazes.js is the model's mazes
 python check/layout_check.py         # the maze drawn as in the model's films (needs node)
 python check/map_check.py            # what the player is shown against the model's agent (a few minutes)
-node check/play_check.js out/        # games in Chromium, 2D and 3D (needs Playwright; about 45 minutes;
+node check/play_check.js out/        # games in Chromium, 2D and 3D (needs Playwright; about 35 minutes;
                                      # --only hold,closed for some scenarios, --files out/ to check saved files again)
 python check/data_check.py out/      # the recorded games replayed through the model
 python check/draw_route.py GAME.json # the way a player went, as on the end page (needs matplotlib)
@@ -397,7 +409,7 @@ with DataPipe stood in for (with its validation of the required fields):
 
 - 3 games in a row (2D and 3D, the 3 mazes that come with the model) with the
   condition from DataPipe, and the player code kept for the next visit;
-- a 3D game played to its last step, with turns;
+- a 3D game played to its last move, with turns, where stays do not use up moves;
 - running out of energy, with keys pressed during stays;
 - keys held down in 2D and 3D: walking on from room to room, steering while
   walking, stays repeated, the sound switched with M and with the button, and
@@ -405,6 +417,7 @@ with DataPipe stood in for (with its validation of the required fields):
 - the environments of the model in both views, starting anywhere, with
   cheese and bread, and the settings that take rooms and steps from an
   environment file;
+- every step counted as in the model (`count_steps: "all"`);
 - no condition from DataPipe, and DataPipe down with the file sent on the next visit;
 - a tab closed in the middle of a game, then the partial game sent;
 - the page opened from a file.

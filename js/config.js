@@ -176,6 +176,8 @@
         (typeof s.steps !== "number" || s.steps < 1 || s.steps !== Math.floor(s.steps))) {
       throw new SettingsError("steps must be a whole number of at least 1, or environment, got " + s.steps);
     }
+    oneOf(s.count_steps, ["moves", "all"], "count_steps");
+    number(s.track_ms, "track_ms", 0, 60000);
     flag(s.first_step_stay, "first_step_stay");
     flag(s.sound, "sound");
     number(s.idle_stay_ms, "idle_stay_ms", 200, 60000);

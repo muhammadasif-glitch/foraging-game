@@ -107,8 +107,8 @@
   }
 
   function degrees(angle) {
-    var d = angle * 180 / Math.PI % 360;
-    return round(d < 0 ? d + 360 : d, 1);
+    var d = round(angle * 180 / Math.PI % 360, 1) + 0;
+    return d < 0 ? round(d + 360, 1) : d >= 360 ? 0 : d;
   }
 
   function smooth(k) {
@@ -143,6 +143,7 @@
 
     var room = g.layout.start_room.slice();
     var t = 0;
+    var moves = 0;                // the steps that moved into the next room
     var visited = {}, known = {}, found = {};
     var foodAt = {};
     names.forEach(function (n) { foodAt[Wd.key(g.layout.food_rooms[n])] = n; });
@@ -170,6 +171,10 @@
     var lastSpace = null;         // when Space last made a stay
     var visitFull = false;        // the energy bar has been full during this visit of a food room
     var STOP_FULL = s.stomach.when_full !== "keep";
+    var COUNT_MOVES = s.count_steps !== "all";
+    var TRACK_MS = s.track_ms || 0;
+    var track = {every_ms: TRACK_MS, fields: ["t", "x", "y", "angle", "step"], rows: []};
+    var nextTrack = null;         // when the next place of the player is recorded (performance.now)
     var lastBump = -1e9;
     var fade = null;              // {from, to, t0}: new rooms coming into light
     var shown = {};               // food room -> {level, from, to, t0, ms}: the level drawn
@@ -183,7 +188,7 @@
       controls: (function () { var c = copy(C); c.idle_stay_ms = s.idle_stay_ms; return c; })(),
       started: new Date().toISOString(), started_at: REC.now(), ended: null, steps: steps, turns: turns,
       walks_back: back, draws: draws, sound: {on_at_start: SND ? SND.on : null, toggles: soundToggles},
-      path: null, known_rooms: null, result: null
+      track: TRACK_MS ? track : null, path: null, known_rooms: null, result: null
     };
 
     function levels() {
@@ -197,6 +202,11 @@
         return ["STAY"];
       }
       return maze.legal(room);
+    }
+
+    /* The steps used up: only the moves, or every step as in the model. */
+    function used() {
+      return COUNT_MOVES ? moves : t;
     }
 
     /* The room the player is in, and, after the first step, the rooms next
@@ -295,7 +305,8 @@
       $("energyBar").style.background = energyColour(share);
       $("energy").textContent = round(e, 1).toFixed(1) + " / " + round(stomach.size, 1);
       $("eaten").textContent = round(eaten, 1).toFixed(1);
-      $("steps").textContent = s.steps - t;
+      $("steps").textContent = s.steps - used();
+      $("stepsLabel").textContent = COUNT_MOVES ? "moves left" : "steps left";
       $("stepsItem").hidden = !s.show.steps_left;
       var n = world.nameAt(room);
       $("hereItem").hidden = n === null;
@@ -317,7 +328,7 @@
         step: t, room: R.roomName(room), energy: stomach.energy, levels: levels(),
         in_food_room: n, seen: n === null ? null : world.level[n],
         shown: n === null ? null : levelText(world.level[n], s.show, edges),
-        energy_shown: round(stomach.energy, 1), eaten: eaten, steps_left: s.steps - t,
+        energy_shown: round(stomach.energy, 1), eaten: eaten, moves: moves, steps_left: s.steps - used(),
         facing: FACING[scene.facing]
       };
       Object.keys(extra || {}).forEach(function (k) { base[k] = extra[k]; });
@@ -593,7 +604,7 @@
         stopSound();
         root.removeEventListener("blur", onBlur);
         Object.keys(holding).forEach(function (code) { delete holding[code]; });
-        record.ended = {how: how, step: t, at: REC.now()};
+        record.ended = ended(record, how, REC.now());
         wayFields(record);
         record.result = modelResult(record);
         if (SND) {
@@ -673,6 +684,9 @@
         endAtStep();
         var legal = allowed();
         t += 1;
+        if (move !== "STAY") {
+          moves += 1;
+        }
         var from = room;
         var to = maze.next(room, move);
         var leftName = world.nameAt(from);
@@ -777,7 +791,7 @@
       }
 
       function gameOver() {
-        return t >= s.steps || (stomach.energy <= 0 && s.stomach.at_zero === "end");
+        return used() >= s.steps || (stomach.energy <= 0 && s.stomach.at_zero === "end");
       }
 
       function stayStep(h) {
@@ -1074,6 +1088,12 @@
             }
           }
         }
+        if (TRACK_MS && shownAt !== null && (nextTrack === null || now >= nextTrack)) {
+          // the place and the view of the player, at the first frame from each mark on
+          track.rows.push([round(REC.now(), 1), round(scene.x, 2), round(scene.y, 2),
+            three ? degrees(scene.angle) : null, t]);
+          nextTrack = (nextTrack === null || now - nextTrack >= TRACK_MS ? now : nextTrack) + TRACK_MS;
+        }
         if (ending && now - ending.t0 >= END_MS) {
           var e = ending;
           ending = null;
@@ -1090,6 +1110,22 @@
         requestAnimationFrame(frame);
       }
     });
+  }
+
+  /* How a game ended, with its moves and stays counted from the steps (also
+   * for a game cut short). */
+  function ended(rec, how, at) {
+    var out = {how: how, step: rec.steps.length - 1, moves: 0, idle_stays: 0, space_stays: 0, at: at};
+    rec.steps.slice(1).forEach(function (st) {
+      if (st.move !== "STAY") {
+        out.moves += 1;
+      } else if (st.by === "idle") {
+        out.idle_stays += 1;
+      } else {
+        out.space_stays += 1;
+      }
+    });
+    return out;
   }
 
   /* The way the player went and the rooms known at the end, from the steps
@@ -1117,6 +1153,9 @@
       lay.food_rooms[n] = FG.config.roomOf(rec.layout.food_rooms[n], maze, n);
     });
     var settings = FG.config.modelSettings(rec.settings, lay);
+    // when only moves use up the steps, a game can have more steps of the
+    // model's world than settings.steps
+    settings.run.steps = Math.max(settings.run.steps, rec.steps.length - 1);
     var rows = rec.steps.map(function (st) {
       var food = {};
       Object.keys(st.levels).forEach(function (n) { food[n] = {"true": st.levels[n], memory: null}; });
@@ -1131,7 +1170,7 @@
   function shortForm(rec) {
     var out = {};
     Object.keys(rec).forEach(function (k) {
-      if (k !== "steps" && k !== "result") {
+      if (k !== "steps" && k !== "result" && k !== "track") {
         out[k] = rec[k];
       }
     });
@@ -1142,7 +1181,8 @@
     return copy(out);
   }
 
-  FG.game = {play: play, modelResult: modelResult, shortForm: shortForm, wayFields: wayFields, FACING: FACING,
+  FG.game = {play: play, modelResult: modelResult, shortForm: shortForm, wayFields: wayFields, ended: ended,
+    FACING: FACING,
     CONTROLS: CONTROLS,
     quarterOf: quarterOf};
 })(typeof window !== "undefined" ? window : globalThis);
