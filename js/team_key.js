@@ -8,9 +8,9 @@
     "repo": "muhammadasif-glitch/foraging-game",
     "branch": "main",
     "iterations": 600000,
-    "salt": "P8PdXQh2YQ78X4m6K/UimA==",
-    "iv": "RwiaHQ7QrjKmD7B1",
-    "data": "4FcSLPvi4w0JFeiSB/9PTGN3IPn/eRQbv3bXolJ1nPQBWZNoN6KTpZxRurx6gDJkxhl5pLRG0nNf1oZwqKNeow6GX0gn4vWHifDhjvXbSOWd/c1GtDtdl4GkEkuDe01QllhOsMEUjZtmaHtDPw==",
-    "made_at": "2026-10-20T11:10:15.925Z"
+    "salt": "bWH+hZoPECDsyk5H20s2/A==",
+    "iv": "GvoxFFk7EoLyhL85",
+    "data": "ehHOGzfHdvtj6Gr8hYwYTXA3NswVtiHxuHTctbE8MyMZYc4XiHWOqe3eTS2yzJ+dTiw1JJ7NniiEjsGUdvQ5KHmn5sn1cPbFoBS2oKJlGONI3D152wNPrsGbGJ/e5JuSvO8h6Aj+NhMd0dFgjg==",
+    "made_at": "2026-10-20T15:35:08.823Z"
   };
 })(typeof window !== "undefined" ? window : globalThis);
