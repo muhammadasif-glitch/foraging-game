@@ -5,5 +5,25 @@
  * under a new name. See js/maze_tools.js. */
 (function (root) {
   var FG = root.FG = root.FG || {};
-  FG.TEAM_MAZES = {};
+  FG.TEAM_MAZES = {
+    "test": {
+      "shape": [
+        ". . . . . . . . . . .",
+        ". . . . . . . . . . .",
+        ". . S . . . . . . . .",
+        ". . . . . . . . . . .",
+        ". . . . . . . . . . .",
+        ". . . C . . . . . . .",
+        ". . . . . . . . B . .",
+        ". . . . . . . . . . .",
+        ". . . . . . . . . . .",
+        ". . . . . . . . . . .",
+        ". . . . . . . . . . .",
+        ". . . . . . . . . . ."
+      ],
+      "moves": 120,
+      "saved_by": "Asif",
+      "saved_at": "2026-10-20T11:10:15.027Z"
+    }
+  };
 })(typeof window !== "undefined" ? window : globalThis);
