@@ -54,6 +54,21 @@ class Draws:
         return d
 
 
+def team_maze(g):
+    """A maze of the team (drawn in the game's maze editor, js/maze_tools.js)
+    is not one of the model's: it is added to the model's mazes for this
+    check, from the rooms the game file holds. The model's files are not
+    changed."""
+    from forage.base import extra_mazes as E
+    from forage.v3 import settings as S
+    name = g["layout"]["maze"]
+    d = g.get("maze_def") or {}
+    if d.get("team") and name not in E.ROOMS:
+        E.ROOMS[name] = d["rooms"]
+        S.MAZES = S.MAZES + (name,)
+    return bool(d.get("team"))
+
+
 def room(text):
     m = re.match(r"^[sS](\d)(\d)$", text) or re.match(r"^[sS](\d+)_(\d+)$", text)
     return (int(m.group(1)), int(m.group(2)))
@@ -154,12 +169,13 @@ def main(argv):
     files = []
     for folder in argv:
         files += sorted(glob.glob(os.path.join(folder, "**", "*.json"), recursive=True))
-    bad, games, steps, partial, shown = [], 0, 0, 0, 0
+    bad, games, steps, partial, shown, team = [], 0, 0, 0, 0, 0
     for path in files:
         with open(path) as fh:
             f = json.load(fh)
         if f.get("format") != "foraging-game" or "game" not in f or "steps_short" in f["game"]:
             continue
+        team += team_maze(f["game"])
         b, n = check_game(os.path.basename(path), f, W, S, M, C)
         bad += b
         b, k = check_known(os.path.basename(path), f["game"], H)
@@ -172,8 +188,9 @@ def main(argv):
         games += 1
         partial += f["file"] == "partial game"
         steps += n
-    print("%d games (%d of them cut short), %d steps replayed through the model's world, "
-          "%d rooms shown on the map checked: %d differ" % (games, partial, steps, shown, len(bad)))
+    print("%d games (%d of them cut short, %d in mazes of the team), %d steps replayed through the "
+          "model's world, %d rooms shown on the map checked: %d differ"
+          % (games, partial, team, steps, shown, len(bad)))
     for b in bad[:30]:
         print("  " + b)
     return 1 if bad or not games else 0

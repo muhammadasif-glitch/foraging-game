@@ -82,6 +82,13 @@ but leaves the moves as they were. So a game ends after 120 moves or when
 the energy runs out. `count_steps: "all"` counts every move and stay, as the
 model does.
 
+A room is entered when the player is 0.3 tiles in. A room whose 2 doors sit at
+the same corner (in grid_4x4, s00 has its doors to s01 and s10 at its bottom
+right corner) can be crossed at that corner without being 0.3 tiles in; the
+player then arrives in the room after it, and the room crossed is a move too,
+taken at the same moment (`corner: true` on its row), as the model's agent
+passes through it.
+
 **Eating until full.** In a food room the player eats on every step, as in
 the model (entering pays the level, each stay eats a bite and pays the level
 after), until the energy bar is full. Then eating stops for the rest of that
@@ -208,6 +215,66 @@ image files, so that they also show when the game is opened from a file.
 | `?test=1` | marks every file as a test: names start with `TEST_` |
 | `?send=0` | sends and keeps nothing; the files are printed to the browser console |
 | `?set.steps=30` | changes a setting of every game, for trying things out (`?set.food.rule=exponential`, ...); recorded in the files |
+| `?edit=1` | adds the maze editor to the first page (see below); its files are tests (`TEST_`) |
+
+## The maze editor
+
+Open the game with `?edit=1` at the end of its address. The first page then
+has a **+ New maze** card (or the key N), which opens the editor:
+
+1. **Draw**: rows and columns (2 to 12), then click squares. With the Rooms
+   tool (key R) a click takes a room out or puts it back, and dragging does
+   the same over several squares. With Start, Cheese and Bread (keys S, C, B)
+   a click puts the start, the cheese room (worth 8) or the bread room
+   (worth 1) there; a click on it again takes it away. One left out is
+   placed at random each game, as in the other mazes. Rooms side by side are
+   joined by a door, and every room has its own colour (so its own
+   painting), at most 140 rooms.
+2. **Checks**, while drawing: every room reachable from every other, a free
+   name (small letters, digits and `_`), the moves (1 to 1000), and the
+   settings of the game fitting the maze. Cut-off rooms are outlined in red.
+3. **Try in 3D / Try in 2D** plays the maze at once; nothing is saved or
+   sent. Esc, or Enter at the end, goes back to the editor with the drawing
+   kept (also when leaving the editor, until **Start again**).
+4. **Save to game**: your name and the team password. The maze is written
+   into `js/my_mazes.js` in the repository, the page waits until GitHub Pages
+   serves it (about 30 s to 2 minutes) and opens again with the maze chosen.
+   It is on the first page for every player, after the mazes of `settings.js`.
+
+A saved maze is never changed: a name that is there already is refused, so
+an edited maze is saved under a new name. To take a maze out, delete its
+entry from `js/my_mazes.js` on GitHub; the game files of games played in it
+keep the whole maze. In a maze of the team, its start, cheese and bread rooms
+are used where `settings.js` says `random`, and its moves unless the link
+sets `set.steps`. A maze that `js/my_mazes.js` holds but the game cannot use
+(cut off, or not fitting the settings) is left out; the editor's first page
+lists why.
+
+### Setting up saving (once)
+
+The repository is public, so a password checked by the page itself would
+stop no one. GitHub is the lock: only a key with write access can change the
+repository. The editor keeps such a key in `js/team_key.js`, locked with the
+team password (PBKDF2 with 600,000 rounds, then AES-GCM, in the browser), and
+unlocks it only for a save.
+
+1. On GitHub: **Settings > Developer settings > Personal access tokens >
+   Fine-grained tokens > Generate new token**. Repository access: **Only
+   select repositories**, this one. Permissions: **Contents: Read and
+   write**. An expiry date, for example 1 year.
+2. Choose a team password of at least 16 characters, for example 4 or 5
+   random words. The locked key is public, so a short password could be
+   found by trying many.
+3. Open the game with `?edit=1`, draw a maze, and press **Set up saving and
+   save**: paste the key, check the repository (`owner/name`) and the branch
+   (`main`), and type the password twice. The key is checked, locked, saved
+   as `js/team_key.js`, and the maze is saved with it.
+4. Give the team the password, not the key.
+
+If the password gets out, or the key runs out: make a new key, **delete the
+old key on GitHub** (old versions of `js/team_key.js` stay in the
+repository's history, so a new password alone is not enough), and use **Set
+up saving again** in the editor with the new key and a new password.
 
 ## DataPipe
 
@@ -268,7 +335,7 @@ Every file has at its top:
 | Key | |
 |---|---|
 | `trial_type` | `foraging-game` (for DataPipe's validation) |
-| `format`, `format_version`, `file` | `foraging-game`, 3, and `game` or `partial game` |
+| `format`, `format_version`, `file` | `foraging-game`, 5, and `game` or `partial game` |
 | `game_version` | the version of this code |
 | `player`, `player_code` | the player code (8 hex digits), and whether it was `new` or `kept in this browser` |
 | `session_id`, `session_started`, `test` | a random id of the page's visit, when it opened (UTC), test or not |
@@ -301,6 +368,7 @@ adds up to about one frame (`frame_ms`).
 | `sound` | `on_at_start`, and `toggles`: every switch during the game, `{t, step, on, by}` |
 | `path`, `known_rooms` | the room of every step from step 0, and the rooms the player knew at the end (what the end page draws) |
 | `walks_back` | every time the player went out into a door or corridor and back into the same room: `{left_at, back_at, step (steps taken before), room, toward, move, furthest (the share of the way to the next room's floor reached)}` |
+| `maze_def` | the maze as the game had it: `rooms` (colour numbers, -1 for no room) and, for a maze of the team, `team`: its drawing (`shape`), `start`, `food` (cheese and bread rooms), `moves`, `saved_by`, `saved_at` |
 | `started`, `started_at`, `ended` | `ended`: `{how, step, moves, idle_stays, space_stays, at}`: how is `finished`, `starved` or `page closed` (then `at` is when the page closed); `step` the steps of the world (moves and stays), `moves` the moves, `idle_stays` and `space_stays` the stays standing still and by Space |
 | `track` | the place and the view of the player every `track_ms` (100) during the game: `{every_ms, fields, rows}`, a row `[t, x, y, angle, step]` taken at the first screen frame from each mark on (so about 100 ms apart, more while the tab is hidden): `x`, `y` in tiles from the top left of the maze (a room is 4 tiles, a corridor 3, `x` to the right, `y` down), `angle` the way the player looks in degrees (0 east, 90 south; null in 2D), `step` the steps taken by then. Null when `track_ms` is 0. Not in the short form |
 | `steps` | 1 row per step, step 0 being the start (below) |
@@ -334,6 +402,7 @@ A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
 | `in_food_room`, `seen`, `shown` | the food room the player is in, its level, and what the bar showed (`74%`, or `part full`) |
 | `energy_shown`, `steps_left` | what the bar showed: the energy and the moves left (with `count_steps: "all"` the steps left) |
 | `moves` | the moves taken so far, this step included |
+| `corner` | true for a room crossed at its corner (see What is a step), taken together with the move after it |
 | `known_new`, `known_food_new` | the rooms the player is shown from this step on (at step 0 the start room; then the room entered and the rooms next to it), and the food rooms among them |
 | `found`, `events` | a food room entered for the first time on this step, and events: `known` (a food room shown for the first time), `found`, `empty`, `full again`, `refill skipped`, `food lost`, `full` (the bar full in a food room: eating stops) |
 
@@ -418,6 +487,13 @@ with DataPipe stood in for (with its validation of the required fields):
   cheese and bread, and the settings that take rooms and steps from an
   environment file;
 - every step counted as in the model (`count_steps: "all"`);
+- a room crossed at its corner: a move, and the game goes on;
+- the maze editor, with GitHub stood in for: a cut-off maze in
+  `js/my_mazes.js` left out and listed, a maze drawn and its checks, tries in
+  3D (left with Esc) and 2D (to its end), saving set up on the way (a short
+  password refused, the key stored locked), the page opening again with the
+  maze, a second save with someone else saving in between, a wrong password
+  and a taken name refused, then a player's game in the saved maze;
 - no condition from DataPipe, and DataPipe down with the file sent on the next visit;
 - a tab closed in the middle of a game, then the partial game sent;
 - the page opened from a file.

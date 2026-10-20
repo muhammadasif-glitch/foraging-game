@@ -4,8 +4,12 @@
  * Link options: ?condition=NAME or auto, ?view=2d or 3d and ?maze=NAME to
  * choose for the player at first (they can still change it), ?test=1 marks
  * every file as a test (TEST_ in front of its name), ?send=0 sends nothing
- * (the files are printed to the browser console), and ?set.<key>=<value>
- * changes a setting of every game, for trying things out.
+ * (the files are printed to the browser console), ?set.<key>=<value>
+ * changes a setting of every game, for trying things out, and ?edit=1 adds
+ * the maze editor to the first page (js/editor.js; its files are tests).
+ *
+ * The team's mazes (js/my_mazes.js, see js/maze_tools.js) come after the
+ * mazes of settings.js on the first page, for every player.
  *
  * The player code is made by the game and kept in the browser, so that a
  * player who comes back with the same browser keeps it.
@@ -20,9 +24,9 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "2.2.0";
+  FG.VERSION = "2.3.0";
   var FORMAT = "foraging-game";
-  var FORMAT_VERSION = 4;
+  var FORMAT_VERSION = 5;
   var TRIAL_TYPE = "foraging-game";
   // keys sooner than this after the first page or the end of a game appear
   // are taken as left over from the screen before
@@ -34,7 +38,8 @@
   };
 
   /* The name and size of a maze on the first page: an environment of the
-   * model is named after its file, "ring_5x5" as "Ring 5 x 5". */
+   * model is named after its file, "ring_5x5" as "Ring 5 x 5", and so is a
+   * maze of the team. */
   function mazeText(name) {
     if (MAZE_TEXT[name]) {
       return MAZE_TEXT[name];
@@ -62,7 +67,7 @@
   }
 
   function only(id) {
-    ["menu", "end", "message"].forEach(function (o) { $(o).hidden = o !== id; });
+    ["menu", "end", "message", "editor"].forEach(function (o) { $(o).hidden = o !== id; });
   }
 
   function message(title, body) {
@@ -138,6 +143,26 @@
     return {code: code, how: "new"};
   }
 
+  /* The settings with the team's mazes after the mazes of the menu. A maze
+   * the settings do not fit is left out (listed in the editor). */
+  function withTeamMazes(settings, link) {
+    var mazes = settings.menu.mazes.slice();
+    FG.mazeTools.register().forEach(function (m) {
+      if (mazes.indexOf(m) >= 0) {
+        return;
+      }
+      try {
+        FG.config.checkMaze(settings, m, link);
+        mazes.push(m);
+      } catch (err) {
+        FG.mazeTools.leaveOut(m, "the settings do not fit it: " + err.message);
+      }
+    });
+    var out = Object.assign({}, settings);
+    out.menu = Object.assign({}, settings.menu, {mazes: mazes});
+    return out;
+  }
+
   function run() {
     var lacking = missing();
     if (lacking.length) {
@@ -150,12 +175,14 @@
       return Promise.resolve(null);
     }
     var p = new URLSearchParams(root.location.search);
-    var all = FG.SETTINGS;
-    var test = p.get("test") === "1";
+    var edit = p.get("edit") === "1";
+    var test = p.get("test") === "1" || edit;
     var send = p.get("send") !== "0";
+    var all = FG.SETTINGS;
     var link;
     try {
       link = FG.config.fromLink(p);
+      all = withTeamMazes(FG.SETTINGS, link);
       FG.config.checkAll(all, link);
       var asked = p.get("condition");
       if (asked && asked !== "auto" && !(all.conditions && Object.prototype.hasOwnProperty.call(all.conditions, asked))) {
@@ -272,12 +299,28 @@
       }).join("");
       $("views").className = "grid" + (all.menu.views.length === 2 ? " two" : "");
       $("mazes").innerHTML = all.menu.mazes.map(function (m, k) {
-        var t = mazeText(m);
+        var t = mazeText(m), team = FG.MAZES[m].team;
+        var by = edit && team && team.saved_by ? " &middot; " + escape(team.saved_by) : "";
         return '<div class="card"><div class="card-size">' + t[0] + '</div>' +
-          '<div class="card-meta">' + t[1] + '</div><div class="card-meta"><kbd>' + (k + 1) + '</kbd></div></div>';
-      }).join("");
+          '<div class="card-meta">' + t[1] + by + '</div><div class="card-meta">' +
+          (k < 9 ? '<kbd>' + (k + 1) + '</kbd>' : "&nbsp;") + '</div></div>';
+      }).join("") + (edit ? '<div class="card new" id="newMaze"><div class="card-size">+ New maze</div>' +
+        '<div class="card-meta">draw your own</div><div class="card-meta"><kbd>N</kbd></div></div>' : "");
+      if (edit) {
+        $("newMaze").addEventListener("click", function () {
+          if (toEditor) {
+            toEditor();
+          }
+        });
+        var left = FG.mazeTools.problems();
+        $("menuProblems").hidden = !left.length;
+        $("menuProblems").innerHTML = left.map(function (q) {
+          return "Left out of the game: " + escape(q.name || "js/my_mazes.js") + ": " + escape(q.problem);
+        }).join("<br>");
+      }
     }
 
+    var toEditor = null;          // while the first page is shown in edit mode: opens the editor
     function drawMenu() {
       Array.prototype.forEach.call($("views").children, function (c, k) { c.classList.toggle("on", k === choice.view); });
       Array.prototype.forEach.call($("mazes").children, function (c, k) { c.classList.toggle("on", k === choice.maze); });
@@ -295,6 +338,15 @@
         REC.setPhase("menu");
         drawMenu();
         var rec = {shown_at: null, chosen_at: null, view: null, maze: null, actions: []};
+        toEditor = edit ? function () {
+          if (!ready) {
+            return false;
+          }
+          toEditor = null;
+          REC.listen(null);
+          resolve({editor: true});
+          return true;
+        } : null;
         REC.shown().then(function (at) {
           rec.shown_at = at;
           REC.listen(function (e, entry) {
@@ -309,6 +361,9 @@
             }
             if ((e.key === "m" || e.key === "M") && FG.sound) {
               return FG.sound.toggle("M") ? "sound on" : "sound off";
+            }
+            if (edit && (e.key === "n" || e.key === "N")) {
+              return toEditor && toEditor() ? "editor" : "ignored: not ready";
             }
             var n = /^[1-9]$/.test(e.key) ? Number(e.key) - 1 : undefined;
             var rows = [all.menu.views.length, all.menu.mazes.length];
@@ -332,6 +387,7 @@
               if (!ready) {
                 return "ignored: not ready";
               }
+              toEditor = null;
               REC.listen(null);
               rec.chosen_at = entry.t;
               rec.view = all.menu.views[choice.view];
@@ -351,8 +407,10 @@
     }
 
     // ---------------------------------------------------------- a game
-    function playGame(menuRec) {
-      var n = games + 1;
+    /* A game; trial: a try of the maze being drawn in the editor, which is
+     * neither saved nor sent. */
+    function playGame(menuRec, trial) {
+      var n = trial ? 0 : games + 1;
       var settings = FG.config.gameSettings(all, session.condition.name, menuRec.maze, link);
       var layoutSeed = FG.random.derive(session.seed, n);
       var seed = FG.random.derive(session.seed, 1000 + n);
@@ -402,11 +460,21 @@
         }
       };
       var g = {number: n, view: menuRec.view, renderer: {draw: function (sc) { scene = sc; view.draw(sc); }},
-        settings: settings, layout: lay, seed: seed, layout_seed: layoutSeed,
-        onChange: function (rec) { latest = rec; keepGame(rec); }};
+        settings: settings, layout: lay, seed: seed, layout_seed: layoutSeed, trial: !!trial,
+        onChange: trial ? null : function (rec) { latest = rec; keepGame(rec); }};
+      if (trial) {
+        refreshGame = null;
+        $("gameKeys").innerHTML = text("keys_" + menuRec.view) + " &middot; <kbd>Esc</kbd> back to the editor";
+      }
       return FG.game.play(g).then(function (rec) {
-        games = n;
         playing = false;
+        if (trial) {
+          // nothing of a try goes into the next game's file
+          mark = REC.mark();
+          soundMark = FG.sound ? FG.sound.log.length : 0;
+          return rec.ended.how === "stopped" ? null : endOfGame(rec, null);
+        }
+        games = n;
         refreshGame = null;
         var saving = FG.datapipe.save(fileName(String(n)), gameFile(rec, "game"));
         FG.datapipe.dropSlot("game");
@@ -433,13 +501,18 @@
       $("gameKeys").hidden = true;
       only("end");
       FG.route.draw($("route"), rec, rw, rh);
-      status("saving");
-      var slow = setTimeout(function () { status("slow"); }, 25000);
-      saving.then(function (r) {
-        clearTimeout(slow);
-        status(r);
-      });
-      REC.setPhase("end " + rec.number);
+      if (saving) {
+        status("saving");
+        var slow = setTimeout(function () { status("slow"); }, 25000);
+        saving.then(function (r) {
+          clearTimeout(slow);
+          status(r);
+        });
+      } else {
+        $("endStatus").textContent = "A try of the maze: nothing is saved or sent.";
+        $("endAgain").innerHTML = "Press <kbd>Enter</kbd> to go back to the editor.";
+      }
+      REC.setPhase(saving ? "end " + rec.number : "end of a try");
       return new Promise(function (resolve) {
         REC.shown().then(function (at) {
           REC.listen(function (e, entry) {
@@ -457,8 +530,80 @@
       });
     }
 
+    // ---------------------------------------------------------- the editor
+    var drawing = null;           // the maze being drawn, kept while it is tried
+    var T = FG.mazeTools;
+
+    /* The maze being drawn, as a maze of the game, for the settings check
+     * and the tries. */
+    function useDraft(shape, moves) {
+      var c = T.check("draft", {shape: shape, moves: moves});
+      if (c.problems.length) {
+        delete FG.MAZES[T.DRAFT];
+        return c.problems.join(" ");
+      }
+      FG.MAZES[T.DRAFT] = T.entry({shape: shape, moves: moves}, c.info);
+      return null;
+    }
+
+    function editor() {
+      $("hud").hidden = true;
+      $("gameKeys").hidden = true;
+      only("editor");
+      REC.setPhase("editor");
+      return new Promise(function (resolve) {
+        REC.listen(function (e) { return FG.editor.key(e); });
+        FG.editor.open({
+          draft: drawing,
+          moves: typeof all.game.steps === "number" ? all.game.steps : 120,
+          // saving needs the game's online page (it waits for GitHub Pages)
+          demo: !!FG.DEMO || root.location.protocol === "file:",
+          taken: function (name) { return Object.prototype.hasOwnProperty.call(FG.MAZES, name); },
+          fits: function (shape, moves) {
+            var bad = useDraft(shape, moves);
+            if (bad) {
+              return bad;
+            }
+            try {
+              FG.config.checkMaze(all, T.DRAFT, link);
+              return null;
+            } catch (err) {
+              return err.message.replace(T.DRAFT + ": ", "").replace(T.DRAFT + " ", "");
+            }
+          },
+          tryIt: function (view, shape, moves) {
+            drawing = FG.editor.draft();
+            useDraft(shape, moves);
+            REC.listen(null);
+            resolve({view: view});
+          },
+          back: function () {
+            drawing = FG.editor.draft();
+            REC.listen(null);
+            resolve(null);
+          },
+          saved: function (name) {
+            // the game has the maze: open the page again, with it chosen
+            var q = new URLSearchParams(root.location.search);
+            q.set("maze", name);
+            q.set("edit", "1");
+            root.location.replace(root.location.pathname + "?" + q.toString());
+          }
+        });
+      }).then(function (r) {
+        if (!r) {
+          mark = REC.mark();
+          return null;
+        }
+        var rec = {shown_at: null, chosen_at: REC.now(), view: r.view, maze: T.DRAFT, actions: [], trial: true};
+        return playGame(rec, true).then(editor);
+      });
+    }
+
     function loop() {
-      return menu().then(playGame).then(loop);
+      return menu().then(function (r) {
+        return r.editor ? editor() : playGame(r);
+      }).then(loop);
     }
 
     // ---------------------------------------------------------- the page
@@ -491,6 +636,9 @@
       failed = true;
       playing = false;
       REC.stop();
+      if (root.console) {
+        root.console.error("the game stopped:", err && err.stack ? err.stack : err);
+      }
       try {
         if (refreshGame) {
           refreshGame();
@@ -560,10 +708,33 @@
     });
   }
 
+  /* Loads a script of the game that can change while the game is online
+   * (js/my_mazes.js and js/team_key.js are written by the editor), always
+   * fresh rather than from the browser's cache; at once when the page has it
+   * already (the demo page has them inline). */
+  function loadFresh(path, there) {
+    return new Promise(function (resolve) {
+      if (there()) {
+        resolve(true);
+        return;
+      }
+      var tag = document.createElement("script");
+      tag.src = path + "?t=" + Date.now();
+      tag.onload = function () { resolve(true); };
+      tag.onerror = function () { resolve(false); };
+      document.head.appendChild(tag);
+    });
+  }
+
   FG.run = run;
   if (typeof document !== "undefined") {
     document.addEventListener("DOMContentLoaded", function () {
-      run();
+      Promise.all([
+        loadFresh("js/my_mazes.js", function () { return FG.TEAM_MAZES !== undefined; }),
+        loadFresh("js/team_key.js", function () { return FG.TEAM_KEY !== undefined; })
+      ]).then(function () {
+        run();
+      });
     });
   }
 })(typeof window !== "undefined" ? window : globalThis);

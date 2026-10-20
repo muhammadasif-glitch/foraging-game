@@ -13,7 +13,9 @@
  * running out of energy; keys pressed during a stay; keys held down
  * (walking on from room to room, steering while walking, stays repeated) in
  * both views; the environments of the model, with their start and food
- * rooms; every step counted as in the model (count_steps all); the sound
+ * rooms; every step counted as in the model (count_steps all); a room
+ * crossed at its corner; the maze editor and saving to GitHub (stood in
+ * for), and a game in a saved maze; the sound
  * switched with M and with the button; DataPipe that cannot
  * hand out a condition; DataPipe down, then the file sent on the next visit;
  * a tab closed in the middle of a game, then the partial game sent; the page
@@ -41,6 +43,7 @@ globalThis.window = globalThis;
 require(path.join(ROOT, "js", "mazes.js"));
 require(path.join(ROOT, "js", "rules.js"));
 require(path.join(ROOT, "js", "world.js"));
+require(path.join(ROOT, "js", "maze_tools.js"));
 require(path.join(ROOT, "settings.js"));
 require(path.join(ROOT, "js", "random.js"));
 require(path.join(ROOT, "js", "config.js"));
@@ -194,10 +197,19 @@ async function choose(page, view, maze) {
     await page.keyboard.press("ArrowRight");
     await sleep(60);
   }
-  await page.keyboard.press(String(mazes.indexOf(maze) + 1));
-  await sleep(60);
+  // a maze of the team is chosen by the link (?maze=); the others by their number
+  var known = mazes.indexOf(maze) >= 0;
+  if (known) {
+    await page.keyboard.press(String(mazes.indexOf(maze) + 1));
+    await sleep(60);
+  }
   s = await ui(page);
-  expect(s.view === views.indexOf(view) && s.maze === mazes.indexOf(maze), "menu: chose " + view + " " + maze);
+  var title = await page.evaluate(function () {
+    var c = document.querySelector("#mazes .card.on .card-size");
+    return c ? c.textContent : "";
+  });
+  expect(s.view === views.indexOf(view) && (known ? s.maze === mazes.indexOf(maze) :
+    title.toLowerCase() === maze.replace(/_/g, " ")), "menu: chose " + view + " " + maze + " (" + title + ")");
   await page.keyboard.press("Enter");
 }
 
@@ -222,6 +234,24 @@ async function play(page, rnd, plan, opts) {
       s = await ui(page);
       if (s.end) {
         break;
+      }
+      if (process.env.PLAY_DEBUG && guard % 40 === 0) {
+        console.error("  play " + gp.view + " " + gp.maze + ": " + guard + " rounds, moves left " +
+          await page.textContent("#steps") + ", energy " + await page.textContent("#energy") + ", " + s.phase +
+          (s.message ? ", message: " + s.msg : ""));
+        if (guard % 200 === 0 && guard) {
+          await page.screenshot({path: path.join(OUT, "debug_" + gp.view + "_" + guard + ".png")});
+        }
+        if (s.message) {
+          // the game stopped: what it kept of the game, for a look
+          var kept = await page.evaluate(function () {
+            var out = {};
+            Object.keys(localStorage).forEach(function (k) { out[k] = localStorage.getItem(k); });
+            return out;
+          });
+          fs.writeFileSync(path.join(OUT, "debug_kept.json"), JSON.stringify(kept));
+          return {keys: keys, games: games, stopped: true};
+        }
       }
       if (gp.stopAfter && inGame >= gp.stopAfter) {
         return {keys: keys, games: games, stopped: true};
@@ -323,7 +353,7 @@ function roomOf(text) {
 function checkGameFile(name, f) {
   var where = name;
   var g = f.game;
-  expect(f.format === "foraging-game" && f.format_version === 4, where + ": format");
+  expect(f.format === "foraging-game" && f.format_version === 5, where + ": format");
   expect(f.trial_type === "foraging-game", where + ": trial_type");
   expect(/^[0-9a-f]{8}$/.test(f.player), where + ": player code " + f.player);
   expect(/^[0-9a-f]{12}$/.test(f.session_id), where + ": session id");
@@ -333,6 +363,7 @@ function checkGameFile(name, f) {
   var s = g.settings;
   var steps = g.steps;
   var partial = /partial/.test(name);
+  checkMazeDef(where, f);
   expect(g.ended && typeof g.ended.how === "string", where + ": ended " + JSON.stringify(g.ended));
   // with count_steps "moves" only the moves use up the steps
   var countAll = s.count_steps === "all";
@@ -477,9 +508,16 @@ function checkGameFile(name, f) {
       expect(typeof st.arrived_at === "number" && st.arrived_at >= st.entered_at, where + " step " + t +
         ": a stay is over (arrived_at)");
     }
+    // a room crossed at its corner is a move, and the move it led to follows at once
+    var afterCorner = t > 1 && steps[t - 1].corner === true;
     if (st.move !== "STAY") {
-      expect(typeof st.left_at === "number" && st.left_at <= st.entered_at && st.walked_tiles > 0,
+      expect(typeof st.left_at === "number" && st.left_at <= st.entered_at && (st.walked_tiles > 0 || afterCorner),
         where + " step " + t + ": left the room before at " + st.left_at + ", walked " + st.walked_tiles);
+    }
+    expect(typeof st.corner === "boolean", where + " step " + t + ": corner");
+    if (st.corner && t < steps.length - 1) {
+      expect(st.move !== "STAY" && steps[t + 1].move !== "STAY" && steps[t + 1].entered_at - st.entered_at < 5,
+        where + " step " + t + ": a corner crossed, then the move it led to");
     }
   }
   expect(g.draws.length === steps.length - 1, where + ": draws " + g.draws.length);
@@ -523,6 +561,38 @@ function checkGameFile(name, f) {
   return g;
 }
 
+/* The maze a file holds (maze_def): a maze of the game as js/mazes.js has
+ * it; a maze of the team as drawn, with its start, cheese and bread rooms and
+ * its moves used. A maze of the team is added to the mazes here, so that the
+ * rest of the checks know it. */
+function checkMazeDef(where, f) {
+  var g = f.game, d = g.maze_def, MZ = globalThis.FG.MAZES;
+  if (!expect(d && Array.isArray(d.rooms), where + ": maze_def")) {
+    return;
+  }
+  if (!d.team) {
+    expect(MZ[g.maze] && JSON.stringify(MZ[g.maze].rooms) === JSON.stringify(d.rooms), where + ": maze_def rooms");
+    return;
+  }
+  var info = globalThis.FG.mazeTools.read(d.team.shape);
+  expect(!info.problems.length && JSON.stringify(info.rooms) === JSON.stringify(d.rooms),
+    where + ": a maze of the team, its rooms from its drawing");
+  if (!MZ[g.maze]) {
+    MZ[g.maze] = {rooms: d.rooms, colours: [], team: d.team};
+  }
+  if (d.team.start && g.settings.start_rooms === "random") {
+    expect(g.layout.start_room === R.roomName(d.team.start), where + ": the start room drawn, " + g.layout.start_room);
+  }
+  Object.keys(g.layout.food_rooms).forEach(function (n) {
+    var at = d.team.food[g.food_kinds[n]];
+    if (at && g.settings.food_rooms[n].room === "random") {
+      expect(g.layout.food_rooms[n] === R.roomName(at), where + ": the " + g.food_kinds[n] + " room drawn");
+    }
+  });
+  var linkSteps = /(^|&)set\.steps=/.test(f.link || "");
+  expect(linkSteps || g.settings.steps === d.team.moves, where + ": the moves of the maze, " + g.settings.steps);
+}
+
 /* The place and the view of the player every track_ms: never in a wall, the
  * angle in 3D only, the steps taken by then, and about track_ms apart. */
 function checkTrack(where, g) {
@@ -561,6 +631,122 @@ function checkTrack(where, g) {
   var mean = usual.reduce(function (a, b) { return a + b; }, 0) / Math.max(1, usual.length);
   expect(usual.length >= 0.95 * gaps.length && Math.abs(mean - s.track_ms) < 0.15 * s.track_ms,
     where + ": track every " + mean.toFixed(1) + " ms (" + (gaps.length - usual.length) + " long gaps of " + gaps.length + ")");
+}
+
+/* GitHub and GitHub Pages stood in for, for the saves of the maze editor:
+ * the contents API with versions (sha), refusing a key other than GH_KEY and
+ * a write over a version that changed; a file written shows on the game's
+ * page PAGES_MS later, as GitHub Pages does. With conflictOnce, someone else
+ * saves a maze just before the next write of js/my_mazes.js. */
+var GH_KEY = "github_pat_TEST_only";
+var PAGES_MS = 4000;
+function githubStandIn(start) {
+  var T = globalThis.FG.mazeTools;
+  var st = {files: {}, live: {}, puts: [], n: 0, conflictOnce: false, conflicts: 0};
+  ["js/my_mazes.js", "js/team_key.js"].forEach(function (p) {
+    var text = start && start[p] !== undefined ? start[p] : fs.readFileSync(path.join(ROOT, p), "utf8");
+    st.files[p] = {text: text, sha: "v0" + p.length};
+    st.live[p] = text;
+  });
+  var cors = {"access-control-allow-origin": "*",
+    "access-control-allow-headers": "authorization, content-type, accept, x-github-api-version",
+    "access-control-allow-methods": "GET, PUT"};
+  function reply(route, status, body) {
+    return route.fulfill({status: status, contentType: "application/json", body: JSON.stringify(body), headers: cors});
+  }
+  st.api = function (route) {
+    var req = route.request();
+    if (req.method() === "OPTIONS") {
+      return route.fulfill({status: 204, headers: cors});
+    }
+    if (req.headers().authorization !== "Bearer " + GH_KEY) {
+      return reply(route, 401, {message: "Bad credentials"});
+    }
+    var u = new URL(req.url());
+    var m = /^\/repos\/owner\/game(\/contents\/(.+))?$/.exec(u.pathname);
+    if (!m) {
+      return reply(route, 404, {message: "Not Found"});
+    }
+    if (!m[2]) {
+      return reply(route, 200, {full_name: "owner/game"});
+    }
+    var p = decodeURIComponent(m[2]), file = st.files[p];
+    if (req.method() === "GET") {
+      expect(u.searchParams.get("ref") === "main", "github: read from the branch main");
+      return file ? reply(route, 200, {content: Buffer.from(file.text, "utf8").toString("base64").replace(/(.{60})/g, "$1\n"),
+        sha: file.sha, encoding: "base64"}) : reply(route, 404, {message: "Not Found"});
+    }
+    if (req.method() === "PUT") {
+      var body = JSON.parse(req.postData());
+      if (st.conflictOnce && p === "js/my_mazes.js") {
+        st.conflictOnce = false;
+        st.conflicts += 1;
+        var other = T.parseFile(file.text);
+        other.someone_else = {shape: ["S . .", ". # .", ". . C"], moves: 20, saved_by: "Someone",
+          saved_at: "2026-10-19T08:00:00.000Z"};
+        file = st.files[p] = {text: T.fileText(other), sha: "other" + (++st.n)};
+        st.live[p] = file.text;
+      }
+      if (file && body.sha !== file.sha) {
+        return reply(route, 409, {message: p + " does not match " + body.sha});
+      }
+      expect(body.branch === "main", "github: written to the branch main");
+      var text = Buffer.from(body.content, "base64").toString("utf8");
+      st.files[p] = {text: text, sha: "v" + (++st.n)};
+      st.puts.push({path: p, message: body.message});
+      setTimeout(function () { st.live[p] = text; }, PAGES_MS);
+      return reply(route, file ? 200 : 201, {content: {sha: st.files[p].sha}});
+    }
+    return reply(route, 405, {message: "Not allowed"});
+  };
+  st.pages = function (route) {
+    var p = new URL(route.request().url()).pathname.replace(/^\//, "");
+    return route.fulfill({status: 200, contentType: "application/javascript", body: st.live[p]});
+  };
+  st.routes = async function (context) {
+    await context.route("https://api.github.com/**", st.api);
+    // the game's own page only, not the API (which has the same paths)
+    await context.route(/^http:\/\/localhost:\d+\/js\/(my_mazes|team_key)\.js(\?.*)?$/, st.pages);
+  };
+  return st;
+}
+
+async function waitReady(page) {
+  for (var w = 0; w < 80 && !(await ui(page)).ready; w++) {
+    await sleep(200);
+  }
+}
+
+async function cardTitles(page) {
+  return page.$$eval("#mazes .card .card-size", function (cs) { return cs.map(function (c) { return c.textContent; }); });
+}
+
+async function edChecks(page) {
+  return page.$$eval("#edChecks li", function (ls) { return ls.map(function (l) { return l.className + ": " + l.textContent; }); });
+}
+
+/* The centre of square (r, c) of the editor's grid. */
+async function edCell(page, r, c) {
+  var box = await page.locator("#edGrid").boundingBox();
+  var rows = Number(await page.inputValue("#edRows")), cols = Number(await page.inputValue("#edCols"));
+  var cell = Math.min(box.width / cols, box.height / rows);
+  return {x: box.x + (c + 0.5) * cell, y: box.y + (r + 0.5) * cell};
+}
+
+async function edClick(page, r, c) {
+  var p = await edCell(page, r, c);
+  await page.mouse.click(p.x, p.y);
+  await sleep(40);
+}
+
+async function waitFor(page, test, ms) {
+  for (var w = 0; w < ms / 250; w++) {
+    if (await test()) {
+      return true;
+    }
+    await sleep(250);
+  }
+  return false;
 }
 
 function gameFiles(files) {
@@ -659,6 +845,9 @@ function checkSaved(folder) {
     page.on("console", function (m) {
       if (m.type() === "error" && !/Failed to load resource/.test(m.text())) {
         errors.push(m.text());
+        if (process.env.PLAY_DEBUG) {
+          console.error("  page: " + m.text());
+        }
       }
     });
     var files = opts.files || {};
@@ -890,6 +1079,227 @@ function checkSaved(folder) {
   await ca.context.close();
 
   }
+  if (want("corner")) {
+  // 6b. a room crossed at its corner: in a 4 x 4 maze (a maze of the team,
+  // its doors as in grid_4x4), room s00 has its doors to s01 and s10 at the
+  // same corner; walking left from s01 and then down on the slant crosses
+  // that corner. The crossing is a move into s00 (corner), then the move
+  // into s10, and the game goes on
+  var cgh = githubStandIn({"js/my_mazes.js": globalThis.FG.mazeTools.fileText({corner_test: {
+    shape: [". S . .", ". . . .", ". . . .", ". . . ."], moves: 2, saved_by: "Check", saved_at: "2026-10-19T00:00:00.000Z"}})});
+  var cctx = await browser.newContext({viewport: {width: 1100, height: 760}});
+  await cgh.routes(cctx);
+  var cfiles = {}, cornerSteps = 0, cerr = [];
+  for (var ci = 0; ci < 4; ci++) {
+    var cp = await cctx.newPage();
+    cp.on("pageerror", function (e) { cerr.push(String(e)); });
+    await pipe(cp, cfiles, {value: "ok"}, 0);
+    await cp.goto(base + "?test=1&condition=linear_fast&view=2d&maze=corner_test");
+    await waitReady(cp);
+    await sleep(400);
+    await cp.keyboard.press("Enter");
+    await sleep(900);
+    await cp.keyboard.down("ArrowLeft");
+    await sleep(900 + ci * 100);
+    await cp.keyboard.down("ArrowDown");
+    await sleep(900);
+    await cp.keyboard.up("ArrowLeft");
+    await sleep(700);
+    await cp.keyboard.up("ArrowDown");
+    // then on to the last move (2 in this maze), now and then on the slant
+    for (var cw = 0; cw < 16 && !(await ui(cp)).end && !(await ui(cp)).message; cw++) {
+      var ck = ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"][cw % 8];
+      for (var cq = 0; cq < 15; cq++) {
+        await cp.keyboard.down(ck);
+        await sleep(100);
+      }
+      await cp.keyboard.up(ck);
+    }
+    var cu = await ui(cp);
+    expect(!cu.message, "corner: the game goes on (" + ci + ")");
+    expect(cu.end, "corner: game " + ci + " played to its end (moves left " + await cp.textContent("#steps") + ")");
+    await sleep(1500);
+    await cp.close();
+  }
+  gameFiles(cfiles).forEach(function (n) {
+    var g = checkGameFile(n, cfiles[n]);
+    cornerSteps += g.steps.filter(function (st) { return st.corner; }).length;
+  });
+  expect(cerr.length === 0, "corner: page errors " + JSON.stringify(cerr));
+  expect(gameFiles(cfiles).length === 4 && cornerSteps >= 1, "corner: " + gameFiles(cfiles).length + " games, " +
+    cornerSteps + " rooms crossed at a corner");
+  report.push("corner: " + gameFiles(cfiles).length + " games, " + cornerSteps + " rooms crossed at a corner");
+  save("corner", cfiles);
+  await cctx.close();
+
+  }
+  if (want("team_mazes")) {
+  // 7. the maze editor: a maze drawn, checked, tried in 3D and 2D, saved into
+  // the game (GitHub stood in for) with saving set up on the way, a second
+  // save with someone else saving in between, a wrong password and a taken
+  // name refused; then a player plays the saved maze
+  var T = globalThis.FG.mazeTools;
+  var gh = githubStandIn({"js/my_mazes.js": T.fileText({broken_one: {shape: [". # .", "# # #", ". # ."], moves: 10,
+    saved_by: "X", saved_at: "2026-10-01T00:00:00.000Z"}})});
+  var tctx = await browser.newContext({viewport: {width: 1280, height: 900}});
+  await gh.routes(tctx);
+  var ed = await tctx.newPage();
+  var edErrors = [];
+  ed.on("pageerror", function (e) { edErrors.push(String(e)); });
+  var tfiles = {};
+  await pipe(ed, tfiles, {value: "ok"}, 0);
+  var t0 = Date.now();
+  await ed.goto(base + "?edit=1&condition=linear_fast");
+  await waitReady(ed);
+  var left = await ed.textContent("#menuProblems");
+  expect(/broken_one/.test(left) && /cut off/.test(left), "team_mazes: a cut-off maze of the file is left out and listed: " + left);
+  expect((await cardTitles(ed)).indexOf("Broken one") < 0, "team_mazes: the cut-off maze is not on the first page");
+  await ed.keyboard.press("n");
+  await sleep(400);
+  expect(await ed.isVisible("#editor"), "team_mazes: N opens the editor");
+  await ed.fill("#edRows", "4");
+  await ed.dispatchEvent("#edRows", "change");
+  await sleep(100);
+  for (var hole of [[1, 1], [1, 3]]) {
+    await edClick(ed, hole[0], hole[1]);
+  }
+  await ed.keyboard.press("s");
+  await edClick(ed, 0, 0);
+  await ed.keyboard.press("c");
+  await edClick(ed, 3, 4);
+  await ed.keyboard.press("b");
+  await edClick(ed, 2, 2);
+  await ed.keyboard.press("r");
+  // a room cut off, then put back
+  await edClick(ed, 0, 1);
+  await edClick(ed, 1, 0);
+  var ch = await edChecks(ed);
+  expect(ch.some(function (l) { return /^bad: Room s00 is cut off/.test(l); }) && await ed.isDisabled("#edTry3d"),
+    "team_mazes: a room cut off is found and the try is off: " + JSON.stringify(ch));
+  await edClick(ed, 0, 1);
+  await edClick(ed, 1, 0);
+  await ed.fill("#edName", "Test Loop");
+  await ed.fill("#edMoves", "6");
+  await sleep(150);
+  ch = await edChecks(ed);
+  expect(await ed.inputValue("#edName") === "test_loop" && ch[0] === "ok: 18 rooms, all reachable from each other" &&
+    ch.indexOf("info: Start: s00") >= 0 && ch.indexOf("info: Cheese room (worth 8): s34") >= 0 &&
+    ch.indexOf("info: Bread room (worth 1): s22") >= 0 && ch.indexOf("ok: Name: test_loop") >= 0,
+    "team_mazes: the checks of the drawing " + JSON.stringify(ch));
+  // a try in 3D, left with Escape
+  await ed.click("#edTry3d");
+  await sleep(1200);
+  var u = await ui(ed);
+  expect(u.hud && !(await ed.isVisible("#editor")), "team_mazes: the try in 3D plays");
+  await ed.keyboard.down("ArrowUp");
+  await sleep(900);
+  await ed.keyboard.up("ArrowUp");
+  await ed.keyboard.press("Escape");
+  await sleep(600);
+  expect(await ed.isVisible("#editor") && await ed.inputValue("#edName") === "test_loop" &&
+    await ed.inputValue("#edRows") === "4", "team_mazes: Escape goes back to the editor with the drawing kept");
+  // a try in 2D, played to its end
+  await ed.click("#edTry2d");
+  await sleep(900);
+  var arrows = ["ArrowRight", "ArrowRight", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowLeft", "ArrowUp", "ArrowUp"];
+  for (var w = 0; w < 60 && !(await ui(ed)).end; w++) {
+    // held down, with the repeats a browser sends
+    for (var q = 0; q < 15; q++) {
+      await ed.keyboard.down(arrows[w % arrows.length]);
+      await sleep(100);
+    }
+    await ed.keyboard.up(arrows[w % arrows.length]);
+    await sleep(150);
+  }
+  u = await ui(ed);
+  expect(u.end && /nothing is saved/.test(u.status), "team_mazes: the try in 2D ends, nothing saved: " + u.status);
+  await sleep(600);
+  await ed.keyboard.press("Enter");
+  await sleep(500);
+  expect(await ed.isVisible("#editor"), "team_mazes: Enter after a try goes back to the editor");
+  expect(Object.keys(tfiles).length === 0, "team_mazes: tries send no files");
+  // save, setting up saving on the way: a short password refused first
+  await ed.fill("#edWho", "Tester Müller");
+  await ed.fill("#edToken", GH_KEY);
+  await ed.fill("#edRepo", "owner/game");
+  await ed.fill("#edPass1", "too short");
+  await ed.fill("#edPass2", "too short");
+  await ed.click("#edSave");
+  await sleep(300);
+  expect(/at least 16/.test(await ed.textContent("#edStatus")) && gh.puts.length === 0,
+    "team_mazes: a short team password is refused");
+  await ed.fill("#edPass1", "correct horse battery staple");
+  await ed.fill("#edPass2", "correct horse battery staple");
+  await ed.click("#edSave");
+  var reloaded = await waitFor(ed, async function () { return /maze=test_loop/.test(ed.url()); }, 60000);
+  await sleep(1500);
+  await waitReady(ed);
+  expect(reloaded, "team_mazes: the page reloads once the game has the maze");
+  expect(gh.puts.length === 2 && gh.puts[0].path === "js/team_key.js" && gh.puts[1].path === "js/my_mazes.js" &&
+    gh.puts[1].message === "Maze test_loop, saved by Tester Müller in the maze editor",
+    "team_mazes: the locked key, then the maze, written: " + JSON.stringify(gh.puts));
+  var keyText = gh.files["js/team_key.js"].text;
+  expect(keyText.indexOf(GH_KEY) < 0 && /"repo": "owner\/game"/.test(keyText) && /"iterations": 600000/.test(keyText),
+    "team_mazes: the key is stored locked");
+  var saved = T.parseFile(gh.files["js/my_mazes.js"].text);
+  expect(saved.broken_one && saved.test_loop && JSON.stringify(saved.test_loop.shape) ===
+    JSON.stringify(["S . . . .", ". # . # .", ". . B . .", ". . . . C"]) && saved.test_loop.moves === 6 &&
+    saved.test_loop.saved_by === "Tester Müller", "team_mazes: the maze saved as drawn " + JSON.stringify(saved.test_loop));
+  var sel = await ed.$eval("#mazes .card.on .card-size", function (c) { return c.textContent; });
+  expect(sel === "Test loop", "team_mazes: the new maze is on the first page, chosen: " + sel);
+  // a second maze, with someone else saving in between
+  gh.conflictOnce = true;
+  await ed.keyboard.press("n");
+  await sleep(400);
+  await ed.fill("#edName", "second_maze");
+  await ed.fill("#edMoves", "9");
+  await ed.fill("#edWho", "Tester");
+  expect(await ed.isVisible("#edUnlock") && !(await ed.isVisible("#edSetup")), "team_mazes: saving is set up now");
+  await ed.fill("#edPass", "correct horse battery staple");
+  await ed.click("#edSave");
+  reloaded = await waitFor(ed, async function () { return /maze=second_maze/.test(ed.url()); }, 60000);
+  await sleep(1500);
+  await waitReady(ed);
+  saved = T.parseFile(gh.files["js/my_mazes.js"].text);
+  expect(reloaded && gh.conflicts === 1 && Object.keys(saved).join() === "broken_one,test_loop,someone_else,second_maze" &&
+    saved.someone_else && saved.test_loop && saved.second_maze, "team_mazes: saved again on top of a save in between: " +
+    Object.keys(saved).join());
+  // a wrong password, and a name that is taken
+  var puts = gh.puts.length;
+  await ed.keyboard.press("n");
+  await sleep(400);
+  await ed.fill("#edName", "third_maze");
+  await ed.fill("#edWho", "Tester");
+  await ed.fill("#edPass", "not the team password");
+  await ed.click("#edSave");
+  await waitFor(ed, async function () { return /password/.test(await ed.textContent("#edStatus")); }, 8000);
+  expect(/Wrong team password/.test(await ed.textContent("#edStatus")) && gh.puts.length === puts,
+    "team_mazes: a wrong password saves nothing");
+  await ed.fill("#edName", "test_loop");
+  await sleep(150);
+  ch = await edChecks(ed);
+  expect(ch.indexOf("bad: There is already a maze called test_loop. Choose another name.") >= 0 && await ed.isDisabled("#edSave"),
+    "team_mazes: a taken name cannot be saved");
+  expect(edErrors.length === 0, "team_mazes: page errors " + JSON.stringify(edErrors));
+  report.push("team_mazes editor: " + gh.puts.length + " writes, " + gh.conflicts + " conflict, " +
+    Math.round((Date.now() - t0) / 1000) + " s");
+  await tctx.close();
+  // a player plays the saved maze
+  var pctx = await browser.newContext({viewport: {width: 1200, height: 800}});
+  await gh.routes(pctx);
+  var pl = await session("team_player", "?test=1&condition=linear_fast&maze=test_loop", [{view: "2d", maze: "test_loop"}],
+    {seed: 25, context: pctx, stay: 0.3});
+  var pn = gameFiles(pl.files);
+  expect(pn.length === 1, "team_player: 1 file");
+  pn.forEach(function (n) {
+    var g = checkGameFile(n, pl.files[n]);
+    expect(g.maze === "test_loop" && g.maze_def.team && g.maze_def.team.saved_by === "Tester Müller" &&
+      g.layout.start_room === "s00" && g.settings.steps === 6, "team_player: the saved maze, as drawn");
+  });
+  save("team_mazes", pl.files);
+  await pctx.close();
+
+  }
   if (want("down")) {
   // 5. DataPipe down for a game, then the next visit sends it
   var mode = {value: "down"};
@@ -999,6 +1409,8 @@ function checkSaved(folder) {
   await sleep(1800);
   var fs1 = await ui(fp);
   expect(fs1.menu && fs1.ready && ferr.length === 0, "file://: the first page, ready, no errors " + JSON.stringify(ferr));
+  expect(await fp.evaluate(function () { return window.FG.TEAM_MAZES !== undefined && window.FG.TEAM_KEY !== undefined; }),
+    "file://: the team's mazes and key are read");
   await ctx.close();
 
   }

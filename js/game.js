@@ -164,6 +164,7 @@
     var moveStart = null;         // the walk since the player last stood still: {t, press, key, code, held, angle}
     var away = null;              // the player out of the floor of its room: {left_at, side, furthest}
     var leftAt = null;            // when the player last left the floor of its room
+    var crossing = null;          // another room whose floor the player has been on since the last step
     var turning = null, ending = null;
     var IDLE_MS = s.idle_stay_ms;
     var keysDown = {};            // every key held now, for the idle clock
@@ -188,7 +189,8 @@
       controls: (function () { var c = copy(C); c.idle_stay_ms = s.idle_stay_ms; return c; })(),
       started: new Date().toISOString(), started_at: REC.now(), ended: null, steps: steps, turns: turns,
       walks_back: back, draws: draws, sound: {on_at_start: SND ? SND.on : null, toggles: soundToggles},
-      track: TRACK_MS ? track : null, path: null, known_rooms: null, result: null
+      track: TRACK_MS ? track : null, maze_def: mazeDef(g.layout.maze), path: null, known_rooms: null,
+      result: null
     };
 
     function levels() {
@@ -390,6 +392,16 @@
       return [rm.i, rm.j];
     }
 
+    /* The room of the floor under the player, however little way in. */
+    function floorRoom(x, y) {
+      var cx = Math.floor(x), cy = Math.floor(y);
+      if (cx < 0 || cy < 0 || cx >= M.W || cy >= M.H || M.kind[cy * M.W + cx] !== Wd.FLOOR) {
+        return null;
+      }
+      var rm = M.list[M.roomAt[cy * M.W + cx]];
+      return [rm.i, rm.j];
+    }
+
     function onFloorOf(r, x, y) {
       var rm = M.list[M.index[Wd.key(r)]];
       return x >= rm.c0 && x <= rm.c0 + Wd.ROOM && y >= rm.r0 && y <= rm.r0 + Wd.ROOM;
@@ -568,7 +580,7 @@
         facing_before: null, angle_before: null, angle: three ? degrees(scene.angle) : null,
         turns_before: 0, walls_before: 0, other_keys_before: 0,
         paid: 0, cost: 0, food_lost: 0, change: null, draw: null,
-        found: null, known_new: first.rooms, known_food_new: first.food,
+        found: null, known_new: first.rooms, known_food_new: first.food, corner: false,
         events: first.food.map(function (n) { return {type: "known", room: n}; })}));
       if (world.nameAt(room) !== null) {
         found[Wd.key(room)] = true;
@@ -641,6 +653,11 @@
         if ((e.key === "m" || e.key === "M") && SND) {
           return SND.toggle("M") ? "sound on" : "sound off";
         }
+        if (e.key === "Escape" && g.trial && !over) {
+          // trying a maze in the editor: Escape goes back to it
+          finish("stopped");
+          return "stop";
+        }
         var key = KEY_MOVE[e.key];
         if (!key) {
           others += 1;
@@ -689,6 +706,7 @@
         }
         var from = room;
         var to = maze.next(room, move);
+        crossing = null;
         var leftName = world.nameAt(from);
         var energyBefore = stomach.energy;
         // full in this food room: it is not eaten from, also on the way out
@@ -751,7 +769,8 @@
           angle: three ? degrees(scene.angle) : null, turns_before: turnsBefore,
           walls_before: walls, other_keys_before: others,
           paid: paid, cost: en.cost, food_lost: en.lost, change: what.rooms, draw: what.draw,
-          found: newFound, known_new: learned.rooms, known_food_new: learned.food, events: events
+          found: newFound, known_new: learned.rooms, known_food_new: learned.food, events: events,
+          corner: !!extra.corner
         });
         walls = 0;
         others = 0;
@@ -812,8 +831,55 @@
         }
       }
 
-      /* The player has walked onto the floor of the next room: a move. */
+      /* The player has walked onto the floor of a room. Next to the room it
+       * was in, that is a move. A room is only entered 0.3 tiles in, so a
+       * player can cross the corner of a room whose 2 doors sit at that corner
+       * without entering it, and arrive in the room after it: then the room
+       * crossed is a move too (corner: true), as the model's agent passes
+       * through it. */
       function enterRoom(next) {
+        var path = pathTo(next);
+        for (var i = 0; i < path.length && !over && !ending; i++) {
+          enterOne(path[i], i < path.length - 1);
+        }
+      }
+
+      function nextTo(a, b) {
+        return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) === 1;
+      }
+
+      /* The rooms from the room the player is in to next, next last: the room
+       * crossed on the way, or else the shortest way through the maze. */
+      function pathTo(next) {
+        if (nextTo(room, next)) {
+          return [next];
+        }
+        if (crossing && nextTo(room, crossing) && nextTo(crossing, next)) {
+          return [crossing, next];
+        }
+        var from = {}, queue = [room], k = Wd.key(room);
+        from[k] = null;
+        while (queue.length) {
+          var at = queue.shift();
+          if (R.sameRoom(at, next)) {
+            var way = [];
+            for (var r = at; r && !R.sameRoom(r, room); r = from[Wd.key(r)]) {
+              way.unshift(r);
+            }
+            return way;
+          }
+          maze.legal(at).forEach(function (m) {
+            var to = maze.next(at, m);
+            if (m !== "STAY" && from[Wd.key(to)] === undefined) {
+              from[Wd.key(to)] = at;
+              queue.push(to);
+            }
+          });
+        }
+        return [next];
+      }
+
+      function enterOne(next, corner) {
         var move = null;
         Object.keys(Wd.DIRS).forEach(function (m) {
           var d = Wd.DIRS[m];
@@ -824,7 +890,7 @@
         var ms = moveStart || {t: REC.now(), press: REC.now(), key: "ArrowUp", code: "ArrowUp", held: true,
           facing: FACING[scene.facing], angle: three ? degrees(scene.angle) : null};
         var st = takeStep(move, {key: ms.key, code: ms.code, at: ms.t, press: ms.press, held: ms.held},
-          {facing: ms.facing, angle: ms.angle, left_at: leftAt});
+          {facing: ms.facing, angle: ms.angle, left_at: leftAt, corner: corner});
         away = null;
         // the walk goes on from here, with the key still held
         moveStart = {t: REC.now(), press: ms.press, key: ms.key, code: ms.code, held: true,
@@ -984,6 +1050,11 @@
       /* Whether the player has left the floor of its room, come back to it,
        * or walked onto the floor of the next room. */
       function rooms() {
+        // a room next to the player's whose floor it is on, however little way in
+        var fl = floorRoom(scene.x, scene.y);
+        if (fl && nextTo(fl, room)) {
+          crossing = fl;
+        }
         var under = roomUnder(scene.x, scene.y);
         if (under && !R.sameRoom(under, room)) {
           enterRoom(under);
@@ -1075,16 +1146,18 @@
             // Space held: a stay every idle_stay_ms
             if (lastSpace !== null && now - lastSpace >= IDLE_MS) {
               var sk = Object.keys(down).filter(function (c) { return KEY_MOVE[down[c].key] === "STAY"; })[0];
-              lastSpace = now;
               stayStep({key: down[sk].key, code: sk, at: REC.now(), press: down[sk].t, held: true, by: "Space"});
+              // counted from when the stay was taken, as its time is recorded
+              lastSpace = performance.now();
             }
           } else if (!Object.keys(keysDown).length) {
             // no key held: standing still is a stay every idle_stay_ms
             if (idleSince === null) {
               idleSince = now;
             } else if (now - idleSince >= IDLE_MS) {
-              idleSince = now;
               stayStep({key: null, code: null, at: REC.now(), press: null, held: false, by: "idle"});
+              // counted from when the stay was taken, as its time is recorded
+              idleSince = performance.now();
             }
           }
         }
@@ -1135,6 +1208,13 @@
     var known = {};
     rec.steps.forEach(function (st) { (st.known_new || []).forEach(function (n) { known[n] = true; }); });
     rec.known_rooms = Object.keys(known).sort();
+  }
+
+  /* The maze as the game had it: its rooms (colour numbers, -1 for no room)
+   * and, for a maze of the team, how it was drawn and saved. */
+  function mazeDef(name) {
+    var m = FG.MAZES[name];
+    return {rooms: copy(m.rooms), team: m.team ? copy(m.team) : null};
   }
 
   function layoutNames(lay) {

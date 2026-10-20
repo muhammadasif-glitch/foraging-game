@@ -1,5 +1,35 @@
 # Changes
 
+## 2.3.0
+
+- The maze editor: with `?edit=1` the first page has a "+ New maze" card.
+  Draw a maze on a grid (rooms, start, cheese and bread rooms), with checks
+  while drawing; try it in 3D or 2D at once (nothing saved or sent); save it
+  into the game with the team password. The page then waits until GitHub
+  Pages serves the new maze and opens again with it.
+- The team's mazes are kept in `js/my_mazes.js` and shown on the first page
+  for every player, after the mazes of `settings.js`. Their start, cheese and
+  bread rooms and their moves are used; a maze the game cannot use is left
+  out and listed in the editor.
+- Saving goes through GitHub with a key that may change only this
+  repository, kept in `js/team_key.js` locked with the team password
+  (PBKDF2 and AES-GCM in the browser). A name already saved is refused, and
+  a save that meets someone else's is done again on top of it.
+- `js/my_mazes.js` and `js/team_key.js` are loaded fresh, not from the
+  browser's cache, so a new maze shows at once after the page opens again.
+- A fix: walking through the corner of a room whose 2 doors meet at that
+  corner (s00 of grid_4x4, for example) could stop the game with an error,
+  because the player arrived in the room after it without having entered
+  it. Such a room now counts as a move, taken at the same moment as the
+  move after it (`corner: true`). The browser check crosses such a corner.
+- Stays while standing still (and while Space is held) are timed from the
+  moment the stay before was taken, so they are always at least
+  `idle_stay_ms` apart in the file.
+- File format 5: `maze_def` holds the maze of the game (rooms and, for a
+  maze of the team, its drawing and who saved it). `check/data_check.py`
+  replays games in mazes of the team through the model's world too (the
+  maze is added in memory; the model is not changed).
+
 ## 2.2.0
 
 - Only moves use up the steps (`count_steps: "moves"`): a game is 120 moves

@@ -47,6 +47,66 @@
       <p class="keys" id="menuKeys"></p>
       <button class="primary" id="play" tabindex="-1" disabled>Play &nbsp;<kbd>Enter</kbd></button>
       <p class="small" id="menuStatus"></p>
+      <p class="small warn" id="menuProblems" hidden></p>
+    </div>
+  </div>
+
+  <div id="editor" class="overlay" hidden>
+    <div class="panel wide">
+      <h2>New maze</h2>
+      <div class="ed-body">
+        <div class="ed-draw">
+          <div class="ed-tools">
+            <button type="button" class="tool" id="edTool_rooms">Rooms <kbd>R</kbd></button>
+            <button type="button" class="tool" id="edTool_S"><i class="dot s"></i>Start <kbd>S</kbd></button>
+            <button type="button" class="tool" id="edTool_C"><i class="dot c"></i>Cheese <kbd>C</kbd></button>
+            <button type="button" class="tool" id="edTool_B"><i class="dot b"></i>Bread <kbd>B</kbd></button>
+          </div>
+          <canvas id="edGrid"></canvas>
+          <p class="small left">Rooms: click a square to take the room out or put it back; drag to do the same
+            over several. Start, Cheese, Bread: click a room to put it there, click it again to take it away.
+            Rooms side by side are joined by a door.</p>
+        </div>
+        <div class="ed-side">
+          <div class="ed-fields">
+            <label>Name <input id="edName" autocomplete="off" spellcheck="false" placeholder="big_loop"></label>
+            <label>Rows <input id="edRows" type="number" min="2" max="12"></label>
+            <label>Columns <input id="edCols" type="number" min="2" max="12"></label>
+            <label>Moves <input id="edMoves" type="number" min="1" max="1000"></label>
+          </div>
+          <ul class="ed-checks" id="edChecks"></ul>
+          <div class="ed-row">
+            <button type="button" class="second" id="edTry3d">Try in 3D</button>
+            <button type="button" class="second" id="edTry2d">Try in 2D</button>
+          </div>
+          <p class="small left">A try plays the maze at once; nothing is saved or sent. <kbd>Esc</kbd> comes back here.</p>
+          <div class="ed-save">
+            <div class="row-label">Save to the game</div>
+            <label>Your name <input id="edWho" autocomplete="name" maxlength="40"></label>
+            <div id="edUnlock">
+              <label>Team password <input id="edPass" type="password" autocomplete="current-password"></label>
+              <button type="button" class="link" id="edResetup">Set up saving again (a new key or password)</button>
+            </div>
+            <div id="edSetup" hidden>
+              <p class="small left">Saving is not set up yet. Do this once: make a GitHub key that may change
+                only this repository ("Contents: read and write"), and choose a team password of at least
+                16 characters, for example 4 or 5 random words.</p>
+              <label>GitHub key <input id="edToken" type="password" autocomplete="off" spellcheck="false"></label>
+              <label>Repository <input id="edRepo" autocomplete="off" spellcheck="false" placeholder="owner/name"></label>
+              <label>Branch <input id="edBranch" autocomplete="off" spellcheck="false" value="main"></label>
+              <label>Team password <input id="edPass1" type="password" autocomplete="new-password"></label>
+              <label>Again <input id="edPass2" type="password" autocomplete="new-password"></label>
+            </div>
+            <p class="small left" id="edDemo" hidden>Saving works on the game's online page (GitHub Pages), not here.</p>
+            <button type="button" class="primary" id="edSave">Save to game</button>
+            <p class="small left" id="edStatus"></p>
+          </div>
+          <div class="ed-row">
+            <button type="button" class="second" id="edBack">Back to the first page</button>
+            <button type="button" class="second" id="edClear">Start again</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -82,6 +142,7 @@
   <script src="js/mazes.js"></script>
   <script src="js/rules.js"></script>
   <script src="js/random.js"></script>
+  <script src="js/maze_tools.js"></script>
   <script src="js/config.js"></script>
   <script src="js/recorder.js"></script>
   <script src="js/datapipe.js"></script>
@@ -94,6 +155,9 @@
   <script src="js/view2d.js"></script>
   <script src="js/view3d.js"></script>
   <script src="js/game.js"></script>
+  <script src="js/team_save.js"></script>
+  <script src="js/editor.js"></script>
   <script src="js/main.js"></script>
+  <!-- js/my_mazes.js and js/team_key.js are loaded by js/main.js, always fresh -->
 </body>
 </html>

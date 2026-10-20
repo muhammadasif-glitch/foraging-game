@@ -165,7 +165,19 @@
     if (maze) {
       s.maze = maze;
     }
+    // a maze of the team (js/maze_tools.js) has its own number of moves,
+    // which only the link changes
+    var team = teamOf(s.maze);
+    if (team && !(link && Object.prototype.hasOwnProperty.call(link, "steps"))) {
+      s.steps = team.moves;
+    }
     return check(s);
+  }
+
+  /* What the editor gave a maze of the team (start, food rooms, moves), or
+   * null for the other mazes. */
+  function teamOf(name) {
+    return (FG.MAZES[name] && FG.MAZES[name].team) || null;
   }
 
   function check(s) {
@@ -277,8 +289,12 @@
     var free = function (room) {
       return !taken.some(function (t) { return R.sameRoom(t, room); });
     };
+    var team = teamOf(s.maze);
     if (fixed.start_room) {
       out.start_room = startRoom(fixed.start_room, maze, "layout.start_room");
+    } else if (team && team.start && s.start_rooms === "random") {
+      // a maze of the team: its start room, where the editor put one
+      out.start_room = startRoom(team.start, maze, "start room");
     } else if (s.start_rooms === "environment") {
       out.start_room = startRoom(rand.pick(environment(s.maze).start_rooms), maze, "start_rooms");
     } else if (s.start_rooms !== "random") {
@@ -286,6 +302,12 @@
     } else {
       var area = s.start_area === null ? rooms :
         rooms.filter(function (r) { return r[0] < s.start_area && r[1] < s.start_area; });
+      if (team) {
+        // not in a cheese or bread room the editor put there
+        var drawnFood = [team.food.cheese, team.food.bread].filter(Boolean);
+        var away = area.filter(function (r) { return !drawnFood.some(function (f) { return R.sameRoom(f, r); }); });
+        area = away.length ? away : area;
+      }
       out.start_room = rand.pick(area);
     }
     taken.push(out.start_room);
@@ -297,8 +319,10 @@
     });
     names.forEach(function (n) {
       var spec = s.food_rooms[n].room;
+      // a maze of the team: its cheese and bread rooms, where the editor put them
+      var drawn = team && spec === "random" ? team.food[foodOf(s, n)] || null : null;
       var r = given[n] || (spec === "environment" ? environment(s.maze).food_rooms[n].room :
-        spec !== "random" ? spec : null);
+        spec !== "random" ? spec : drawn);
       if (r) {
         var room = roomOf(r, maze, "food room " + n);
         Object.keys(out.food_rooms).forEach(function (other) {
@@ -363,21 +387,27 @@
       throw new SettingsError("menu.views must list 2d, 3d or both");
     }
     all.menu.views.forEach(function (v) { oneOf(v, ["2d", "3d"], "menu.views"); });
-    var names = Object.keys(all.conditions || {});
-    (names.length ? names : [null]).forEach(function (c) {
-      all.menu.mazes.forEach(function (m) {
-        var where = m + (c ? " with the condition " + c : "");
-        try {
-          var s = gameSettings(all, c, m, link);
-          for (var k = 0; k < 20; k++) {
-            layout(s, null, FG.random.make(k + 1));
-          }
-        } catch (err) {
-          throw new SettingsError(where + ": " + err.message);
-        }
-      });
+    all.menu.mazes.forEach(function (m) {
+      checkMaze(all, m, link);
     });
     return true;
+  }
+
+  /* Checks 1 maze with every condition and the link's settings, with 20
+   * layouts each. */
+  function checkMaze(all, m, link) {
+    var names = Object.keys(all.conditions || {});
+    (names.length ? names : [null]).forEach(function (c) {
+      var where = m + (c ? " with the condition " + c : "");
+      try {
+        var s = gameSettings(all, c, m, link);
+        for (var k = 0; k < 20; k++) {
+          layout(s, null, FG.random.make(k + 1));
+        }
+      } catch (err) {
+        throw new SettingsError(where + ": " + err.message);
+      }
+    });
   }
 
   FG.config = {
@@ -387,12 +417,14 @@
     fromLink: fromLink,
     roomOf: roomOf,
     environment: environment,
+    teamOf: teamOf,
     foodOf: foodOf,
     FOODS: FOODS,
     gameSettings: gameSettings,
     speeds: speeds,
     layout: layout,
     modelSettings: modelSettings,
-    checkAll: checkAll
+    checkAll: checkAll,
+    checkMaze: checkMaze
   };
 })(typeof window !== "undefined" ? window : globalThis);
