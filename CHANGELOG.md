@@ -1,5 +1,12 @@
 # Changes
 
+## 2.3.1
+
+- A fix: a browser filling in a saved password or name (in the maze
+  editor's fields) sends key events without a key, and the game stopped with
+  "Cannot read properties of undefined (reading 'length')". Such events are
+  now ignored. The browser check sends them.
+
 ## 2.3.0
 
 - The maze editor: with `?edit=1` the first page has a "+ New maze" card.

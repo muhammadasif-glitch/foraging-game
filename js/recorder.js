@@ -51,6 +51,11 @@
     "Left", "Right", "Up", "Down", "Spacebar"];
 
   function onKey(e) {
+    if (typeof e.key !== "string") {
+      // not a key: a browser filling in a saved password sends key events
+      // without one
+      return;
+    }
     var text = isText(e);
     var code = e.code || e.key;
     if (e.type === "keydown" && e.repeat && pressed[code]) {

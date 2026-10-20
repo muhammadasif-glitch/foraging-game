@@ -1218,6 +1218,15 @@ function checkSaved(folder) {
   await sleep(500);
   expect(await ed.isVisible("#editor"), "team_mazes: Enter after a try goes back to the editor");
   expect(Object.keys(tfiles).length === 0, "team_mazes: tries send no files");
+  // a browser filling in a saved password sends key events without a key
+  await ed.evaluate(function () {
+    var el = document.getElementById("edToken");
+    el.focus();
+    el.dispatchEvent(new Event("keydown", {bubbles: true}));
+    el.dispatchEvent(new Event("keyup", {bubbles: true}));
+  });
+  await sleep(300);
+  expect(!(await ui(ed)).message && await ed.isVisible("#editor"), "team_mazes: key events without a key (autofill) are ignored");
   // save, setting up saving on the way: a short password refused first
   await ed.fill("#edWho", "Tester Müller");
   await ed.fill("#edToken", GH_KEY);
