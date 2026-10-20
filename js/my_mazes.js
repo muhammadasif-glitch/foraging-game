@@ -41,6 +41,19 @@
       "moves": 120,
       "saved_by": "main",
       "saved_at": "2026-10-20T12:18:21.582Z"
+    },
+    "g": {
+      "shape": [
+        ". . .",
+        ". . .",
+        ". . .",
+        ". . .",
+        ". B S",
+        ". . C"
+      ],
+      "moves": 120,
+      "saved_by": "main",
+      "saved_at": "2026-10-20T15:35:07.645Z"
     }
   };
 })(typeof window !== "undefined" ? window : globalThis);
