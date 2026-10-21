@@ -587,7 +587,7 @@ async function findPointer(page, canvasId, x0, x1, y0, y1) {
 function checkGameFile(name, f) {
   var where = name;
   var g = f.game;
-  expect(f.format === "foraging-game" && f.format_version === 7, where + ": format");
+  expect(f.format === "foraging-game" && f.format_version === 8, where + ": format");
   expect(f.trial_type === "foraging-game", where + ": trial_type");
   expect(/^[0-9a-f]{8}$/.test(f.player), where + ": player code " + f.player);
   expect(/^[0-9a-f]{12}$/.test(f.session_id), where + ": session id");
@@ -725,7 +725,8 @@ function checkGameFile(name, f) {
     expect(typeof st.entered_at === "number" && st.entered_at >= st.key_at,
       where + " step " + t + ": entered " + st.entered_at + " after the walk began " + st.key_at);
     if (st.move === "STAY") {
-      expect(st.entered_at - st.key_at < 50, where + " step " + t + ": a stay is taken at its key");
+      // (at the next screen frame: much later where WebGL is drawn by the processor)
+      expect(st.entered_at - st.key_at < (softGL(g.render) ? 1500 : 50), where + " step " + t + ": a stay is taken at its key");
     }
     if (st.held) {
       // a key held on from before: the walk (or the stay) began without a press
@@ -832,6 +833,14 @@ function checkMazeDef(where, f) {
   expect(linkSteps || g.settings.steps === d.team.moves, where + ": the moves of the maze, " + g.settings.steps);
 }
 
+/* Whether WebGL drawn by the processor (?gl=1 in a headless browser) drew
+ * the game: frames come slowly then, and the times of the track and of the
+ * looks are not checked. */
+var SOFTWARE_GL = /swiftshader|llvmpipe|softpipe|lavapipe|software|basic render/i;
+function softGL(rd) {
+  return !!(rd && /^webgl/.test(rd.renderer) && SOFTWARE_GL.test(rd.gpu || ""));
+}
+
 /* The place and the view of the player every track_ms: never in a wall, the
  * angle in 3D only, the steps taken by then, and about track_ms apart. */
 function checkTrack(where, g) {
@@ -841,7 +850,7 @@ function checkTrack(where, g) {
     return;
   }
   var tr = g.track;
-  if (!expect(tr && tr.every_ms === s.track_ms && tr.fields.join() === "t,x,y,angle,step,look,look_d,look_share,music" &&
+  if (!expect(tr && tr.every_ms === s.track_ms && tr.fields.join() === "t,x,y,angle,step,look,look_d,look_share,music,tilt,back" &&
     tr.rows.length > 1, where + ": track")) {
     return;
   }
@@ -856,6 +865,8 @@ function checkTrack(where, g) {
       expect(p[6] === null && p[7] === null, where + ": track " + i + ": nothing looked at");
     }
     expect(p[8] === null || (p[8] >= 0 && p[8] <= 1), where + ": track " + i + ": music " + p[8]);
+    expect(g.view === "3d" ? p[9] >= 0 && p[9] <= 0.42 && p[10] >= 0 && p[10] <= 1 && (g.camera === "eyes" || p[10] === 0) :
+      p[9] === null && p[10] === null, where + ": track " + i + ": tilt and back " + JSON.stringify(p.slice(9)));
   });
   var M = Wd.build(g.layout.maze);
   var start = Wd.centre(M, R.roomFromName(g.layout.start_room));
@@ -878,6 +889,10 @@ function checkTrack(where, g) {
     }
   });
   expect(gaps.every(function (d) { return d > 0; }), where + ": track times go up");
+  if (softGL(g.render)) {
+    notes.push(where + ": drawn by " + g.render.gpu.match(SOFTWARE_GL)[0] + " (WebGL by the processor), the times of the track not checked");
+    return;
+  }
   var usual = gaps.filter(function (d) { return d < 3 * s.track_ms; });
   var mean = usual.reduce(function (a, b) { return a + b; }, 0) / Math.max(1, usual.length);
   expect(usual.length >= 0.95 * gaps.length && Math.abs(mean - s.track_ms) < 0.15 * s.track_ms,
@@ -958,7 +973,7 @@ function checkPaintings(where, f) {
     lookMs += o.look_ms;
   });
   var partial = /partial/.test(where);
-  if (!partial && g.track && g.track.rows.length > 20) {
+  if (!partial && g.track && g.track.rows.length > 20 && !softGL(g.render)) {
     var tracked = g.track.rows.filter(function (r) { return r[5] !== null; }).length * g.track.every_ms;
     expect(Math.abs(lookMs - tracked) <= 0.25 * Math.max(lookMs, tracked) + 2000,
       where + ": looked at paintings " + Math.round(lookMs) + " ms, the track says about " + tracked);
@@ -1259,6 +1274,12 @@ function checkSaved(folder) {
     a.files[an[0]].session_id === a.files[an[2]].session_id, "three_games: 1 player and 1 session");
   expect(an.length === 3 && a.files[an[1]].game.view === "3d" && a.files[an[2]].game.maze === "grid_two_4x4",
     "three_games: views and mazes as chosen");
+  // WebGL only on a graphics card: a headless browser has none (or only SwiftShader, WebGL drawn by
+  // the processor), so the ray casting draws
+  var rd3 = an.length === 3 ? a.files[an[1]].game.render : null;
+  expect(rd3 && (rd3.renderer === "canvas" ? rd3.webgl === "software" || rd3.webgl === "none" :
+    /^webgl/.test(rd3.renderer) && !softGL(rd3)), "three_games: WebGL only on a graphics card, got " +
+    JSON.stringify(rd3 && [rd3.renderer, rd3.webgl, rd3.gpu]));
   expect(an.length && a.files[an[0]].condition.name === Object.keys(SETTINGS.conditions)[1] &&
     a.files[an[0]].condition.how === "datapipe", "three_games: condition 1 from DataPipe");
   expect(/saved/.test(a.status), "three_games: saved message, got " + a.status);
@@ -1802,24 +1823,30 @@ function checkSaved(folder) {
   if (want("mouse")) {
   // 11. the mouse: the camera behind it and through its eyes; then the old
   // arrow player
-  var mo = await session("mouse", "?test=1&condition=linear_fast&set.steps=30", [
+  // drawn with WebGL (?gl=1: also by SwiftShader, the processor's WebGL of this headless browser)
+  var mo = await session("mouse", "?test=1&condition=linear_fast&set.steps=30&gl=1", [
     {view: "3d_behind", maze: "grid_4x4"}, {view: "3d", maze: "corridors_7x7"},
     {view: "3d_behind", maze: "corridors_7x7"}, {view: "2d", maze: "holes_6x6"}
   ], {seed: 31});
   var mn = gameFiles(mo.files);
   expect(mn.length === 4, "mouse: 4 files, got " + Object.keys(mo.files).join(" "));
   mn.forEach(function (n) { checkGameFile(n, mo.files[n]); });
+  expect(mn.length === 4 && /^webgl/.test(mo.files[mn[0]].game.render.renderer), "mouse: the 3D view drawn with WebGL, got " +
+    (mn.length && mo.files[mn[0]].game.render && mo.files[mn[0]].game.render.renderer));
   expect(mn.length === 4 && mo.files[mn[0]].game.camera === "behind" && mo.files[mn[1]].game.camera === "eyes" &&
     mo.files[mn[2]].game.camera === "behind" && mo.files[mn[3]].game.camera === null, "mouse: the cameras as chosen");
   save("mouse", mo.files);
   await mo.context.close();
-  var ar = await session("mouse_arrow", "?test=1&condition=linear_fast&set.steps=12&set.player=arrow", [
+  // and the ray casting of js/view3d.js, as in a browser without WebGL (?gl=0)
+  var ar = await session("mouse_arrow", "?test=1&condition=linear_fast&set.steps=12&set.player=arrow&gl=0", [
     {view: "2d", maze: "grid_4x4"}, {view: "3d", maze: "grid_6x6"}
   ], {seed: 32});
   var arn = gameFiles(ar.files);
   expect(arn.length === 2 && arn.every(function (n) { return ar.files[n].game.settings.player === "arrow"; }),
     "mouse_arrow: the arrow player, as set by the link");
   arn.forEach(function (n) { checkGameFile(n, ar.files[n]); });
+  expect(arn.length === 2 && ar.files[arn[1]].game.render.renderer === "canvas" &&
+    ar.files[arn[1]].game.render.webgl === "off", "mouse_arrow: ?gl=0 draws by ray casting");
   save("mouse_arrow", ar.files);
   await ar.context.close();
 
@@ -1827,18 +1854,20 @@ function checkSaved(folder) {
   if (want("paintings")) {
   // 12. the paintings: a painting looked at and liked with L, then L again
   // and again while standing (the stays go on), a plaque clicked
-  var pc = await browser.newContext({viewport: {width: 1200, height: 800}});
+  // (a smaller window: WebGL by the processor is slow; standing while turning
+  // to a painting must not starve the player)
+  var pc = await browser.newContext({viewport: {width: 960, height: 640}});
   var pp = await pc.newPage();
   var perr = [], pfiles = {};
   pp.on("pageerror", function (e) { perr.push(String(e)); });
   await pipe(pp, pfiles, {value: "ok"}, 0);
-  await pp.goto(base + "?test=1&condition=linear_fast&set.steps=6");
+  await pp.goto(base + "?test=1&condition=linear_fast&set.steps=6&gl=1&set.stomach.at_zero=continue");
   await choose(pp, "3d", "grid_4x4");
   await sleep(1200);
   var looked = null;
-  for (var ti = 0; ti < 60 && !looked; ti++) {
+  for (var ti = 0; ti < 80 && !looked; ti++) {
     await pp.keyboard.down("ArrowRight");
-    await sleep(70);
+    await sleep(110);
     await pp.keyboard.up("ArrowRight");
     // the turn slows down to a stop, then the painting must stay in the middle
     await sleep(700);
@@ -1898,7 +1927,7 @@ function checkSaved(folder) {
     mp.on("pageerror", function (e) { merr.push(String(e)); });
     await pipe(mp, mfiles, {value: "ok"}, 0);
     // no plaques: only the gramophone can be clicked
-    await mp.goto(base + "?test=1&condition=linear_fast&set.steps=40&set.stomach.start=20&set.likes=false");
+    await mp.goto(base + "?test=1&condition=linear_fast&set.steps=40&set.stomach.start=20&set.likes=false&gl=1");
     await choose(mp, view, "grid_4x4");
     await sleep(1200);
     var mg = await keptGame(mp);
@@ -1993,6 +2022,16 @@ function checkSaved(folder) {
   expect(fs1.menu && fs1.ready && ferr.length === 0, "file://: the first page, ready, no errors " + JSON.stringify(ferr));
   expect(await fp.evaluate(function () { return window.FG.TEAM_MAZES !== undefined && window.FG.TEAM_KEY !== undefined; }),
     "file://: the team's mazes and key are read");
+  // a 3D game with WebGL: the browser does not let the paintings' own images (another origin for a
+  // file) go to the graphics card, their copies in the small picture of all of them stand in
+  await fp.goto("file://" + path.join(ROOT, "index.html") + "?send=0&condition=linear_fast&gl=1");
+  await choose(fp, "3d", "grid_4x4");
+  await sleep(5000);
+  var fgl = await fp.evaluate(function () {
+    var c = document.getElementById("c3d"), g = c.getContext("webgl2") || c.getContext("webgl");
+    return {gl: !!g, loaded: window.FG.art.loaded ? window.FG.art.loaded() : null};
+  });
+  expect(fgl.gl && ferr.length === 0, "file://: a 3D game drawn with WebGL, no errors " + JSON.stringify([fgl, ferr]));
   await ctx.close();
 
   }

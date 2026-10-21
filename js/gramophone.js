@@ -17,16 +17,18 @@
   var HEAR_FULL = 2.6, HEAR_GONE = 9;
   var pic = null, notes = [];
 
-  /* The gramophone from the side: {w, h, canvas}, standing on the bottom
-   * edge, its horn up to the left. */
+  /* The gramophone from the side: {w, h, canvas}, 200 x 230 drawn 3 times
+   * as fine (sharp near), standing on the bottom edge, its horn up to the
+   * left. */
   function sprite() {
     if (pic) {
       return pic;
     }
     var c = document.createElement("canvas");
-    c.width = 200;
-    c.height = 230;
+    c.width = 600;
+    c.height = 690;
     var g = c.getContext("2d");
+    g.scale(3, 3);
     // the shadow on the floor
     g.fillStyle = "rgba(0,0,0,0.28)";
     g.beginPath();
@@ -114,9 +116,10 @@
     var k = n % 2;
     if (!notes[k]) {
       var c = document.createElement("canvas");
-      c.width = 48;
-      c.height = 56;
+      c.width = 96;
+      c.height = 112;
       var g = c.getContext("2d");
+      g.scale(2, 2);
       var shape = function (wide) {
         g.lineWidth = wide;
         g.beginPath();

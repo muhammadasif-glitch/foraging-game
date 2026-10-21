@@ -7,9 +7,10 @@
  * holds none (or game.paintings is false), the game paints its own
  * landscapes instead, the same one for the same room colour.
  *
- * A painting keeps its own shape: it is fitted into at most PIC_MAX_W x
- * PIC_MAX_H tiles in a gilded frame, with the Like plaque beside the frame
- * (layout). The view draws paintings far away from ATLAS, 1 image with a
+ * A painting keeps its own shape (never stretched or cut): in its gilded
+ * frame it is fitted into at most FRAME_MAX_W x FRAME_MAX_H tiles, 80% of
+ * the height of the wall between the moulding and the skirting board, with
+ * the Like plaque beside the frame (layout). The view draws paintings far away from ATLAS, 1 image with a
  * small picture of every painting; near ones sharp from their own image:
  * the 512 pixel copy, and the 1600 pixel one for the room the player is in
  * (want, image), each put into its frame once it has come in. Picture
@@ -19,11 +20,16 @@
   "use strict";
   var FG = root.FG = root.FG || {};
 
-  // the picture at most this wide and high (tiles; a wall is 1 tile high),
-  // in a frame BORDER wide, its middle V_MID down the wall
-  var PIC_MAX_W = 1.15, PIC_MAX_H = 0.5, BORDER = 0.035, V_MID = 0.42;
-  // the Like plaque: its size, how far right of the frame, its top
-  var PLAQUE_W = 0.2, PLAQUE_H = 0.088, PLAQUE_GAP = 0.06, PLAQUE_TOP = 0.45;
+  // the picture in its frame at most this wide and high (tiles; a wall is 1
+  // tile high, a painting has 2 tiles of it), the frame BORDER wide, its
+  // middle V_MID down the wall: from 0.08 to 0.88, clear of the moulding at
+  // the top (to 0.05) and the skirting board at the bottom (from 0.9)
+  var FRAME_MAX_W = 1.5, FRAME_MAX_H = 0.8, BORDER = 0.045, V_MID = 0.48;
+  // the game's own small landscapes (game.paintings false) as before
+  var LANDSCAPE_MAX_W = 1.24, LANDSCAPE_MAX_H = 0.59;
+  // the Like plaque: its size, how far right of the frame; its middle at
+  // the eyes of a person (half way up the wall)
+  var PLAQUE_W = 0.2, PLAQUE_H = 0.088, PLAQUE_GAP = 0.06, PLAQUE_MID = 0.5;
   var GENERATED = 48, GEN_W = 156, GEN_H = 116;
   // images kept that are not wanted any more, at most
   var KEEP = {large: 8, small: 24};
@@ -34,13 +40,13 @@
   var atlas = null;         // {data, w, h}: the pixels of FG.PAINTINGS_ATLAS
   var made = {};            // generated landscapes: {canvas, data}
   var layouts = {};
-  var frames = {};          // frame canvases by shape
   var plaques = {};
   var labels = {like: "Like", liked: "Liked"};
   var images = {};          // "p:size" -> {img, framed (the picture in its frame), ready, failed, used}
   var wanted = [];          // [{p, size}], most wanted first
   var active = 0;
   var listeners = [];
+  var changes = 0;          // goes up whenever an image comes in or is let go
 
   function noise(seed) {
     var a = seed >>> 0;
@@ -329,13 +335,19 @@
     var key = p >= 0 ? p : "g";
     if (!layouts[key]) {
       var a = aspect(p);
-      var pw = Math.min(PIC_MAX_W, PIC_MAX_H * a), ph = pw / a;
+      // the picture as high as the frame allows, unless that is too wide
+      var maxW = p >= 0 ? FRAME_MAX_W : LANDSCAPE_MAX_W, maxH = p >= 0 ? FRAME_MAX_H : LANDSCAPE_MAX_H;
+      var ph = maxH - 2 * BORDER, pw = ph * a;
+      if (pw + 2 * BORDER > maxW) {
+        pw = maxW - 2 * BORDER;
+        ph = pw / a;
+      }
       var fw = pw + 2 * BORDER, fh = ph + 2 * BORDER;
       var x0 = (2 - (fw + PLAQUE_GAP + PLAQUE_W)) / 2;
       var L = {fx0: x0, fx1: x0 + fw, fv0: V_MID - fh / 2, fv1: V_MID + fh / 2,
         px0: x0 + BORDER, px1: x0 + fw - BORDER, pv0: V_MID - ph / 2, pv1: V_MID + ph / 2,
         qx0: x0 + fw + PLAQUE_GAP, qx1: x0 + fw + PLAQUE_GAP + PLAQUE_W,
-        qv0: PLAQUE_TOP, qv1: PLAQUE_TOP + PLAQUE_H};
+        qv0: PLAQUE_MID - PLAQUE_H / 2, qv1: PLAQUE_MID + PLAQUE_H / 2};
       layouts[key] = L;
     }
     return layouts[key];
@@ -428,6 +440,7 @@
         e.ready = ok;
         e.failed = !ok;
         if (ok) {
+          changes += 1;
           listeners.forEach(function (fn) { fn(p, size); });
         }
       }
@@ -460,6 +473,7 @@
         images[k].img.src = "";
         images[k].framed = null;
         delete images[k];
+        changes += 1;
       });
     });
   }
@@ -496,7 +510,7 @@
     c.height = Math.round((L.fv1 - L.fv0) * per);
     var g = c.getContext("2d"), b = BORDER * per;
     g.imageSmoothingQuality = "high";
-    g.drawImage(frame(p), 0, 0, c.width, c.height);
+    drawFrame(g, c.width, c.height, b);
     g.drawImage(img, b, b, c.width - 2 * b, c.height - 2 * b);
     return c;
   }
@@ -523,42 +537,31 @@
   }
 
   // ------------------------------------------------------------ frame and plaque
-  /* The gilded frame of p, with its middle clear: a canvas the shape of the
-   * frame. */
-  function frame(p) {
-    var L = layout(p), fw = L.fx1 - L.fx0, fh = L.fv1 - L.fv0;
-    var k = Math.round(fw * 1000) + "x" + Math.round(fh * 1000);
-    if (!frames[k]) {
-      var per = 360 / Math.max(fw, fh);          // pixels a tile
-      var c = document.createElement("canvas");
-      c.width = Math.round(fw * per);
-      c.height = Math.round(fh * per);
-      var g = c.getContext("2d"), W = c.width, H = c.height, b = BORDER * per;
-      var grad = g.createLinearGradient(0, 0, W, H);
-      grad.addColorStop(0, "#8a6a2c");
-      grad.addColorStop(0.3, "#d8b25a");
-      grad.addColorStop(0.55, "#9b7633");
-      grad.addColorStop(0.8, "#e0bf6c");
-      grad.addColorStop(1, "#7c5d25");
-      g.fillStyle = grad;
-      g.fillRect(0, 0, W, H);
-      g.lineJoin = "miter";
-      g.strokeStyle = "rgba(60,40,10,0.85)";
-      g.lineWidth = Math.max(1.5, b * 0.12);
-      g.strokeRect(g.lineWidth / 2, g.lineWidth / 2, W - g.lineWidth, H - g.lineWidth);
-      g.strokeStyle = "rgba(255,240,190,0.55)";
-      g.lineWidth = Math.max(1, b * 0.08);
-      g.strokeRect(b * 0.32, b * 0.32, W - b * 0.64, H - b * 0.64);
-      g.strokeStyle = "rgba(70,48,14,0.7)";
-      g.lineWidth = Math.max(1, b * 0.1);
-      g.strokeRect(b * 0.62, b * 0.62, W - b * 1.24, H - b * 1.24);
-      // the inner edge, in the shadow of the frame
-      g.fillStyle = "rgba(40,26,8,0.9)";
-      g.fillRect(b - 2, b - 2, W - 2 * b + 4, H - 2 * b + 4);
-      g.clearRect(b, b, W - 2 * b, H - 2 * b);
-      frames[k] = c;
-    }
-    return frames[k];
+  /* The gilded frame, W x H pixels and b wide, with its middle clear. */
+  function drawFrame(g, W, H, b) {
+    var grad = g.createLinearGradient(0, 0, W, H);
+    grad.addColorStop(0, "#8a6a2c");
+    grad.addColorStop(0.3, "#d8b25a");
+    grad.addColorStop(0.55, "#9b7633");
+    grad.addColorStop(0.8, "#e0bf6c");
+    grad.addColorStop(1, "#7c5d25");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, W, H);
+    g.lineJoin = "miter";
+    g.strokeStyle = "rgba(60,40,10,0.85)";
+    g.lineWidth = Math.max(1.5, b * 0.12);
+    g.strokeRect(g.lineWidth / 2, g.lineWidth / 2, W - g.lineWidth, H - g.lineWidth);
+    g.strokeStyle = "rgba(255,240,190,0.55)";
+    g.lineWidth = Math.max(1, b * 0.08);
+    g.strokeRect(b * 0.32, b * 0.32, W - b * 0.64, H - b * 0.64);
+    g.strokeStyle = "rgba(70,48,14,0.7)";
+    g.lineWidth = Math.max(1, b * 0.1);
+    g.strokeRect(b * 0.62, b * 0.62, W - b * 1.24, H - b * 1.24);
+    // the inner edge, in the shadow of the frame
+    var e = Math.max(2, b * 0.06);
+    g.fillStyle = "rgba(40,26,8,0.9)";
+    g.fillRect(b - e, b - e, W - 2 * b + 2 * e, H - 2 * b + 2 * e);
+    g.clearRect(b, b, W - 2 * b, H - 2 * b);
   }
 
   /* The Like plaque beside every painting: a small plate with a thumb up
@@ -621,6 +624,7 @@
     if (like && liked && (like !== labels.like || liked !== labels.liked)) {
       labels = {like: like, liked: liked};
       plaques = {};
+      changes += 1;
     }
   }
 
@@ -660,7 +664,9 @@
   FG.art = {
     load: load, source: source, count: count, info: info, hang: hang, layout: layout, aspect: aspect,
     pixels: pixels, colour: colour, want: want, image: image, onLoad: onLoad, loaded: loaded,
-    frame: frame, plaque: plaque, setLabels: setLabels, landscape: landscape,
+    plaque: plaque, setLabels: setLabels, landscape: landscape,
+    atlas: function () { return atlas; },
+    changes: function () { return changes; },
     FRAME_RGB: FRAME_RGB, PLAQUE_RGB: PLAQUE_RGB, LIKED_RGB: LIKED_RGB
   };
   list = FG.PAINTINGS || [];

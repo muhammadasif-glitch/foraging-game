@@ -339,22 +339,34 @@
     return {w: c.width, h: c.height, data: d.data};
   }
 
-  /* The food of a room as the 3D view's picture: {w, h, data}, 160 x 120,
-   * the food standing on the bottom edge. */
+  /* Pictures kept: the most of the food at its levels (they are big). */
+  var SIDE_KEPT = 24, sides = [];
+
+  /* The food of a room as the 3D view's picture: {w, h, canvas}, 160 x 120
+   * drawn SIDE_SCALE times as fine (sharp near), the food standing on the
+   * bottom edge. */
+  var SIDE_SCALE = 3;
   function sideView(kind, level) {
     var lv = Math.round(Math.max(0, Math.min(1, level)) * 100);
     var k = "s" + kind + lv;
     if (!kept[k]) {
+      sides.push(k);
+      if (sides.length > SIDE_KEPT) {
+        delete kept[sides.shift()];
+      }
       var c = document.createElement("canvas");
-      c.width = 160;
-      c.height = 120;
+      c.width = 160 * SIDE_SCALE;
+      c.height = 120 * SIDE_SCALE;
       var g = c.getContext("2d");
+      g.scale(SIDE_SCALE, SIDE_SCALE);
       if (kind === "bread") {
         breadSide(g, 34, 108, 84, lv / 100);
       } else {
         cheeseSide(g, 80, 62, 62, lv / 100);
       }
-      kept[k] = pixels(c);
+      // the canvas itself: copying its pixels out (and back in) took longer
+      // than drawing it, at every level the food goes through
+      kept[k] = {w: c.width, h: c.height, canvas: c};
     }
     return kept[k];
   }
@@ -388,9 +400,11 @@
       var font = "bold 40px ui-sans-serif, system-ui, sans-serif";
       g.font = font;
       var w = Math.ceil(g.measureText(text).width) + 36 + 64;
-      c.width = w;
-      c.height = 64;
+      // twice as fine, to be sharp near
+      c.width = w * 2;
+      c.height = 128;
       g = c.getContext("2d");
+      g.scale(2, 2);
       g.fillStyle = "#f4f6fa";
       g.strokeStyle = "#1d2633";
       g.lineWidth = 4;
@@ -401,7 +415,7 @@
       g.font = font;
       g.textBaseline = "middle";
       g.fillText(text, 74, 34);
-      kept[k] = pixels(c);
+      kept[k] = {w: c.width, h: c.height, canvas: c};
     }
     return kept[k];
   }

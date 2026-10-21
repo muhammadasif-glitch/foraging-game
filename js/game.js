@@ -87,6 +87,16 @@
   // a frame this long (ms) or longer is counted as this long for looking
   // (after the page was hidden, for example)
   var LONGEST_FRAME_MS = 250;
+  // looking at a painting (3D): standing (slower than TILT_STILL tiles a
+  // second, turning slower than TILT_TURN radians a second) before a
+  // painting up to TILT_FAR tiles away, the view tilts up until the middle
+  // of the painting is in the middle of the screen (the horizon at most
+  // TILT_MOST below the middle), and, through the eyes, steps back (at most
+  // BACK_MOST tiles, never into a wall) until the painting and its plaque
+  // fit on the screen with FIT room to spare; in about TILT_IN_S, back in
+  // TILT_OUT_S. Only the view moves: the player stays where it is.
+  var TILT_STILL = 0.35, TILT_TURN = 0.35, TILT_FAR = 3.5, TILT_MOST = 0.42, TILT_IN_S = 0.45, TILT_OUT_S = 0.25;
+  var BACK_MOST = 1, FIT = 1.08;
 
   function $(id) {
     return document.getElementById(id);
@@ -189,7 +199,8 @@
     var facing0 = three ? facingOf(maze.legal(room).filter(function (m) { return m !== "STAY"; })[0]) : 0;
     var start = Wd.centre(M, room);
     var scene = {maze: M, x: start[0], y: start[1], angle: facing0 * QUARTER, facing: facing0, heading: 0,
-      lit: null, light: new Float32Array(M.W * M.H), food: [], here: null, crumbs: [], bob: 0, sway: 0,
+      lit: null, light: new Float32Array(M.W * M.H), food: [], here: null, crumbs: [], bob: 0, sway: 0, tilt: 0,
+      back: 0,
       eye: MOUSE ? FG.mouse.EYE : 0.5, camera: CAMERA, cam: null,
       mouse: MOUSE ? {phase: 0, move: 0, t: 0, eat: false, turn: 0} : null, prints: [], now: 0};
     var eaten = 0;
@@ -220,7 +231,8 @@
     var STOP_FULL = s.stomach.when_full !== "keep";
     var COUNT_MOVES = s.count_steps !== "all";
     var TRACK_MS = s.track_ms || 0;
-    var track = {every_ms: TRACK_MS, fields: ["t", "x", "y", "angle", "step", "look", "look_d", "look_share", "music"],
+    var track = {every_ms: TRACK_MS,
+      fields: ["t", "x", "y", "angle", "step", "look", "look_d", "look_share", "music", "tilt", "back"],
       rows: []};
     var nextTrack = null;         // when the next place of the player is recorded (performance.now)
     var lastBump = -1e9;
@@ -1647,6 +1659,51 @@
         scene.cam = FG.mouse.camera(scene.x, scene.y, scene.angle, b);
       }
 
+      /* How far the view can step back from the player, looking the way it
+       * looks, before it comes near a wall (at most BACK_MOST). */
+      function roomBehind() {
+        var cx = -Math.cos(scene.angle), cy = -Math.sin(scene.angle);
+        for (var b = 0.05; b <= BACK_MOST + 0.2; b += 0.05) {
+          var x = Math.floor(scene.x + cx * b), y = Math.floor(scene.y + cy * b);
+          if (x < 0 || y < 0 || x >= M.W || y >= M.H || M.kind[y * M.W + x] === Wd.WALL) {
+            return Math.max(0, Math.min(BACK_MOST, b - 0.2));
+          }
+        }
+        return BACK_MOST;
+      }
+
+      /* Looking at the painting in the middle of the view while the player
+       * stands before it (TILT_*): up to it, and back from it when it is too
+       * near to be seen whole; as before on walking or turning. */
+      function updateTilt(dt) {
+        var wantTilt = 0, wantBack = 0;
+        var still = Math.hypot(vx, vy) < TILT_STILL && Math.abs(omega) < TILT_TURN && !ending;
+        var lk = still && gallery && g.renderer.look ? g.renderer.look() : null;
+        if (lk && lk.d > 0.05 && lk.d <= TILT_FAR) {
+          var D = ART.layout(gallery.pics[lk.place]);
+          if (!BEHIND) {
+            var c = $("c3d"), ar = c && c.clientHeight ? c.clientWidth / c.clientHeight : 16 / 9;
+            var fov = Math.tan(33 * Math.PI / 180) * ar / (4 / 3);
+            var fw = (gallery.likes ? D.qx1 : D.fx1) - D.fx0, fh = D.fv1 - D.fv0;
+            wantBack = Math.min(roomBehind(), Math.max(0, Math.max(fh * FIT, fw * FIT / (2 * fov)) - lk.d));
+          }
+          // (lk.d is from the player; the camera is further away)
+          var eye = scene.cam ? scene.cam.eye : scene.eye;
+          var d = lk.d + (scene.cam ? scene.cam.back : Math.max(scene.back, wantBack));
+          wantTilt = Math.max(0, Math.min(TILT_MOST, (1 - (D.fv0 + D.fv1) / 2 - eye) / d));
+        }
+        var ease = function (now, want) {
+          var t = now + (want - now) * (1 - Math.exp(-dt * 3 / (want > now ? TILT_IN_S : TILT_OUT_S)));
+          return Math.abs(want - t) < 1e-4 ? want : t;
+        };
+        var tilt = ease(scene.tilt, wantTilt), back = ease(scene.back, wantBack);
+        if (tilt !== scene.tilt || back !== scene.back) {
+          scene.tilt = tilt;
+          scene.back = back;
+          dirty = true;
+        }
+      }
+
       function frame(ts) {
         if (over) {
           return;
@@ -1668,6 +1725,9 @@
         }
         if (BEHIND) {
           updateCamera(dt);
+        }
+        if (three) {
+          updateTilt(dt);
         }
         if (shownAt !== null && !ending && IDLE_MS) {
           if (isDown("STAY")) {
@@ -1697,7 +1757,8 @@
           track.rows.push([round(REC.now(), 1), round(scene.x, 2), round(scene.y, 2),
             three ? degrees(scene.angle) : null, t, lk ? lk.place : null, lk ? round(lk.d, 2) : null,
             lk ? round(lk.share, 3) : null,
-            playingNow ? round(GRAM.loudness(Math.hypot(scene.x - musicAt[0], scene.y - musicAt[1])), 2) : null]);
+            playingNow ? round(GRAM.loudness(Math.hypot(scene.x - musicAt[0], scene.y - musicAt[1])), 2) : null,
+            three ? round(scene.tilt, 3) : null, three ? round(scene.back, 3) : null]);
           nextTrack = (nextTrack === null || now - nextTrack >= TRACK_MS ? now : nextTrack) + TRACK_MS;
         }
         if (ending && now - ending.t0 >= END_MS) {

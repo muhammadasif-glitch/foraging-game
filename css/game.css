@@ -36,6 +36,15 @@ body {
   display: block;
 }
 
+/* the mouse over the 3D view drawn by the graphics card (js/gl3d.js) */
+#stage canvas.over3d {
+  pointer-events: none;
+}
+
+#c3d[hidden] + canvas.over3d {
+  display: none;
+}
+
 #stage.shake {
   animation: shake 180ms ease-in-out;
 }

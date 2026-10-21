@@ -6,7 +6,9 @@
  * every file as a test (TEST_ in front of its name), ?send=0 sends nothing
  * (the files are printed to the browser console), ?set.<key>=<value>
  * changes a setting of every game, for trying things out, and ?edit=1 adds
- * the maze editor to the first page (js/editor.js; its files are tests).
+ * the maze editor to the first page (js/editor.js; its files are tests), ?gl=0
+ * draws the 3D view by ray casting rather than with the graphics card, and
+ * ?gl=1 with WebGL also where the processor draws it (for the checks).
  *
  * The team's mazes (js/my_mazes.js, see js/maze_tools.js) come after the
  * mazes of settings.js on the first page, for every player.
@@ -24,9 +26,9 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "2.5.0";
+  FG.VERSION = "2.5.1";
   var FORMAT = "foraging-game";
-  var FORMAT_VERSION = 7;
+  var FORMAT_VERSION = 8;
   var TRIAL_TYPE = "foraging-game";
   // keys sooner than this after the first page or the end of a game appear
   // are taken as left over from the screen before
@@ -208,7 +210,10 @@
     }
     FG.datapipe.flush();
 
-    var views = {"2d": FG.view2d.create($("c2d")), "3d": FG.view3d.create($("c3d"))};
+    // the 3D view drawn by the graphics card, unless the link says ?gl=0 (or
+    // there is none)
+    var views = {"2d": FG.view2d.create($("c2d")),
+      "3d": FG.view3d.create($("c3d"), {gl: {"0": "off", "1": "always"}[p.get("gl")] || "auto"})};
     var current = null;           // the view on the screen
     var scene = null;             // what it shows
     var playing = false, failed = false, games = 0;

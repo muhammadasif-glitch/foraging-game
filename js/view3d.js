@@ -163,12 +163,14 @@
   View.prototype.renderInfo = function (from) {
     var c = this.costs.slice().sort(function (a, b) { return a - b; });
     var q = function (f) { return c.length ? Math.round(c[Math.floor(f * (c.length - 1))] * 100) / 100 : null; };
-    return {levels: LEVELS.slice(), screen: {width: this.W, height: this.H, pixel_ratio: this.dpr},
+    return {renderer: "canvas", gpu: null, webgl: this.webgl || null, levels: LEVELS.slice(),
+      screen: {width: this.W, height: this.H, pixel_ratio: this.dpr},
       at_start: this.atMark || null, level: this.level, width: this.rw, height: this.rh,
       changes: this.changes.slice(from || 0),
       draw_ms: {median: q(0.5), p90: q(0.9), drawings: c.length,
         ray_casting: this.costBuf === null ? null : Math.round(this.costBuf * 100) / 100,
-        over: this.costOver === null ? null : Math.round(this.costOver * 100) / 100}};
+        over: this.costOver === null ? null : Math.round(this.costOver * 100) / 100},
+      frame_ms: null};
   };
 
   /* From now on (a game starts): returns the mark for renderInfo. */
@@ -264,14 +266,16 @@
     var fov = Math.tan(33 * Math.PI / 180) * (w / h) / (4 / 3);
     var planeX = -dirY * fov, planeY = dirX * fov;
     var sway = scene.sway || 0, eye = scene.eye || 0.5;
-    var px = scene.x - dirY * sway, py = scene.y + dirX * sway;
-    var half = h * (scene.horizon || 0.5) + (scene.bob || 0) * h;
+    // through the eyes, stepped back to see a near painting whole (scene.back)
+    var stepBack = scene.back || 0;
+    var px = scene.x - dirY * sway - dirX * stepBack, py = scene.y + dirX * sway - dirY * stepBack;
+    var half = h * ((scene.horizon || 0.5) + (scene.tilt || 0)) + (scene.bob || 0) * h;
     var cam = scene.camera === "behind" ? scene.cam : null;
     if (cam) {
       px = cam.x;
       py = cam.y;
       eye = cam.eye;
-      half = h * cam.horizon;
+      half = h * (cam.horizon + (scene.tilt || 0));
     }
     this.front = [];
     var x, y, o, L, f, f0, f1, f2, r, gg, bb;
@@ -607,7 +611,33 @@
    * are drawn: column by column of the screen, columns of nearly the same
    * height drawn together (MERGE_PX), then their light and fog over them.
    * Their plaques can be clicked (hits). */
-  var MERGE_PX = 0.6, MERGE_MOST = 96;
+  var MERGE_PX = 0.6, MERGE_SHARE = 0.006, MERGE_MOST = 96;
+
+  /* The picture pic for px pixels high on the screen: itself, or a copy
+   * halved (and halved again) down to no less than px, made once: drawing
+   * many strips from a picture far larger than they are costs the most. */
+  var smaller = typeof WeakMap === "function" ? new WeakMap() : null;
+  function sourceFor(pic, px) {
+    var k = 1;
+    while (pic.height / (k * 2) >= px * 1.15 && k < 8) {
+      k *= 2;
+    }
+    if (k === 1 || !smaller) {
+      return pic;
+    }
+    var kept = smaller.get(pic) || {};
+    if (!kept[k]) {
+      var c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(pic.width / k));
+      c.height = Math.max(1, Math.round(pic.height / k));
+      var g = c.getContext("2d");
+      g.imageSmoothingQuality = "high";
+      g.drawImage(pic, 0, 0, c.width, c.height);
+      kept[k] = c;
+      smaller.set(pic, kept);
+    }
+    return kept[k];
+  }
 
   View.prototype.paintings = function (g, hits) {
     var c = this.camera, W = this.W, H = this.H, rw = this.rw, rh = this.rh, colPlace = this.colPlace;
@@ -621,6 +651,7 @@
       if (!pic) {
         return;
       }
+      pic = sourceFor(pic, n.px * (D.fv1 - D.fv0) / (D.pv1 - D.pv0));
       var cw = pic.width, ch = pic.height;
       var liked = !!(gal && gal.liked && gal.liked[n.k]);
       var plaque = likes ? A.plaque(liked) : null;
@@ -665,10 +696,13 @@
         for (var i = 0; i < cols.length;) {
           var x0 = cols[i][0], t0 = cols[i][2], lh0 = H / t0, top0 = half - (1 - eye - v0) * lh0;
           var hh0 = (v1 - v0) * lh0;
+          // (a big picture seen at a slant: strips a little longer, so that
+          // there are not hundreds of them)
+          var tol = Math.max(MERGE_PX, hh0 * MERGE_SHARE);
           var j = i + 1;
           while (j < cols.length && cols[j][0] === cols[j - 1][0] + sw && cols[j][0] - x0 < MERGE_MOST) {
             var lh = H / cols[j][2], top = half - (1 - eye - v0) * lh;
-            if (Math.abs(top - top0) > MERGE_PX || Math.abs((v1 - v0) * lh - hh0) > MERGE_PX) {
+            if (Math.abs(top - top0) > tol || Math.abs((v1 - v0) * lh - hh0) > tol) {
               break;
             }
             j++;
@@ -811,7 +845,8 @@
       if (d < 0.08) {
         return {x: 0, y: 0, k: 0, d: d};
       }
-      return {x: W / 2 * (1 + s / (fov * d)), y: H * cam.horizon + (cam.eye - u) * H / d, k: H / d, d: d};
+      return {x: W / 2 * (1 + s / (fov * d)), y: H * (cam.horizon + (scene.tilt || 0)) + (cam.eye - u) * H / d,
+        k: H / d, d: d};
     };
     g.save();
     // only where no wall stands between the camera and the mouse
@@ -853,6 +888,25 @@
     return best ? {kind: best.kind, place: best.place === undefined ? null : best.place, d: best.d} : null;
   };
 
-  FG.view3d = {create: function (canvas) { return new View(canvas); }, LEVELS: LEVELS, LOOK_FAR: LOOK_FAR,
-    NEAR_PX: NEAR_PX};
+  /* The 3D view on canvas: drawn by the graphics card (js/gl3d.js) where
+   * the browser has one, else by the ray casting here. opts.gl: "auto",
+   * "off" (always the ray casting: the link ?gl=0) or "always" (WebGL also
+   * when the processor draws it: ?gl=1, for the checks). */
+  function create(canvas, opts) {
+    var how = opts && opts.gl || "auto";
+    if (how !== "off" && FG.gl3d) {
+      var g = FG.gl3d.create(canvas, how === "always");
+      if (g) {
+        return g;
+      }
+    }
+    var v = new View(canvas);
+    v.webgl = how === "off" ? "off" : FG.gl3d ? FG.gl3d.refused || "none" : "none";
+    return v;
+  }
+
+  FG.view3d = {create: create, View: View, LEVELS: LEVELS, LOOK_FAR: LOOK_FAR, NEAR_PX: NEAR_PX,
+    fog: fog, lightOf: lightOf, canvasOf: canvasOf, MOUSE_AHEAD: MOUSE_AHEAD, FOOD_SIZE: FOOD_SIZE,
+    colours: {SKY_TOP: SKY_TOP, SKY_LOW: SKY_LOW, FOG: FOG, FOG_FAR: FOG_FAR, DARK_WALL: DARK_WALL,
+      DARK_FLOOR: DARK_FLOOR, CORRIDOR_WALL: CORRIDOR_WALL}};
 })(typeof window !== "undefined" ? window : globalThis);

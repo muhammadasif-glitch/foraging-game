@@ -1,5 +1,42 @@
 # Changes
 
+## 2.5.1
+
+- The graphics card draws the 3D view (WebGL, `js/gl3d.js`) at the
+  screen's own pixels (up to 2 for each pixel of the page), with smooth
+  edges, walls and floors 4 times as fine as before and sharp far down the
+  corridors; the same cameras, colours, light, fog and pictures as before.
+  Only when the screen frames come slowly (a weak graphics card on a large
+  screen) does it go down to fewer pixels, and up again when they come
+  fast. A picture coming in is handed to the graphics card at most 1 a
+  frame, so the game does not stop for it.
+- Browsers without WebGL, or whose WebGL is drawn by the processor (slower
+  there than the ray casting), and the link `?gl=0`, keep the ray casting
+  of 2.5.0. `?gl=1` draws with WebGL also by the processor (for the checks).
+- Larger paintings: up to 80% of the height of the wall (0.8 tiles instead
+  of 0.5), between the moulding and the skirting board, each in its own
+  shape (never stretched or cut), its frame drawn at the picture's own
+  pixels; very wide ones up to 1.5 tiles. The Like plaque stays beside the
+  frame, half way up the wall. The game's own landscapes
+  (`game.paintings: false`) keep their size.
+- Standing before a painting (3D), the view looks up at it until its middle
+  is in the middle of the screen, and through the eyes it steps back (at
+  most 1 tile, never into a wall) when the painting is too near to be seen
+  whole; walking or turning brings the view back. Only the view moves: the
+  player stays where it is, and the steps, the rules and the looking are as
+  before (the painting looked at is still the one in the middle of the
+  view, its distance from the player).
+- The food, the signs, the gramophone and its notes are drawn 2 to 3 times
+  as fine.
+- The ray casting (no WebGL) draws a big near painting from a copy halved
+  to about the size it needs, in fewer strips when it is seen at a slant:
+  about 1 ms instead of up to 140 ms on a slow computer.
+- File format 8: the track has `tilt` and `back` (how far the view looks up
+  and steps back); `render` has `renderer` (`webgl2`, `webgl` or
+  `canvas`), `gpu`, `webgl` (why the ray casting drew) and `frame_ms`.
+- Nothing changes in the rules, the steps, the food or the energy: the
+  games replay in the model as before.
+
 ## 2.5.0
 
 - Paintings: 641 famous paintings in the public domain, from Wikimedia

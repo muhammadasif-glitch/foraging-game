@@ -134,9 +134,12 @@ Every game hangs the paintings anew: each wall of each room gets a different
 painting, drawn at random from all 641 (`game.paintings`; see Paintings
 below), so the 4 paintings of a room are different and no painting hangs
 twice (the biggest maze the editor makes, 140 rooms, has 560 walls). A
-painting keeps its own shape: it is fitted into at most 1.15 x 0.5 tiles (a
-wall is 1 tile high). With `game.paintings: false` the game paints its own
-landscapes instead, the same one for the same room colour, as before 2.5.0.
+painting keeps its own shape (never stretched or cut): in its frame it is
+up to 80% of the height of the wall (0.8 tiles, between the moulding and the
+skirting board; a wall is 1 tile high), very wide ones up to 1.5 tiles
+across. With `game.paintings: false` the game paints its own landscapes
+instead, the same one for the same room colour, as before 2.5.0 (and as
+small as then).
 
 **Liking a painting** (3D, `game.likes`). Beside every frame hangs a small
 plaque with a thumb up and "Like". L likes the painting in the middle of the
@@ -154,6 +157,15 @@ track (every 100 ms) has it, and the file sums it up for every painting seen:
 how long it was looked at, in how many looks, how long it was on the screen
 at all, when it was first seen and first looked at, how near the player
 came, and whether it was liked at the end (`looks`).
+
+**Looking up** (3D). A player who stands before a painting (up to 3.5 tiles
+away) sees the view look up at it until the middle of the painting is in the
+middle of the screen, as a person raises the head. Through the eyes, when the
+painting is too near to be seen whole, the view also steps back (at most 1
+tile, never into a wall) until the painting and its plaque fit on the screen.
+Walking or turning brings the view back. Only the view moves: the player
+stays where it is, so the steps and the distances recorded are as without it.
+The track has both (`tilt`, `back`).
 
 **The music room** (both views, `game.music_room`). 1 room of every game,
 never the start room or a food room, has a gramophone in its middle (the
@@ -173,18 +185,32 @@ game's own quiet music rests. P when the sound is off turns the sound on (M
 mutes the gramophone too). Like the likes, the music costs nothing and is
 not a step. Every record played is recorded (`music`).
 
-**Sharpness** (3D). The game draws the 3D view as sharp as the computer can
-draw it quickly: its ray casting draws a picture of its own at 1 of 6 levels
-of the screen's pixels (100%, 84%, 71%, 59%, 45% and 32% across), the
-sharpest of at most 520,000 pixels at first, a level down when a drawing
-takes longer than 13 ms, a level up when the level above would take less
-than 10.5 ms (a level it had to leave is not tried again for 30 s). The
+**Sharpness** (3D). The graphics card draws the 3D view (WebGL,
+`js/gl3d.js`) at the screen's own pixels (at most 2 for each pixel of the
+page), with smooth edges, and with the floor and the walls sharp to the far
+end of a corridor; the paintings come from their own images (512 pixels, or
+1600 pixels in the room the player is in). It shows the same maze as before:
+the same cameras, colours, light, fog, paintings, food, signs and gramophone,
+and the mouse drawn over it. Only when the screen frames come more than 34
+ms apart while the player moves (a weak graphics card on a large screen)
+does the picture go down a level (84%, 71%, 59%, 45% and 32% of the screen's
+pixels across), and up again after 12 s of frames under 20 ms apart (a level
+it had to leave is not tried again for 60 s).
+
+A browser without WebGL, or whose WebGL is drawn by the processor (a
+computer without a graphics card the browser may use: slower there than the
+ray casting), and the link `?gl=0`, get the ray casting of before
+(`js/view3d.js`): it draws a picture of its own at 1 of the same 6
+levels, the sharpest of at most 520,000 pixels at first, a level down when a
+drawing takes longer than 13 ms, a level up when the level above would take
+less than 10.5 ms (a level it had to leave is not tried again for 30 s). The
 paintings near enough to be at least 90 pixels high on the screen, the food,
 the signs, the gramophone and the mouse are drawn over it at the screen's
-own pixels, so they stay sharp at every level: a painting from its 512 pixel
-copy, or from its 1600 pixel copy for the room the player is in. The file
-records the screen, the level at the start, every change and the drawing
-times (`render`).
+own pixels, so they stay sharp at every level.
+
+The file records which of the 2 drew the game (`webgl2`, `webgl` or
+`canvas`) and the graphics card, the screen, the level at the start, every
+change and the drawing times (`render`).
 
 **The mouse** (`game.player: "mouse"`). In 2D it is seen from above: its
 feet move in diagonal pairs with every step, its tail swings, its whiskers
@@ -331,6 +357,8 @@ rooms next to it, and the 1600 pixel copies of the room the player is in.
 | `?send=0` | sends and keeps nothing; the files are printed to the browser console |
 | `?set.steps=30` | changes a setting of every game, for trying things out (`?set.food.rule=exponential`, ...); recorded in the files |
 | `?edit=1` | adds the maze editor to the first page (see below); its files are tests (`TEST_`) |
+| `?gl=0` | the 3D view drawn by the ray casting instead of the graphics card (as a browser without WebGL has it) |
+| `?gl=1` | the 3D view drawn with WebGL also where the processor draws it (for the checks, whose browser has no graphics card) |
 
 ## The maze editor
 
@@ -450,7 +478,7 @@ Every file has at its top:
 | Key | |
 |---|---|
 | `trial_type` | `foraging-game` (for DataPipe's validation) |
-| `format`, `format_version`, `file` | `foraging-game`, 7, and `game` or `partial game` |
+| `format`, `format_version`, `file` | `foraging-game`, 8, and `game` or `partial game` |
 | `game_version` | the version of this code |
 | `player`, `player_code` | the player code (8 hex digits), and whether it was `new` or `kept in this browser` |
 | `session_id`, `session_started`, `test` | a random id of the page's visit, when it opened (UTC), test or not |
@@ -485,7 +513,7 @@ adds up to about one frame (`frame_ms`).
 | `walks_back` | every time the player went out into a door or corridor and back into the same room: `{left_at, back_at, step (steps taken before), room, toward, move, furthest (the share of the way to the next room's floor reached)}` |
 | `maze_def` | the maze as the game had it: `rooms` (colour numbers, -1 for no room) and, for a maze of the team, `team`: its drawing (`shape`), `start`, `food` (cheese and bread rooms), `moves`, `saved_by`, `saved_at` |
 | `started`, `started_at`, `ended` | `ended`: `{how, step, moves, idle_stays, space_stays, at}`: how is `finished`, `starved` or `page closed` (then `at` is when the page closed); `step` the steps of the world (moves and stays), `moves` the moves, `idle_stays` and `space_stays` the stays standing still and by Space |
-| `track` | the place and the view of the player every `track_ms` (100) during the game: `{every_ms, fields, rows}`, a row `[t, x, y, angle, step, look, look_d, look_share, music]` taken at the first screen frame from each mark on (so about 100 ms apart, more while the tab is hidden): `x`, `y` in tiles from the top left of the maze (a room is 4 tiles, a corridor 3, `x` to the right, `y` down), `angle` the way the player looks in degrees (0 east, 90 south; null in 2D), `step` the steps taken by then; `look` the place of the painting in the middle of the view (3D, see `gallery`; null when none is, and in 2D), `look_d` how far away it is (tiles), `look_share` how much of the width of the screen it covers (0 to 1); `music` how loud the gramophone is where the player is (0 to 1; null when it does not play). Null when `track_ms` is 0. Not in the short form |
+| `track` | the place and the view of the player every `track_ms` (100) during the game: `{every_ms, fields, rows}`, a row `[t, x, y, angle, step, look, look_d, look_share, music, tilt, back]` taken at the first screen frame from each mark on (so about 100 ms apart, more while the tab is hidden): `x`, `y` in tiles from the top left of the maze (a room is 4 tiles, a corridor 3, `x` to the right, `y` down), `angle` the way the player looks in degrees (0 east, 90 south; null in 2D), `step` the steps taken by then; `look` the place of the painting in the middle of the view (3D, see `gallery`; null when none is, and in 2D), `look_d` how far away it is (tiles), `look_share` how much of the width of the screen it covers (0 to 1); `music` how loud the gramophone is where the player is (0 to 1; null when it does not play); `tilt` how far the view looks up (the horizon that far below the middle of the screen, as a share of its height: 0 to 0.42; null in 2D), `back` how far the view stepped back from the player (tiles, 0 to 1; 0 behind the mouse; null in 2D). Null when `track_ms` is 0. Not in the short form |
 | `steps` | 1 row per step, step 0 being the start (below) |
 | `turns` | 3D: every turn, `{t, step (steps taken before it), key, from, to, from_angle, to_angle, ms, held_ms}`: `from` and `to` are the doors faced (`RIGHT`, `DOWN`, `LEFT`, `UP`), the angles in degrees (0 east, 90 south), `held_ms` how long the key was held. A turn still going on when a step is taken ends there (`split`), and the rest is a turn of its own (`continued`, with no key press of its own) |
 | `gallery_seed` | the seed the paintings were hung and the music room and its records picked with |
@@ -494,7 +522,7 @@ adds up to about one frame (`frame_ms`).
 | `likes` | 3D: every like and un-like: `{t, step (steps taken before it), place, painting, room, side, liked, by, d}`: `liked` true for a like, false when it was taken back, `by` `L` (the painting in the middle of the view) or `click` (its plaque), `d` how far away the painting was (tiles). Null in 2D |
 | `clicks` | every click on the view during the game: `{t, step, x, y (CSS pixels on the view), on (plaque, gramophone or null), place, outcome (like, unlike, music on, music off, ignored: not at the gramophone, nothing)}` |
 | `music` | the music room: `{room, pieces (the records in the order they come), plays}`, a play `{piece, started_at, step, by (P or click), stopped_at, stopped_by (P, click, ended, game over, or failed: why), played_s (seconds of it played)}`. Null with `game.music_room` false |
-| `render` | 3D: the sharpness: `{levels, screen {width, height, pixel_ratio}, at_start {level, width, height}, level, width, height (at the end), changes, draw_ms}`, a change `{t, level, scale, width, height, why (slow, fast, window size, start), draw_ms}`, `draw_ms` the median and 90th percentile time of a drawing, how many drawings, and the ray casting's and the rest's share at the end. Null in 2D |
+| `render` | 3D: the sharpness: `{renderer, gpu, webgl, levels, screen {width, height, pixel_ratio}, at_start {level, width, height}, level, width, height (at the end), changes, draw_ms, frame_ms}`; `renderer` is `webgl2` or `webgl` (the graphics card drew the view) or `canvas` (the ray casting), `gpu` the graphics card as the browser names it (null when it does not say, and for `canvas`), `webgl` why the ray casting drew (`none`: the browser has no WebGL, `software`: only WebGL drawn by the processor, `off`: the link `?gl=0`; null for WebGL); a change `{t, level, scale, width, height, why (slow, fast, window size, start), draw_ms (canvas) or frame_ms (WebGL)}`; `draw_ms` the median and 90th percentile time the page took for a drawing, how many drawings, and (canvas) the ray casting's and the rest's share at the end; `frame_ms` (WebGL) the median and 90th percentile time from a drawing to the next screen frame (long when the graphics card is slow), and how many. Null in 2D |
 | `result` | the game as a model run: `settings` (world, run, satiety) and `rows` as in `forage.v3.record`, for `forage.lab.measures.of_run`; laid over the defaults of `forage.v3.settings` they are valid settings of a model run |
 
 A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
