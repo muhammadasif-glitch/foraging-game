@@ -54,6 +54,15 @@
       "moves": 120,
       "saved_by": "main",
       "saved_at": "2026-10-20T15:35:07.645Z"
+    },
+    "test3": {
+      "shape": [
+        ". . B . . . . .",
+        ". S . C . # # #"
+      ],
+      "moves": 120,
+      "saved_by": "main",
+      "saved_at": "2026-10-21T09:10:29.651Z"
     }
   };
 })(typeof window !== "undefined" ? window : globalThis);
