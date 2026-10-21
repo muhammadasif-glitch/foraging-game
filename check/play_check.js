@@ -19,7 +19,8 @@
  * switched with M and with the button; DataPipe that cannot
  * hand out a condition; DataPipe down, then the file sent on the next visit;
  * a tab closed in the middle of a game, then the partial game sent; the page
- * opened from a file.
+ * opened from a file; the mouse with the camera behind it and through its
+ * eyes (the camera never in or behind a wall), and the old arrow player.
  */
 "use strict";
 var fs = require("fs");
@@ -43,6 +44,7 @@ globalThis.window = globalThis;
 require(path.join(ROOT, "js", "mazes.js"));
 require(path.join(ROOT, "js", "rules.js"));
 require(path.join(ROOT, "js", "world.js"));
+require(path.join(ROOT, "js", "mouse.js"));
 require(path.join(ROOT, "js", "maze_tools.js"));
 require(path.join(ROOT, "settings.js"));
 require(path.join(ROOT, "js", "random.js"));
@@ -53,6 +55,7 @@ var SETTINGS = globalThis.FG.SETTINGS;
 var FACING = ["RIGHT", "DOWN", "LEFT", "UP"];
 
 var problems = [];
+var notes = [];                 // things worth knowing, not problems
 function expect(ok, what) {
   if (!ok) {
     problems.push(what);
@@ -180,6 +183,44 @@ function ui(page) {
   });
 }
 
+/* A view of the first page in 3D: 3d (through the eyes) or 3d_behind. */
+function is3d(view) {
+  return view === "3d" || view === "3d_behind";
+}
+
+/* The 3D camera of a game: as chosen on the first page (behind the mouse
+ * only for the mouse), and behind the mouse never in a wall or with a wall
+ * between it and the mouse, at any place of the track. */
+function checkCamera(where, f) {
+  var g = f.game;
+  if (g.view !== "3d") {
+    expect(g.camera === null, where + ": no camera in 2D, got " + g.camera);
+    return;
+  }
+  var behind = f.menu.view === "3d_behind" && g.settings.player === "mouse";
+  expect(g.camera === (behind ? "behind" : "eyes"), where + ": camera " + g.camera);
+  if (!behind || !g.track || !globalThis.FG.MAZES[g.maze]) {
+    return;
+  }
+  var M = Wd.build(g.maze), bad = 0, faded = 0;
+  g.track.rows.forEach(function (p) {
+    var a = p[3] * Math.PI / 180, back = globalThis.FG.mouse.cameraBack(M, p[1], p[2], a);
+    var cam = globalThis.FG.mouse.camera(p[1], p[2], a, back);
+    for (var d = 0; d <= back + 1e-9; d += 0.02) {
+      var tx = Math.floor(p[1] - Math.cos(a) * d), ty = Math.floor(p[2] - Math.sin(a) * d);
+      if (tx < 0 || ty < 0 || tx >= M.W || ty >= M.H || M.kind[ty * M.W + tx] === Wd.WALL) {
+        bad += 1;
+        break;
+      }
+    }
+    faded += cam.back < globalThis.FG.mouse.BACK - 0.5 ? 1 : 0;
+  });
+  expect(bad === 0, where + ": the camera behind the mouse in or behind a wall at " + bad + " of " +
+    g.track.rows.length + " places");
+  notes.push(where + ": camera behind the mouse, more than 0.5 tiles closer than usual at " + faded + " of " + g.track.rows.length +
+    " places");
+}
+
 /* Chooses view and maze on the first page and presses Enter. */
 async function choose(page, view, maze) {
   var views = SETTINGS.menu.views, mazes = SETTINGS.menu.mazes;
@@ -266,14 +307,14 @@ async function play(page, rnd, plan, opts) {
         await sleep(1300);
         await page.keyboard.press(" ");
         await sleep(30);
-        await page.keyboard.press(gp.view === "3d" ? "ArrowUp" : "ArrowRight");
+        await page.keyboard.press(is3d(gp.view) ? "ArrowUp" : "ArrowRight");
         await sleep(300);
         keys += 2;
         inGame += 1;
         continue;
       }
       var k;
-      if (gp.view === "3d") {
+      if (is3d(gp.view)) {
         var pick = rnd();
         k = s.here && pick < (opts.stay || 0.6) ? " " : pick < 0.62 ? "ArrowUp" : pick < 0.78 ? "ArrowLeft" :
           pick < 0.92 ? "ArrowRight" : pick < 0.96 ? "ArrowDown" : " ";
@@ -290,9 +331,9 @@ async function play(page, rnd, plan, opts) {
         inGame += 1;
         continue;
       }
-      var walking = k === "ArrowUp" || (gp.view === "3d" && k === "ArrowDown") ||
+      var walking = k === "ArrowUp" || (is3d(gp.view) && k === "ArrowDown") ||
         (gp.view === "2d" && k !== " " && k !== "x");
-      if (gp.view === "3d" && (k === "ArrowLeft" || k === "ArrowRight") && rnd() < 0.75) {
+      if (is3d(gp.view) && (k === "ArrowLeft" || k === "ArrowRight") && rnd() < 0.75) {
         // held, as a person turns to a door beside them (a tap turns a few degrees)
         await page.keyboard.down(k);
         await sleep(450 + Math.floor(rnd() * 350));
@@ -300,13 +341,13 @@ async function play(page, rnd, plan, opts) {
       } else if (walking) {
         // the player walks while the key is down: mostly a room or 2, now and
         // then a short way only, now and then on the slant (2D) or steering (3D)
-        var r2 = rnd(), far = gp.view === "3d" ? 1900 : 1000;
+        var r2 = rnd(), far = is3d(gp.view) ? 1900 : 1000;
         await page.keyboard.down(k);
         if (r2 < 0.12) {
           await sleep(far * 0.2);
         } else if (r2 < 0.3) {
           await sleep(far * 0.4);
-          var side = gp.view === "3d" ? (rnd() < 0.5 ? "ArrowLeft" : "ArrowRight") :
+          var side = is3d(gp.view) ? (rnd() < 0.5 ? "ArrowLeft" : "ArrowRight") :
             (k === "ArrowLeft" || k === "ArrowRight" ? (rnd() < 0.5 ? "ArrowUp" : "ArrowDown") :
               (rnd() < 0.5 ? "ArrowLeft" : "ArrowRight"));
           await page.keyboard.down(side);
@@ -325,15 +366,15 @@ async function play(page, rnd, plan, opts) {
       if (opts.fast && (k === " " || rnd() < 0.3)) {
         // a stay, and a key during it: that key must be ignored as busy
         if (k !== " ") {
-          await sleep(gp.view === "3d" ? 700 : 400);
+          await sleep(is3d(gp.view) ? 700 : 400);
           await page.keyboard.press(" ");
           keys += 1;
         }
         await sleep(30);
-        await page.keyboard.press(gp.view === "3d" ? "ArrowUp" : "ArrowRight");
+        await page.keyboard.press(is3d(gp.view) ? "ArrowUp" : "ArrowRight");
         keys += 1;
       }
-      await sleep(gp.view === "3d" ? (walking ? 650 : 480) + Math.floor(rnd() * 120) :
+      await sleep(is3d(gp.view) ? (walking ? 650 : 480) + Math.floor(rnd() * 120) :
         (walking ? 380 : 300) + Math.floor(rnd() * 80));
     }
     games += 1;
@@ -353,14 +394,16 @@ function roomOf(text) {
 function checkGameFile(name, f) {
   var where = name;
   var g = f.game;
-  expect(f.format === "foraging-game" && f.format_version === 5, where + ": format");
+  expect(f.format === "foraging-game" && f.format_version === 6, where + ": format");
   expect(f.trial_type === "foraging-game", where + ": trial_type");
   expect(/^[0-9a-f]{8}$/.test(f.player), where + ": player code " + f.player);
   expect(/^[0-9a-f]{12}$/.test(f.session_id), where + ": session id");
   expect(f.condition && typeof f.condition.how === "string", where + ": condition");
   expect(f.browser && f.browser.user_agent && f.browser.refresh_hz > 0, where + ": browser");
-  expect(f.menu && f.menu.view === g.view && f.menu.maze === g.maze && g.layout.maze === g.maze, where + ": menu choice");
+  expect(f.menu && is3d(f.menu.view) === (g.view === "3d") && f.menu.maze === g.maze && g.layout.maze === g.maze,
+    where + ": menu choice");
   var s = g.settings;
+  checkCamera(where, f);
   var steps = g.steps;
   var partial = /partial/.test(name);
   checkMazeDef(where, f);
@@ -640,6 +683,10 @@ function checkTrack(where, g) {
  * saves a maze just before the next write of js/my_mazes.js. */
 var GH_KEY = "github_pat_TEST_only";
 var PAGES_MS = 4000;
+// js/team_key.js before saving is set up (the repository's own file may hold
+// the team's real locked key)
+var NO_KEY = ["(function (root) {", "  var FG = root.FG = root.FG || {};", "  FG.TEAM_KEY = null;",
+  "})(typeof window !== \"undefined\" ? window : globalThis);", ""].join("\n");
 function githubStandIn(start) {
   var T = globalThis.FG.mazeTools;
   var st = {files: {}, live: {}, puts: [], n: 0, conflictOnce: false, conflicts: 0};
@@ -987,10 +1034,22 @@ function checkSaved(folder) {
       }
     }
     // walk on to the last move (stays do not use up moves), with a stay now
-    // and then; in 2D between 2 rooms only the arrows along the corridor walk
+    // and then; in 2D between 2 rooms only the arrows along the corridor walk.
+    // The arrows go round in turn; in 2D, after 8 rounds without a move they
+    // go round 1 later, as in some rooms the turn always reaches each corner
+    // with the arrow that does not lead out of it
     var arrows = view === "3d" ? ["ArrowUp"] : ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"];
+    var later = 0, movesLeft = null, since = 0;
     for (var w = 0; w < 120 && !(await ui(page)).end; w++) {
-      await hold(arrows[Math.floor(w / 2) % arrows.length], view === "3d" ? 1800 : 1500);
+      var left = await page.textContent("#steps");
+      if (left !== movesLeft) {
+        movesLeft = left;
+        since = w;
+      } else if (w - since >= 8) {
+        later += 1;
+        since = w;
+      }
+      await hold(arrows[(Math.floor(w / 2) + later) % arrows.length], view === "3d" ? 1800 : 1500);
       if (view === "3d" && w % 2) {
         await hold("ArrowLeft", 500);
       }
@@ -1140,7 +1199,7 @@ function checkSaved(folder) {
   // name refused; then a player plays the saved maze
   var T = globalThis.FG.mazeTools;
   var gh = githubStandIn({"js/my_mazes.js": T.fileText({broken_one: {shape: [". # .", "# # #", ". # ."], moves: 10,
-    saved_by: "X", saved_at: "2026-10-01T00:00:00.000Z"}})});
+    saved_by: "X", saved_at: "2026-10-01T00:00:00.000Z"}}), "js/team_key.js": NO_KEY});
   var tctx = await browser.newContext({viewport: {width: 1280, height: 900}});
   await gh.routes(tctx);
   var ed = await tctx.newPage();
@@ -1408,6 +1467,31 @@ function checkSaved(folder) {
   await octx.close();
 
   }
+  if (want("mouse")) {
+  // 11. the mouse: the camera behind it and through its eyes; then the old
+  // arrow player
+  var mo = await session("mouse", "?test=1&condition=linear_fast&set.steps=30", [
+    {view: "3d_behind", maze: "grid_4x4"}, {view: "3d", maze: "corridors_7x7"},
+    {view: "3d_behind", maze: "corridors_7x7"}, {view: "2d", maze: "holes_6x6"}
+  ], {seed: 31});
+  var mn = gameFiles(mo.files);
+  expect(mn.length === 4, "mouse: 4 files, got " + Object.keys(mo.files).join(" "));
+  mn.forEach(function (n) { checkGameFile(n, mo.files[n]); });
+  expect(mn.length === 4 && mo.files[mn[0]].game.camera === "behind" && mo.files[mn[1]].game.camera === "eyes" &&
+    mo.files[mn[2]].game.camera === "behind" && mo.files[mn[3]].game.camera === null, "mouse: the cameras as chosen");
+  save("mouse", mo.files);
+  await mo.context.close();
+  var ar = await session("mouse_arrow", "?test=1&condition=linear_fast&set.steps=12&set.player=arrow", [
+    {view: "2d", maze: "grid_4x4"}, {view: "3d", maze: "grid_6x6"}
+  ], {seed: 32});
+  var arn = gameFiles(ar.files);
+  expect(arn.length === 2 && arn.every(function (n) { return ar.files[n].game.settings.player === "arrow"; }),
+    "mouse_arrow: the arrow player, as set by the link");
+  arn.forEach(function (n) { checkGameFile(n, ar.files[n]); });
+  save("mouse_arrow", ar.files);
+  await ar.context.close();
+
+  }
   if (want("file")) {
   // 10. opened from a file, nothing sent
   var ctx = await browser.newContext();
@@ -1426,6 +1510,7 @@ function checkSaved(folder) {
   await browser.close();
   server.close();
   report.forEach(function (r) { console.log(r); });
+  notes.forEach(function (r) { console.log("  " + r); });
   console.log(problems.length ? problems.length + " problems:" : "no problems");
   problemKinds();
   problems.slice(0, 40).forEach(function (p) { console.log("  " + p); });

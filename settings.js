@@ -28,7 +28,9 @@
 
     // What the first page offers, in this order.
     menu: {
-      views: ["2d", "3d"],        // 2d: the maze from above; 3d: from inside
+      views: ["2d", "3d", "3d_behind"], // 2d: the maze from above; 3d: from inside, through the
+                                  // player's eyes; 3d_behind: 3D with the camera behind the mouse
+                                  // (game.player mouse). A study can list only 1 of them.
       // the mazes of the model; environments made with its
       // tools/make_environment.py come in through check/export_mazes.py
       mazes: ["grid_4x4", "grid_6x6", "grid_two_4x4", "ring_5x5", "holes_6x6", "corridors_7x7"]
@@ -47,6 +49,10 @@
                                   // (0: not recorded)
       sound: true,                // music and sounds when the session starts; the player
                                   // switches them with M or the button in the corner
+      player: "mouse",            // mouse: the player is a little mouse, with its patter of quick
+                                  // steps and paw prints; arrow: a disc with an arrow, as before 2.4.0
+      voice: true,                // with the mouse: its squeaks (a food room found, a wall, full)
+                                  // and sniffs (a new room)
       start_rooms: "random",      // random, a room such as "s00", or "environment": 1 of the start rooms
                                   // of the maze's environment file
       start_area: null,           // null: random start rooms anywhere; 4: only in rows and columns 0 to 3
@@ -105,9 +111,11 @@
         "<kbd>Enter</kbd> play &middot; <kbd>M</kbd> sound",
       view_2d: "From above",
       view_3d: "From inside",
+      view_3d_behind: "Behind the mouse",
       finished: "The game is over",
       starved: "You ran out of energy",
       eaten: "food eaten",
+      full_sign: "full: eat again after you walk out",
       again: "Press <kbd>Enter</kbd> to go back to the menu.",
       route: "Your way through the maze",
       saving: "Saving your game...",

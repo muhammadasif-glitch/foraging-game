@@ -85,8 +85,9 @@
     return scene.light ? scene.light[at] : (scene.lit[at] ? 1 : 0);
   }
 
-  /* scene: {maze, x, y, facing (0 east, 1 south, 2 west, 3 north), lit or
-   * light, food, here, crumbs} */
+  /* scene: {maze, x, y, facing (0 east, 1 south, 2 west, 3 north), heading,
+   * lit or light, food, here, crumbs; with the mouse: mouse (js/mouse.js),
+   * prints [{x, y, a, t0}] and now (performance.now())} */
   View.prototype.draw = function (scene) {
     var M = scene.maze;
     var f = this.fit(M), T = f.T;
@@ -159,6 +160,15 @@
       g.fillRect(cr.x * T - cs / 2, (cr.y - cr.z * 0.8) * T - cs / 2, cs, cs);
     });
 
+    var a = scene.heading !== undefined ? scene.heading : (scene.facing || 0) * Math.PI / 2;
+    if (scene.mouse && FG.mouse) {
+      (scene.prints || []).forEach(function (p) {
+        FG.mouse.print2d(g, p.x * T, p.y * T, p.a, T, 1 - (scene.now - p.t0) / FG.mouse.PRINT_MS);
+      });
+      FG.mouse.draw2d(g, scene.x * T, scene.y * T, a, T * FG.mouse.LENGTH, scene.mouse);
+      return;
+    }
+
     // the player
     var px = scene.x * T, py = scene.y * T, pr = Math.max(4, T * 0.42);
     g.fillStyle = "rgba(0,0,0,0.35)";
@@ -176,7 +186,6 @@
     g.beginPath();
     g.arc(px, py, pr * 0.42, 0, 2 * Math.PI);
     g.fill();
-    var a = scene.heading !== undefined ? scene.heading : (scene.facing || 0) * Math.PI / 2;
     g.fillStyle = "#0c1016";
     g.beginPath();
     g.moveTo(px + Math.cos(a) * pr * 1.55, py + Math.sin(a) * pr * 1.55);

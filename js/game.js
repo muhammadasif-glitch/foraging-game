@@ -59,6 +59,12 @@
   var SLIDE_TILES = 2, SLIDE_SPEED = 3;
   var END_MS = 700;                          // the last step, then the end of the game
   var BOB = 0.011, BOB_TILES = 3.6;          // the head bob: its height and its length
+  // the mouse (game.player "mouse", js/mouse.js): the length of its steps in
+  // tiles, the small, smooth rise and sway of its view in 3D (once every 2
+  // steps, so that the picture never shakes), the most paw prints in 2D, the
+  // least time between 2 squeaks, and how long it nibbles
+  var MOUSE_STEP = {"2d": 0.7, "3d": 0.6}, MOUSE_BOB = 0.0018, MOUSE_SWAY = 0.01;
+  var MAX_PRINTS = 60, SQUEAK_MS = 1200, EAT_MS = 900;
   var GROW_MS = 700, BITE_MS = 320;
   var LIGHT_MS = 450, HERE_MS = 400;         // new rooms coming into light, the food coming into view
   var QUARTER = Math.PI / 2;
@@ -139,6 +145,13 @@
     var stomach = new R.Stomach(s.stomach);
     var edges = [s.food.empty_below, s.food.full_above];
     var SND = FG.sound;
+    var MOUSE = s.player === "mouse" && !!FG.mouse, VOICE = MOUSE && s.voice;
+    // the 3D camera: through the player's eyes, or behind the mouse
+    var BEHIND = three && MOUSE && g.camera === "behind";
+    var CAMERA = three ? (BEHIND ? "behind" : "eyes") : null;
+    if (SND && SND.space) {
+      SND.space(three && MOUSE ? "room" : null);
+    }
     var RAD = C.body_radius_tiles;
 
     var room = g.layout.start_room.slice();
@@ -151,7 +164,9 @@
     var facing0 = three ? facingOf(maze.legal(room).filter(function (m) { return m !== "STAY"; })[0]) : 0;
     var start = Wd.centre(M, room);
     var scene = {maze: M, x: start[0], y: start[1], angle: facing0 * QUARTER, facing: facing0, heading: 0,
-      lit: null, light: new Float32Array(M.W * M.H), food: [], here: null, crumbs: [], bob: 0};
+      lit: null, light: new Float32Array(M.W * M.H), food: [], here: null, crumbs: [], bob: 0, sway: 0,
+      eye: MOUSE ? FG.mouse.EYE : 0.5, camera: CAMERA, cam: null,
+      mouse: MOUSE ? {phase: 0, move: 0, t: 0, eat: false, turn: 0} : null, prints: [], now: 0};
     var eaten = 0;
     var steps = [], turns = [], back = [];
     var over = false;
@@ -161,6 +176,12 @@
     var down = {};                // key code -> {key, code, t, order}
     var order = 0;
     var vx = 0, vy = 0, omega = 0, bobPhase = 0, walked = 0;
+    var gait = 0, lastEat = -1e9, lastSqueak = -1e9;
+    var camBack = null;           // how far the camera is behind the mouse (BEHIND)
+    if (BEHIND) {
+      camBack = FG.mouse.cameraBack(M, scene.x, scene.y, scene.angle);
+      scene.cam = FG.mouse.camera(scene.x, scene.y, scene.angle, camBack);
+    }
     var moveStart = null;         // the walk since the player last stood still: {t, press, key, code, held, angle}
     var away = null;              // the player out of the floor of its room: {left_at, side, furthest}
     var leftAt = null;            // when the player last left the floor of its room
@@ -184,7 +205,7 @@
     var lastFrame = null, dirty = true;
     var soundToggles = [];
     var record = {
-      number: g.number, view: g.view, maze: g.layout.maze, seed: g.seed, layout_seed: g.layout_seed,
+      number: g.number, view: g.view, camera: CAMERA, maze: g.layout.maze, seed: g.seed, layout_seed: g.layout_seed,
       layout: layoutNames(g.layout), settings: s, speeds: sp, food_kinds: copy(kinds),
       controls: (function () { var c = copy(C); c.idle_stay_ms = s.idle_stay_ms; return c; })(),
       started: new Date().toISOString(), started_at: REC.now(), ended: null, steps: steps, turns: turns,
@@ -312,6 +333,11 @@
       $("stepsItem").hidden = !s.show.steps_left;
       var n = world.nameAt(room);
       $("hereItem").hidden = n === null;
+      // full in this food room: no more eating here until the player walks out
+      // (the sign takes the place of the food's worth, to keep the bar short)
+      var fullHere = n !== null && STOP_FULL && visitFull;
+      $("fullSign").hidden = !fullHere;
+      $("worth").hidden = fullHere;
       if (n !== null) {
         $("here").textContent = levelText(world.level[n], s.show, edges);
         $("worth").textContent = kinds[n] + ", worth " + s.food_rooms[n].worth;
@@ -322,6 +348,13 @@
       sceneHere();
       g.renderer.draw(scene);
       dirty = false;
+    }
+
+    /* Only the mouse, which moves also while it stands (its whiskers, or all
+     * of it with the camera behind it): the 3D view draws it anew over the
+     * picture it has. */
+    function drawMouse() {
+      g.renderer.draw(scene, true);
     }
 
     function row(extra) {
@@ -630,6 +663,47 @@
         if (SND) {
           SND.bump();
         }
+        voice("oof");
+      }
+
+      /* A squeak of the mouse, at most 1 every SQUEAK_MS. */
+      function voice(kind) {
+        var now = performance.now();
+        if (!VOICE || !SND || now - lastSqueak < SQUEAK_MS) {
+          return;
+        }
+        lastSqueak = now;
+        SND.squeak(kind);
+      }
+
+      /* A step of the mouse: the patter of its feet (harder on the stone of a
+       * corridor or door than on the floor of a room) and, in 2D, its print. */
+      function mouseStep(n) {
+        var kd = M.kind[Math.floor(scene.y) * M.W + Math.floor(scene.x)];
+        var hard = kd === Wd.CORRIDOR || kd === Wd.DOOR;
+        if (SND) {
+          SND.patter(false, hard);
+          if (three) {
+            SND.space(hard ? "corridor" : "room");
+          }
+        }
+        if (!three) {
+          var a = scene.heading, side = n % 2 ? 1 : -1;
+          scene.prints.push({x: scene.x - Math.sin(a) * side * 0.2 - Math.cos(a) * 0.3,
+            y: scene.y + Math.cos(a) * side * 0.2 - Math.sin(a) * 0.3, a: a, t0: performance.now()});
+          if (scene.prints.length > MAX_PRINTS) {
+            scene.prints.shift();
+          }
+        }
+      }
+
+      /* Squeaks for what a step brought: a food room found, a full bar. */
+      function voiceFor(row) {
+        if (row.found) {
+          voice("found");
+        } else if (row.events.some(function (ev) { return ev.type === "full"; })) {
+          voice("full");
+        }
       }
 
       REC.listen(function (e, entry) {
@@ -789,7 +863,10 @@
         knowledgeChanged(false);
         hud();
         if (paid > 0 && s.show.food_gained) {
-          $("gain").textContent = "+" + round(paid, 1).toFixed(1);
+          // the food eaten; what did not fit into a full bar is shown apart,
+          // so that the bar going up less is not a surprise
+          $("gain").innerHTML = "+" + round(paid, 1).toFixed(1) + (en.lost >= 0.05 ?
+            ' <span class="over">' + round(en.lost, 1).toFixed(1) + " over full</span>" : "");
           nudge($("gain"), "pop");
         } else if (fullNow && s.show.food_gained) {
           $("gain").textContent = "full";
@@ -826,9 +903,13 @@
             showLevel(st.food, shownNow, world.level[st.food], 200);
           }
         }
-        if (st.paid > 0 && SND) {
-          SND.crunch(st.paid);
+        if (st.paid > 0) {
+          lastEat = performance.now();
+          if (SND) {
+            SND[MOUSE ? "nibble" : "crunch"](st.paid);
+          }
         }
+        voiceFor(st.row);
       }
 
       /* The player has walked onto the floor of a room. Next to the room it
@@ -889,6 +970,7 @@
         });
         var ms = moveStart || {t: REC.now(), press: REC.now(), key: "ArrowUp", code: "ArrowUp", held: true,
           facing: FACING[scene.facing], angle: three ? degrees(scene.angle) : null};
+        var firstVisit = !visited[Wd.key(next)];
         var st = takeStep(move, {key: ms.key, code: ms.code, at: ms.t, press: ms.press, held: ms.held},
           {facing: ms.facing, angle: ms.angle, left_at: leftAt, corner: corner});
         away = null;
@@ -904,16 +986,21 @@
           }
           if (st.paid > 0) {
             crumbs(st.food, 5);
+            lastEat = performance.now();
             if (SND) {
-              SND.crunch(st.paid);
+              SND[MOUSE ? "nibble" : "crunch"](st.paid);
             }
           }
         } else {
           setHere(null, false);
         }
-        if (!three && SND) {
+        if (!three && SND && !MOUSE) {
           SND.step(true);
         }
+        if (MOUSE && SND && firstVisit && !st.row.found) {
+          SND.sniff();
+        }
+        voiceFor(st.row);
       }
 
       /* Moves the player for the keys held: speeding up and slowing down,
@@ -998,7 +1085,22 @@
               scene.heading = Math.atan2(vy, vx);
               scene.facing = quarterOf(scene.heading);
             }
-          } else {
+          }
+          if (MOUSE) {
+            // the gait: a step every MOUSE_STEP tiles walked, as a pair of
+            // feet lands (js/mouse.js draws them furthest apart at sin = +/-1)
+            var n0 = Math.floor(gait / Math.PI - 0.5);
+            gait += moved * Math.PI / MOUSE_STEP[g.view];
+            var n1 = Math.floor(gait / Math.PI - 0.5);
+            if (n1 !== n0) {
+              mouseStep(n1);
+            }
+            var mv = Math.min(1, speed / C.walk_tiles_per_s);
+            if (three && !BEHIND) {
+              scene.bob = Math.sin(gait) * MOUSE_BOB * mv;
+              scene.sway = Math.cos(gait) * MOUSE_SWAY * mv;
+            }
+          } else if (three) {
             var phase = bobPhase + moved * 2 * Math.PI / BOB_TILES;
             if (Math.floor(phase / Math.PI) !== Math.floor(bobPhase / Math.PI) && SND) {
               SND.step(false);
@@ -1008,12 +1110,29 @@
           }
           dirty = true;
           rooms();
-        } else if (three && scene.bob !== 0) {
+        } else if (three && (scene.bob !== 0 || scene.sway !== 0)) {
           scene.bob *= Math.max(0, 1 - dt * 10);
-          if (Math.abs(scene.bob) < 1e-4) {
+          scene.sway *= Math.max(0, 1 - dt * 10);
+          if (Math.abs(scene.bob) < 1e-4 && Math.abs(scene.sway) < 1e-4) {
             scene.bob = 0;
+            scene.sway = 0;
           }
           dirty = true;
+        }
+        if (MOUSE) {
+          var m = scene.mouse, now = performance.now();
+          m.phase = gait;
+          m.move += (Math.min(1, speed / C.walk_tiles_per_s) - m.move) * Math.min(1, dt * 12);
+          m.t = now / 1000;
+          m.eat = now - lastEat < EAT_MS && speed < 0.2;
+          m.turn += (omega - m.turn) * Math.min(1, dt * 8);
+          scene.now = now;
+          while (scene.prints.length && now - scene.prints[0].t0 > FG.mouse.PRINT_MS) {
+            scene.prints.shift();
+          }
+          if (!three) {
+            dirty = true;          // the mouse moves its nose, ears and tail all the time
+          }
         }
       }
 
@@ -1126,6 +1245,18 @@
         }
       }
 
+      /* The camera behind the mouse: pulled in at once where a wall comes
+       * behind it, out again slowly. */
+      function updateCamera(dt) {
+        var want = FG.mouse.cameraBack(M, scene.x, scene.y, scene.angle);
+        var b = camBack === null || want < camBack ? want : camBack + (want - camBack) * Math.min(1, dt * 3);
+        if (camBack === null || Math.abs(b - camBack) > 1e-4) {
+          dirty = true;
+        }
+        camBack = b;
+        scene.cam = FG.mouse.camera(scene.x, scene.y, scene.angle, b);
+      }
+
       function frame(ts) {
         if (over) {
           return;
@@ -1140,6 +1271,9 @@
         updateFood(now, dt);
         if (shownAt !== null) {
           updateBody(dt);
+        }
+        if (BEHIND) {
+          updateCamera(dt);
         }
         if (shownAt !== null && !ending && IDLE_MS) {
           if (isDown("STAY")) {
@@ -1179,6 +1313,8 @@
         }
         if (dirty && !over) {
           draw();
+        } else if (MOUSE && !over) {
+          drawMouse();
         }
         requestAnimationFrame(frame);
       }

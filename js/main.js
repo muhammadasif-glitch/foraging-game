@@ -1,7 +1,7 @@
 /* The session: the first page (the view and the maze), the games, the end
  * of each game, and the files sent to DataPipe.
  *
- * Link options: ?condition=NAME or auto, ?view=2d or 3d and ?maze=NAME to
+ * Link options: ?condition=NAME or auto, ?view=2d, 3d or 3d_behind and ?maze=NAME to
  * choose for the player at first (they can still change it), ?test=1 marks
  * every file as a test (TEST_ in front of its name), ?send=0 sends nothing
  * (the files are printed to the browser console), ?set.<key>=<value>
@@ -24,9 +24,9 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "2.3.1";
+  FG.VERSION = "2.4.0";
   var FORMAT = "foraging-game";
-  var FORMAT_VERSION = 5;
+  var FORMAT_VERSION = 6;
   var TRIAL_TYPE = "foraging-game";
   // keys sooner than this after the first page or the end of a game appear
   // are taken as left over from the screen before
@@ -225,6 +225,16 @@
       }
     }
 
+    /* A view of the first page: 2d, 3d (through the eyes) or 3d_behind (3D,
+     * the camera behind the mouse). */
+    function viewOf(entry) {
+      return entry === "3d_behind" ? "3d" : entry;
+    }
+
+    function cameraOf(entry) {
+      return entry === "3d_behind" ? "behind" : "eyes";
+    }
+
     function useView(v) {
       current = v;
       $("c2d").hidden = v !== "2d";
@@ -233,7 +243,8 @@
     }
 
     /* The maze behind the first page: every room in light, no food. */
-    function preview(name, v) {
+    function preview(name, entry) {
+      var v = viewOf(entry), mouse = all.game.player === "mouse" && FG.mouse;
       var M = Wd.build(name), all2 = {};
       M.list.forEach(function (r) { all2[r.i + "," + r.j] = true; });
       var start = FG.rules.maze(name).rooms()[0];
@@ -241,7 +252,13 @@
       var facing = FG.game.FACING.indexOf(first);
       var c = Wd.centre(M, start);
       scene = {maze: M, x: c[0], y: c[1], angle: facing * Math.PI / 2, facing: facing,
-        lit: Wd.lit(M, all2, all2), food: [], here: null};
+        lit: Wd.lit(M, all2, all2), food: [], here: null,
+        mouse: mouse ? {phase: 0, move: 0, t: 0, eat: false, turn: 0} : null,
+        eye: mouse ? FG.mouse.EYE : 0.5};
+      if (mouse && v === "3d" && cameraOf(entry) === "behind") {
+        scene.camera = "behind";
+        scene.cam = FG.mouse.camera(c[0], c[1], scene.angle, FG.mouse.cameraBack(M, c[0], c[1], scene.angle));
+      }
       useView(v).draw(scene);
     }
 
@@ -292,9 +309,10 @@
     function buildMenu() {
       $("title").textContent = text("title");
       $("intro").textContent = text("intro");
+      $("fullSign").textContent = text("full_sign");
       $("menuKeys").innerHTML = text("menu_keys");
       $("views").innerHTML = all.menu.views.map(function (v) {
-        return '<div class="card"><div class="card-size">' + v.toUpperCase() + '</div>' +
+        return '<div class="card"><div class="card-size">' + viewOf(v).toUpperCase() + '</div>' +
           '<div class="card-meta">' + text("view_" + v) + '</div></div>';
       }).join("");
       $("views").className = "grid" + (all.menu.views.length === 2 ? " two" : "");
@@ -415,10 +433,10 @@
       var layoutSeed = FG.random.derive(session.seed, n);
       var seed = FG.random.derive(session.seed, 1000 + n);
       var lay = FG.config.layout(settings, null, FG.random.make(layoutSeed));
-      var view = useView(menuRec.view);
+      var view = useView(viewOf(menuRec.view));
       only(null);
       $("hud").hidden = false;
-      $("gameKeys").innerHTML = text("keys_" + menuRec.view);
+      $("gameKeys").innerHTML = text("keys_" + viewOf(menuRec.view));
       $("gameKeys").hidden = false;
       playing = true;
 
@@ -459,12 +477,13 @@
           keepGame(latest);
         }
       };
-      var g = {number: n, view: menuRec.view, renderer: {draw: function (sc) { scene = sc; view.draw(sc); }},
+      var g = {number: n, view: viewOf(menuRec.view), camera: cameraOf(menuRec.view),
+        renderer: {draw: function (sc, again) { scene = sc; view.draw(sc, again); }},
         settings: settings, layout: lay, seed: seed, layout_seed: layoutSeed, trial: !!trial,
         onChange: trial ? null : function (rec) { latest = rec; keepGame(rec); }};
       if (trial) {
         refreshGame = null;
-        $("gameKeys").innerHTML = text("keys_" + menuRec.view) + " &middot; <kbd>Esc</kbd> back to the editor";
+        $("gameKeys").innerHTML = text("keys_" + viewOf(menuRec.view)) + " &middot; <kbd>Esc</kbd> back to the editor";
       }
       return FG.game.play(g).then(function (rec) {
         playing = false;

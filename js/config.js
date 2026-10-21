@@ -192,6 +192,8 @@
     number(s.track_ms, "track_ms", 0, 60000);
     flag(s.first_step_stay, "first_step_stay");
     flag(s.sound, "sound");
+    oneOf(s.player, ["mouse", "arrow"], "player");
+    flag(s.voice, "voice");
     number(s.idle_stay_ms, "idle_stay_ms", 200, 60000);
     oneOf(s.stomach.when_full, ["stop", "keep"], "stomach.when_full");
     var maze = R.maze(s.maze);
@@ -384,9 +386,12 @@
       }
     });
     if (!Array.isArray(all.menu.views) || !all.menu.views.length) {
-      throw new SettingsError("menu.views must list 2d, 3d or both");
+      throw new SettingsError("menu.views must list 1 or more of 2d, 3d, 3d_behind");
     }
-    all.menu.views.forEach(function (v) { oneOf(v, ["2d", "3d"], "menu.views"); });
+    all.menu.views.forEach(function (v) { oneOf(v, ["2d", "3d", "3d_behind"], "menu.views"); });
+    if (all.menu.views.indexOf("3d_behind") >= 0 && all.game.player !== "mouse") {
+      throw new SettingsError("menu.views: 3d_behind (the camera behind the mouse) needs game.player mouse");
+    }
     all.menu.mazes.forEach(function (m) {
       checkMaze(all, m, link);
     });

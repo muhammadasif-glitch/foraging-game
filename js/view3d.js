@@ -21,6 +21,9 @@
   // the painting on its 2 wall tiles: across (u) and down (v, 0 at the top)
   var PIC_U0 = 0.31, PIC_U1 = 0.69, PIC_V0 = 0.14, PIC_V1 = 0.74;
   var FOOD_SIZE = {cheese: 0.5, bread: 0.4};
+  // with the camera behind the mouse, food this much nearer than the mouse
+  // is drawn over it; at the same place the mouse is in front, at the food
+  var MOUSE_AHEAD = 0.3;
 
   function View(canvas) {
     this.canvas = canvas;
@@ -44,6 +47,7 @@
     this.buf.height = this.rh;
     this.image = this.buf.getContext("2d").createImageData(this.rw, this.rh);
     this.zbuf = new Float32Array(this.rw);
+    this.drawn = false;
   };
 
   /* How much of a colour at distance d is left in the fog (0 to 1). */
@@ -107,15 +111,36 @@
   };
 
   /* scene: {maze, x, y, angle (0 east, pi/2 south), lit or light, food,
-   * here, crumbs, bob} */
-  View.prototype.draw = function (scene) {
+   * here, crumbs, bob, sway (tiles to the right), eye (the height of the
+   * eyes, as part of the height of a wall; 0.5 if not given), horizon (where
+   * the eyes look, as part of the screen from the top; 0.5); with the mouse:
+   * mouse (js/mouse.js), and for the camera behind it camera "behind" and
+   * cam {x, y, eye, horizon, back} (FG.mouse.camera). again: only the mouse
+   * is drawn anew, over the picture drawn last. */
+  View.prototype.draw = function (scene, again) {
+    if (again) {
+      if (scene.mouse && FG.mouse && this.drawn) {
+        this.show(scene);
+      }
+      return;
+    }
     var M = scene.maze, w = this.rw, h = this.rh;
     var data = this.image.data, z = this.zbuf, T = this.tex;
     var places = this.ensurePlaces(M);
     var dirX = Math.cos(scene.angle), dirY = Math.sin(scene.angle);
     var fov = Math.tan(33 * Math.PI / 180) * (w / h) / (4 / 3);
     var planeX = -dirY * fov, planeY = dirX * fov;
-    var px = scene.x, py = scene.y, half = h / 2 + (scene.bob || 0) * h;
+    var sway = scene.sway || 0, eye = scene.eye || 0.5;
+    var px = scene.x - dirY * sway, py = scene.y + dirX * sway;
+    var half = h * (scene.horizon || 0.5) + (scene.bob || 0) * h;
+    var cam = scene.camera === "behind" ? scene.cam : null;
+    if (cam) {
+      px = cam.x;
+      py = cam.y;
+      eye = cam.eye;
+      half = h * cam.horizon;
+    }
+    this.front = [];
     var col = [0, 0, 0], tmp = [0, 0, 0];
     var x, y, o, L, f, f0, f1, f2;
     var light = scene.light, lit = scene.lit;
@@ -135,7 +160,7 @@
     var rx0 = dirX - planeX, ry0 = dirY - planeY, rx1 = dirX + planeX, ry1 = dirY + planeY;
     var FL = T.floor, kind = M.kind, roomAt = M.roomAt, MW = M.W, MH = M.H;
     for (y = Math.max(0, Math.ceil(half)); y < h; y++) {
-      var dist = (0.5 * h) / (y - half + 0.5);
+      var dist = (eye * h) / (y - half + 0.5);
       f = fog(dist);
       f0 = FOG[0] * (1 - f); f1 = FOG[1] * (1 - f); f2 = FOG[2] * (1 - f);
       var sx = dist * (rx1 - rx0) / w, sy = dist * (ry1 - ry0) / w;
@@ -219,8 +244,8 @@
         }
       }
       var lineH = h / perp;
-      var wallTop = half - lineH / 2;
-      var top = Math.max(0, Math.floor(wallTop)), bot = Math.min(h, Math.ceil(half + lineH / 2));
+      var wallTop = half - (1 - eye) * lineH;
+      var top = Math.max(0, Math.floor(wallTop)), bot = Math.min(h, Math.ceil(half + eye * lineH));
       var ps = shade * (0.85 + 0.15 * L), pd = pic ? pic.data : null;
       for (y = top, o = (top * w + x) * 4; y < bot; y++, o += w * 4) {
         var v = (y - wallTop) / lineH;
@@ -245,6 +270,7 @@
       return {sp: sp, tx: invDet * (dirY * dx - dirX * dy), ty: invDet * (-planeY * dx + planeX * dy)};
     }).filter(function (e) { return e.ty > 0.15; });
     list.sort(function (a, b) { return b.ty - a.ty; });
+    var front = this.front;
     list.forEach(function (e) {
       var pic = e.sp.pic, ty = e.ty, fade = e.sp.fade === undefined ? 1 : e.sp.fade;
       if (fade <= 0) {
@@ -253,8 +279,13 @@
       var screenX = Math.floor((w / 2) * (1 + e.tx / ty));
       var hgt = Math.abs(h / ty) * e.sp.size;
       var wid = hgt * pic.w / pic.h;
-      var bottom = half + (0.5 * h) / ty - (e.sp.lift || 0) * h / ty;
+      var bottom = half + (eye * h) / ty - (e.sp.lift || 0) * h / ty;
       var y0 = Math.floor(bottom - hgt), x0 = Math.floor(screenX - wid / 2);
+      if (cam && ty < cam.back - MOUSE_AHEAD) {
+        // between the camera and the mouse: drawn over the mouse (show)
+        front.push({pic: pic, x: x0, y: y0, w: wid, h: hgt, ty: ty, fade: fade});
+        return;
+      }
       for (var sx2 = Math.max(0, x0); sx2 < Math.min(w, x0 + wid); sx2++) {
         if (ty >= z[sx2]) {
           continue;
@@ -279,9 +310,78 @@
       }
     });
     this.buf.getContext("2d").putImageData(this.image, 0, 0);
+    this.drawn = true;
+    this.show(scene);
+  };
+
+  /* The picture on the screen, with the mouse over it: its whiskers through
+   * its eyes, or all of it in front of the camera behind it. */
+  View.prototype.show = function (scene) {
     var g = this.canvas.getContext("2d");
+    var W = this.canvas.width, H = this.canvas.height;
     g.imageSmoothingEnabled = true;
-    g.drawImage(this.buf, 0, 0, this.canvas.width, this.canvas.height);
+    g.drawImage(this.buf, 0, 0, W, H);
+    if (!scene.mouse || !FG.mouse) {
+      return;
+    }
+    if (scene.camera !== "behind" || !scene.cam) {
+      FG.mouse.overlay3d(g, W, H, scene.mouse);
+      return;
+    }
+    var cam = scene.cam, back = cam.back, z = this.zbuf, rw = this.rw, sx = W / rw;
+    var fov = Math.tan(33 * Math.PI / 180) * (rw / this.rh) / (4 / 3);
+    var P = function (f, s, u) {
+      var d = back + f;
+      if (d < 0.08) {
+        return {x: 0, y: 0, k: 0, d: d};
+      }
+      return {x: W / 2 * (1 + s / (fov * d)), y: H * cam.horizon + (cam.eye - u) * H / d, k: H / d, d: d};
+    };
+    g.save();
+    // only where no wall stands between the camera and the mouse
+    g.beginPath();
+    for (var x = 0; x < rw;) {
+      if (z[x] < back - 0.05) {
+        x++;
+        continue;
+      }
+      var x0 = x;
+      while (x < rw && z[x] >= back - 0.05) {
+        x++;
+      }
+      g.rect(x0 * sx, 0, (x - x0) * sx, H);
+    }
+    g.clip();
+    FG.mouse.drawBehind(g, P, scene.mouse);
+    g.restore();
+    // food nearer than the mouse goes over it
+    var sy = H / this.rh;
+    this.front.forEach(function (e) {
+      var c = e.pic.canvas;
+      if (!c) {
+        c = e.pic.canvas = document.createElement("canvas");
+        c.width = e.pic.w;
+        c.height = e.pic.h;
+        c.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(e.pic.data), e.pic.w, e.pic.h), 0, 0);
+      }
+      g.save();
+      g.globalAlpha = e.fade;
+      g.beginPath();
+      for (var x = 0; x < rw;) {
+        if (z[x] < e.ty) {
+          x++;
+          continue;
+        }
+        var x0 = x;
+        while (x < rw && z[x] >= e.ty) {
+          x++;
+        }
+        g.rect(x0 * sx, 0, (x - x0) * sx, H);
+      }
+      g.clip();
+      g.drawImage(c, e.x * sx, e.y * sy, e.w * sx, e.h * sy);
+      g.restore();
+    });
   };
 
   FG.view3d = {create: function (canvas) { return new View(canvas); }};

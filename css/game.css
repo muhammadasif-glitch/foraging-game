@@ -262,6 +262,23 @@ kbd {
   animation: pop 900ms ease-out forwards;
 }
 
+#gain .over {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.full-sign {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #1b1405;
+  background: #f5c542;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
 @keyframes pop {
   from { opacity: 1; transform: translateY(0); }
   to { opacity: 0; transform: translateY(-8px); }

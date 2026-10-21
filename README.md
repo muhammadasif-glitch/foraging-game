@@ -1,8 +1,9 @@
 # Food Rooms: a foraging game
 
 The foraging task of [active-inference-foraging](https://github.com/muhammadasif-glitch/active-inference-foraging)
-(version 3), played by people in the browser, in 2 versions: the maze seen
-from above (2D) or from inside (3D). A player walks through a maze of rooms
+(version 3), played by people in the browser, in 2D (the maze seen from
+above) or in 3D (from inside, through the player's eyes or from behind it).
+The player is a little mouse. A player walks through a maze of rooms
 one step at a time, finds food rooms that can be in other places in every
 game, and keeps up an energy bar. Every key press is recorded, with its time,
 and sent to [DataPipe](https://pipe.jspsych.org), which saves the files into
@@ -39,7 +40,8 @@ use `?send=0` then (see below).
 
 ## Playing
 
-**The first page** offers the view (2D from above, 3D from inside) and the
+**The first page** offers the view (2D from above, 3D from inside, 3D behind
+the mouse) and the
 mazes of `settings.js` with their size (4 x 4, 6 x 6, 2 blocks of 4 x 4 joined
 by a bridge, and the environments made with the model, see below). The up and
 down arrows go between the 2 rows, the left and right arrows choose, the keys
@@ -63,7 +65,7 @@ The player walks freely, as in other games, while a key is held:
 - The walk speeds up and slows down; the player slides along walls, and
   walking into a wall next to a door slides into the door; doors and
   corridors draw the player to their middle. The food stands in the way.
-  In 3D the head bobs a little.
+  In 3D the view rises and sways a little with the mouse's strides.
 
 **What is a step.** A move is a step when the player walks onto the floor of
 the next room: the world changes then, as in the model, and the rooms next
@@ -94,8 +96,13 @@ the model (entering pays the level, each stay eats a bite and pays the level
 after), until the energy bar is full. Then eating stops for the rest of that
 visit (`stomach.when_full: "stop"`): the food is left, the room does not run
 down, nothing is paid, and the bar shows "full"; walking out does not take a
-last bite either. Coming back starts eating again. `"keep"` eats on as the
-model does (food beyond a full bar is lost).
+last bite either. Coming back starts eating again. While the player is full
+in a food room, a sign at the top says so ("full: eat again after you walk
+out", `texts.full_sign`). When a bite is more than fits into the bar, the
+part that does not fit is shown next to it ("+6.0 2.8 over full"), so the bar
+going up less than the food is no surprise; the food eaten counts all of it,
+as in the model. `"keep"` eats on as the model does (food beyond a full bar is
+lost).
 
 **What the player sees** is what the model's agent knows. The agent has the
 room it is in on its map and, after its first step, every room next to the
@@ -126,9 +133,42 @@ wall; corridors are grey. The paintings are public-domain works of the Art
 Institute of Chicago, fetched once by `check/get_paintings.py` (see Paintings
 below); until then the game paints its own landscapes.
 
+**The mouse** (`game.player: "mouse"`). In 2D it is seen from above: its
+feet move in diagonal pairs with every step, its tail swings, its whiskers
+sweep back as it runs and tremble while it stands, it nibbles at the food,
+and it leaves paw prints that fade after 1.6 s. Its steps come from the
+distance it walks (a step every 0.7 tiles in 2D, 0.6 in 3D: about 10 and 7.5
+a second at full speed), so the feet, the prints, the view and the patter of
+the steps keep time. 3D has 2 cameras, each a view of the first page:
+
+- `3d`, through the mouse's eyes: the eyes are a quarter of the way up the
+  walls (a person's would be half way), the view rises and sways a little
+  once every 2 steps, and the tips of its whiskers show, out of focus, at the
+  bottom corners.
+- `3d_behind`, behind the mouse: the camera is 1.6 tiles behind it and a
+  little above, looking down a little, and the whole mouse is seen running
+  in front of it (it leans into turns and nibbles at the food). Where a wall
+  is behind the mouse, the camera comes closer; never into a wall, never with
+  a wall between it and the mouse, and not right next to a door frame. When
+  there is little room (the mouse with its back to a wall), the camera goes
+  down to just over the mouse's head and the parts of the mouse nearest to
+  it fade out, so the mouse never fills the view: its head and ears stay in
+  sight at the bottom.
+
+Both cameras show the same maze, food and signs, with the same keys,
+speeds and rules; the file records which one was used (`camera`). With
+`game.player: "arrow"` the player is the disc with an arrow of the versions
+before 2.4.0, seen through a person's eyes in 3D (no `3d_behind`).
+
 **Sound.** Quiet music, footsteps, eating, a bump at a wall, a chime when
 food has grown back and a short tune at the end, all made by the browser (no
-sound files). Sound starts with the first key the player presses (browsers
+sound files). The mouse has its own: the patter of its feet (2 feet landing
+a moment apart with the tick of their claws, harder on the stone of a
+corridor than on the floor of a room, with a short echo of the room or
+corridor in 3D), nibbling, and sniffs in a room it has not been in. With
+`game.voice` it squeaks when it finds a food room, when it runs into a wall
+and when the energy bar is full, at most once every 1.2 s and each time a
+little differently. Sound starts with the first key the player presses (browsers
 allow it only after one); M or the button in the bottom corner turns it on
 and off at any time. `game.sound` in `settings.js` says whether a session
 starts with sound; every switch is recorded.
@@ -147,7 +187,9 @@ Everything a study changes is in `settings.js`, with a comment on every key:
 
 - `datapipe.experiment_id`: the DataPipe experiment; `if_no_condition`: what
   to do when DataPipe cannot hand out a condition (`random` or `stop`).
-- `menu`: the views and the mazes the first page offers, in order.
+- `menu`: the views (`2d`, `3d`, `3d_behind`) and the mazes the first page
+  offers, in order. A study that wants every player in the same view lists
+  only that one.
 - `game`: what every game has: steps, start room (`random`, any room such as
   `s52`, or `environment`), `start_area` (null: random starts anywhere; 4: only
   in rows and columns 0 to 3), the food rooms (place `random`, a room such as
@@ -157,8 +199,9 @@ Everything a study changes is in `settings.js`, with a comment on every key:
   happens at 0, `when_full`), what the bar shows, `idle_stay_ms` (a stay every
   this many ms with no key held), `count_steps` (`moves`: only moves use up
   the steps; `all`: every step, as in the model), `track_ms` (the player's
-  place and view recorded every this many ms; 0: not at all) and whether a
-  session starts with sound.
+  place and view recorded every this many ms; 0: not at all), whether a
+  session starts with sound, the player (`player`: `mouse` or `arrow`) and
+  whether the mouse squeaks (`voice`).
 - `conditions`: the versions of the game. A condition changes any key of
   `game`; under `food_rooms` it changes rooms or adds new ones.
 - `texts`: everything the player reads.
@@ -211,7 +254,7 @@ image files, so that they also show when the game is opened from a file.
 |---|---|
 | `?condition=linear_fast` | this condition |
 | `?condition=auto` (or none) | DataPipe hands the conditions out in turn |
-| `?view=3d`, `?maze=grid_6x6` | chosen on the first page at first (the player can still change it) |
+| `?view=3d_behind`, `?maze=grid_6x6` | chosen on the first page at first (the player can still change it); the views are `2d`, `3d`, `3d_behind` |
 | `?test=1` | marks every file as a test: names start with `TEST_` |
 | `?send=0` | sends and keeps nothing; the files are printed to the browser console |
 | `?set.steps=30` | changes a setting of every game, for trying things out (`?set.food.rule=exponential`, ...); recorded in the files |
@@ -335,14 +378,14 @@ Every file has at its top:
 | Key | |
 |---|---|
 | `trial_type` | `foraging-game` (for DataPipe's validation) |
-| `format`, `format_version`, `file` | `foraging-game`, 5, and `game` or `partial game` |
+| `format`, `format_version`, `file` | `foraging-game`, 6, and `game` or `partial game` |
 | `game_version` | the version of this code |
 | `player`, `player_code` | the player code (8 hex digits), and whether it was `new` or `kept in this browser` |
 | `session_id`, `session_started`, `test` | a random id of the page's visit, when it opened (UTC), test or not |
 | `condition` | `{name, how, datapipe, error}`: the condition, and how it was chosen (`link`, `datapipe`, `random`, `no conditions`) |
 | `link` | the options of the link |
 | `browser` | `user_agent`, `languages`, `screen`, `window`, `pixel_ratio`, `time_zone`, `utc_offset_minutes`, `cores`, `touch_points`, `clock_step_ms` (the smallest step of the browser's clock), `frame_ms` and `refresh_hz` (screen frames) |
-| `menu` | the first page before this game: `shown_at`, `chosen_at`, `view`, `maze`, and `actions` (every change of choice, with times) |
+| `menu` | the first page before this game: `shown_at`, `chosen_at`, `view` (`2d`, `3d` or `3d_behind`), `maze`, and `actions` (every change of choice, with times) |
 | `game` | the game (below) |
 | `keys`, `attention` | every key press and release, and the tab or window losing and getting back focus, from the end of the game before (the end page, the first page, the game) |
 | `sound_log` | every switch of the sound in the same time: `{t, phase, on, by}`, by `M` or `button` |
@@ -358,7 +401,7 @@ adds up to about one frame (`frame_ms`).
 
 | Key | |
 |---|---|
-| `number`, `view`, `maze` | which game of the visit, `2d` or `3d`, the maze |
+| `number`, `view`, `camera`, `maze` | which game of the visit, `2d` or `3d`, the 3D camera (`eyes`, `behind`; null in 2D), the maze |
 | `layout` | maze, start room and the room of each food room |
 | `seed`, `draws` | the seed of the game's own random numbers for refills (not numpy's) and every draw, 1 per step, used or not: the draws reproduce the game |
 | `layout_seed` | the seed the layout was picked with |
@@ -496,7 +539,10 @@ with DataPipe stood in for (with its validation of the required fields):
   and a taken name refused, then a player's game in the saved maze;
 - no condition from DataPipe, and DataPipe down with the file sent on the next visit;
 - a tab closed in the middle of a game, then the partial game sent;
-- the page opened from a file.
+- the page opened from a file;
+- the mouse in all 3 views, with the camera behind it checked at every place
+  of the track (never in a wall, never with a wall between it and the mouse),
+  and the arrow player of the versions before 2.4.0 in 2D and 3D.
 
 `data_check.py` replays every game file through the model's world, checks
 its settings are those of a valid model run, scores it with the model's

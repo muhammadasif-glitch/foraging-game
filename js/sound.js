@@ -1,6 +1,12 @@
 /* Music and sounds, made in the browser (Web Audio, no sound files): quiet
  * music, footsteps, eating, a bump at a wall, a chime when food has grown
- * back, and a short tune at the end of a game.
+ * back, and a short tune at the end of a game. For the mouse (game.player
+ * "mouse"): the patter of its feet (2 feet landing a moment apart, with the
+ * tick of their claws; harder on the stone of a corridor than on the floor
+ * of a room), nibbling, sniffing in a new room, and its squeaks (game.voice):
+ * finding a food room, bumping into a wall, a full energy bar, each a little
+ * different every time. In 3D the mouse's sounds have a short echo of the
+ * room or corridor it is in (space).
  *
  * Sound starts with the first key the player presses (browsers allow sound
  * only after one). The player turns it on and off with M or the button in
@@ -11,6 +17,7 @@
   var FG = root.FG = root.FG || {};
 
   var ctx = null, master = null, music = null, effects = null, noiseBuf = null;
+  var mouseBus = null, echo = null;           // the mouse's sounds, and their echo in 3D
   var on = true, unlocked = false;
   var log = [];
   var listeners = [];
@@ -62,7 +69,38 @@
       a = (a * 1103515245 + 12345) % 2147483648;
       d[i] = a / 1073741824 - 1;
     }
+    // the mouse: straight to the effects, and through a short echo (a small
+    // room: 0.4 s of fading noise, the highs fading first)
+    mouseBus = ctx.createGain();
+    mouseBus.connect(effects);
+    var conv = ctx.createConvolver(), len = Math.floor(ctx.sampleRate * 0.4);
+    var ir = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (var ch = 0; ch < 2; ch++) {
+      var data = ir.getChannelData(ch), lp = 0;
+      for (i = 0; i < len; i++) {
+        a = (a * 1103515245 + 12345) % 2147483648;
+        var k = i / len;
+        lp += ((a / 1073741824 - 1) - lp) * (0.9 - 0.75 * k);
+        data[i] = lp * Math.pow(1 - k, 2.6) * (i < ctx.sampleRate * 0.006 ? 0 : 1);
+      }
+    }
+    conv.buffer = ir;
+    echo = ctx.createGain();
+    echo.gain.value = 0;
+    mouseBus.connect(echo);
+    echo.connect(conv);
+    conv.connect(effects);
     return true;
+  }
+
+  /* Where the mouse is, for the echo of its sounds: "room", "corridor" (a
+   * narrow space of stone: more echo), or null (none, as in 2D). */
+  function space(kind) {
+    if (!ctx || !echo) {
+      return;
+    }
+    var v = kind === "corridor" ? 0.5 : kind === "room" ? 0.3 : 0;
+    echo.gain.setTargetAtTime(v, ctx.currentTime, 0.08);
   }
 
   function note(dest, f, at, len, vol, type, attack) {
@@ -212,6 +250,160 @@
     noise(at, 0.05, soft ? 0.1 : 0.18, 180, 0.8, "lowpass");
   }
 
+  /* 1 step of the mouse: a pair of small feet landing a moment apart (a
+   * front foot and the back foot on the other side), each a soft tap with
+   * the tick of its claws; the steps take turns left and right and are
+   * never twice quite the same. hard: on stone (a corridor), brighter and
+   * clearer than on the floor of a room. */
+  function patter(soft, hard) {
+    if (!ready()) {
+      return;
+    }
+    var at = ctx.currentTime + 0.003 + Math.random() * 0.006;
+    steps += 1;
+    var side = steps % 2 ? 1 : -1, wobble = 0.85 + Math.random() * 0.3;
+    var vol = (soft ? 0.07 : 0.1) * (0.8 + Math.random() * 0.4);
+    var bright = hard ? 1.3 : 1, thud = hard ? 0.3 : 0.55;
+    [0, 0.011 + Math.random() * 0.008].forEach(function (late, n) {
+      var v = n ? vol * 0.6 : vol, p = (n ? -side : side) * 0.18;
+      tap(at + late, 0.02, v, 3000 * wobble * bright, 2.2, p);
+      tap(at + late, 0.028, v * thud, 420 * wobble, 0.9, p, "lowpass");
+      // the claws: a very short, high tick just before the pad
+      tap(at + late - 0.002, 0.005, v * (hard ? 0.55 : 0.3), 7800 * wobble, 5, p);
+    });
+  }
+
+  /* A short filtered noise, panned a little to one side. */
+  function tap(at, len, vol, freq, q, pan, type) {
+    var src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), gn = ctx.createGain();
+    src.buffer = noiseBuf;
+    f.type = type || "bandpass";
+    f.frequency.value = freq;
+    f.Q.value = q;
+    gn.gain.setValueAtTime(0.0001, at);
+    gn.gain.linearRampToValueAtTime(vol, at + 0.002);
+    gn.gain.exponentialRampToValueAtTime(0.0001, at + len);
+    src.connect(f);
+    f.connect(gn);
+    var out = gn;
+    if (ctx.createStereoPanner) {
+      var p = ctx.createStereoPanner();
+      p.pan.value = pan || 0;
+      gn.connect(p);
+      out = p;
+    }
+    out.connect(mouseBus);
+    src.start(at, Math.random() * 0.8, len + 0.05);
+  }
+
+  /* 1 squeak: a high, quick sweep from f0 to f1 with a little trill, a
+   * flutter of its loudness and a breath of noise under it. */
+  function chirp(at, len, f0, f1, vol) {
+    var breath = ctx.createBufferSource(), bf = ctx.createBiquadFilter(), bg = ctx.createGain();
+    breath.buffer = noiseBuf;
+    bf.type = "bandpass";
+    bf.frequency.setValueAtTime(f0, at);
+    bf.frequency.exponentialRampToValueAtTime(f1, at + len * 0.7);
+    bf.Q.value = 7;
+    bg.gain.setValueAtTime(0.0001, at);
+    bg.gain.linearRampToValueAtTime(vol * 1.6, at + 0.01);
+    bg.gain.exponentialRampToValueAtTime(0.0001, at + len);
+    breath.connect(bf);
+    bf.connect(bg);
+    bg.connect(mouseBus);
+    breath.start(at, Math.random() * 0.8, len + 0.05);
+    // the flutter: the loudness going 35% up and down, 28 to 46 times a second
+    var flutter = ctx.createOscillator(), fd = ctx.createGain(), fl = ctx.createGain();
+    flutter.frequency.value = 28 + Math.random() * 18;
+    fd.gain.value = 0.35;
+    fl.gain.value = 1;
+    var o = ctx.createOscillator(), o2 = ctx.createOscillator(), gn = ctx.createGain(), g2 = ctx.createGain();
+    var lfo = ctx.createOscillator(), depth = ctx.createGain();
+    o.type = "sine";
+    o2.type = "triangle";
+    o.frequency.setValueAtTime(f0, at);
+    o.frequency.exponentialRampToValueAtTime(f1, at + len * 0.7);
+    o.frequency.exponentialRampToValueAtTime(f1 * 0.94, at + len);
+    o2.frequency.setValueAtTime(f0 * 2, at);
+    o2.frequency.exponentialRampToValueAtTime(f1 * 2, at + len * 0.7);
+    lfo.frequency.value = 38;
+    depth.gain.value = f0 * 0.035;
+    lfo.connect(depth);
+    depth.connect(o.frequency);
+    gn.gain.setValueAtTime(0.0001, at);
+    gn.gain.linearRampToValueAtTime(vol, at + 0.012);
+    gn.gain.setValueAtTime(vol, at + len * 0.6);
+    gn.gain.exponentialRampToValueAtTime(0.0001, at + len);
+    g2.gain.value = 0.18;
+    flutter.connect(fd);
+    fd.connect(fl.gain);
+    o.connect(gn);
+    o2.connect(g2);
+    g2.connect(gn);
+    gn.connect(fl);
+    fl.connect(mouseBus);
+    [o, o2, lfo, flutter].forEach(function (x) {
+      x.start(at);
+      x.stop(at + len + 0.05);
+    });
+  }
+
+  /* The mouse's voice: "found" (a food room found), "oof" (into a wall),
+   * "full" (the energy bar full); 1 of a few ways of saying it, each time a
+   * little higher or lower. Each way: [start, length, from, to, loudness]. */
+  var VOICES = {
+    found: [
+      [[0, 0.07, 3000, 4600, 0.045], [0.11, 0.09, 3300, 5200, 0.05]],
+      [[0, 0.05, 3400, 4300, 0.04], [0.07, 0.05, 3600, 4700, 0.04], [0.15, 0.08, 3500, 5000, 0.045]],
+      [[0, 0.12, 2900, 5000, 0.05]]
+    ],
+    oof: [
+      [[0.04, 0.1, 4200, 2700, 0.036]],
+      [[0.03, 0.06, 4600, 3300, 0.032], [0.1, 0.05, 3600, 2800, 0.025]],
+      [[0.05, 0.08, 3900, 3000, 0.034]]
+    ],
+    full: [
+      [[0, 0.06, 2900, 3500, 0.032], [0.09, 0.06, 3400, 4100, 0.032], [0.18, 0.09, 3900, 4800, 0.036]],
+      [[0, 0.07, 3100, 3900, 0.03], [0.12, 0.1, 3600, 4700, 0.034]],
+      [[0, 0.05, 3000, 3400, 0.028], [0.07, 0.05, 3300, 3800, 0.03], [0.14, 0.05, 3600, 4200, 0.03],
+        [0.21, 0.08, 3900, 4700, 0.034]]
+    ]
+  };
+
+  function squeak(kind) {
+    if (!ready() || !VOICES[kind]) {
+      return;
+    }
+    var ways = VOICES[kind], way = ways[Math.floor(Math.random() * ways.length)];
+    var at = ctx.currentTime + 0.01, j = 0.92 + Math.random() * 0.16;
+    way.forEach(function (c) {
+      chirp(at + c[0], c[1] * (0.9 + Math.random() * 0.2), c[2] * j, c[3] * j, c[4]);
+    });
+  }
+
+  /* 3 quick sniffs, as the mouse comes into a room it does not know. */
+  function sniff() {
+    if (!ready()) {
+      return;
+    }
+    var at = ctx.currentTime + 0.02;
+    for (var i = 0; i < 3; i++) {
+      tap(at + i * 0.085, 0.06, 0.075 - i * 0.012, 5200 + Math.random() * 1400, 0.9, 0);
+      tap(at + i * 0.085, 0.05, 0.03, 1800, 0.7, 0);
+    }
+  }
+
+  /* The mouse nibbling: small, quick bites. */
+  function nibble(amount) {
+    if (!ready()) {
+      return;
+    }
+    var at = ctx.currentTime + 0.01, n = 5 + Math.min(4, Math.round(amount || 1));
+    for (var i = 0; i < n; i++) {
+      tap(at + i * 0.034 + Math.random() * 0.008, 0.025, 0.2, 4200 + Math.random() * 2400, 3.2, (i % 2 ? 0.1 : -0.1));
+    }
+  }
+
   function crunch(amount) {
     if (!ready()) {
       return;
@@ -262,6 +454,7 @@
   FG.sound = {
     unlock: unlock, set: set, start: start, toggle: toggle, listen: listen,
     step: step, crunch: crunch, bump: bump, grown: grown, end: end,
+    patter: patter, squeak: squeak, sniff: sniff, nibble: nibble, space: space,
     get on() { return on; },
     get playing() { return ready(); },
     get log() { return log.slice(); }

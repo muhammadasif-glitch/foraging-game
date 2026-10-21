@@ -1,5 +1,33 @@
 # Changes
 
+## 2.4.0
+
+- The player is a little mouse (`game.player: "mouse"`; `"arrow"` keeps
+  the disc with an arrow). In 2D it is seen from above, its feet moving with
+  every step, with paw prints that fade. Its steps come from the distance
+  walked, about 10 a second in 2D and 7.5 in 3D, so the picture and the
+  sound of the steps keep time; before, 2D had 1 step sound per room and 3D
+  about 2.5 a second.
+- 3D has 2 cameras, each a view on the first page: `3d`, through the
+  mouse's eyes (low, a quarter of the way up the walls, with the tips of its
+  whiskers at the bottom corners and a small, smooth rise and sway once every
+  2 steps), and `3d_behind`, from behind the mouse, which is seen running in
+  front of the camera. That camera comes closer where a wall is behind the
+  mouse, never into a wall; with little room behind the mouse it goes down
+  to just over its head, and the mouse's nearest parts fade out.
+- The mouse's sounds: the patter of its feet (2 feet a moment apart, with
+  their claws; harder in corridors; a short echo in 3D), nibbling, sniffing
+  in a new room, and squeaks (`game.voice`) on finding a food room, running
+  into a wall and a full bar, each a little different every time.
+- When a bite is more than fits into the energy bar, the part that does
+  not fit is shown next to it ("+6.0 2.8 over full"); while the player is
+  full in a food room, a sign says to walk out to eat again
+  (`texts.full_sign`). The data and the food eaten are as before.
+- File format 6: `game.camera` (`eyes`, `behind`, null in 2D); the first
+  page's `view` can be `3d_behind` (then `game.view` is `3d`).
+- Nothing changes in the rules, the steps, the food or the energy: the
+  games replay in the model as before.
+
 ## 2.3.1
 
 - A fix: a browser filling in a saved password or name (in the maze
