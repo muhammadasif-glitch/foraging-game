@@ -548,25 +548,3 @@ with DataPipe stood in for (with its validation of the required fields):
 its settings are those of a valid model run, scores it with the model's
 measures, checks the rooms shown at each step against the rule above, and
 checks the fields DataPipe's validation needs.
-
-## Known limits
-
-- Keyboard only; made for a computer.
-- The paintings are the game's own landscapes until `check/get_paintings.py`
-  has been run once with internet.
-- Tested in Chromium; Firefox and Safari not yet.
-- A game cut short reaches DataPipe in full only if the browser sends it on
-  closing (shorter games) or the page is opened again in the same browser;
-  otherwise in short form, or not at all if the browser sends nothing.
-- The player is shown of the maze and the food what the agent knows, but the
-  task is not the agent's in every respect: the agent also knows the food
-  rule and its speeds, while the player is told in 1 line that food runs down
-  and grows back, and learns how fast by playing. In 3D the player sees into
-  the rooms next door through their doors, as the agent knows them; rooms
-  further away are dark.
-- A visit in which the player plays no game sends nothing; the first page's
-  keys of a visit go into the file of its first game.
-- A tab the browser stops for over 10 minutes while another tab of the study
-  is open (some power-saving modes do) is taken for a crashed one: its game so
-  far is sent as a partial file. If it then goes on and finishes, the whole
-  file follows and the partial one can be ignored.
