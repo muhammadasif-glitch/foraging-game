@@ -1,20 +1,46 @@
-/* The paintings on the walls of the 3D view.
+/* The paintings on the walls of the 3D view, and their Like plaques.
  *
- * Each room colour has its own painting, so a painting tells the player no
- * more than the colour of the wall it hangs on. The paintings are the
- * public-domain works in js/paintings.js (written by check/get_paintings.py
- * from img/paintings/, see img/paintings/CREDITS.md); while that file holds
- * none, the game paints its own landscapes, the same ones every time.
+ * The paintings are the famous public-domain paintings of js/paintings.js
+ * (see img/paintings/CREDITS.md). Every game hangs them anew: each wall of
+ * each room gets a different painting, drawn at random from all of them
+ * (hang), so every room has 4 different paintings. While js/paintings.js
+ * holds none (or game.paintings is false), the game paints its own
+ * landscapes instead, the same one for the same room colour.
  *
- * A painting is kept as {w, h, data} pixels with its frame, 176 x 136. */
+ * A painting keeps its own shape: it is fitted into at most PIC_MAX_W x
+ * PIC_MAX_H tiles in a gilded frame, with the Like plaque beside the frame
+ * (layout). The view draws paintings far away from ATLAS, 1 image with a
+ * small picture of every painting; near ones sharp from their own image:
+ * the 512 pixel copy, and the 1600 pixel one for the room the player is in
+ * (want, image), each put into its frame once it has come in. Picture
+ * numbers: p >= 0 is painting p of FG.PAINTINGS, p < 0 the game's own
+ * landscape -1 - p. */
 (function (root) {
   "use strict";
   var FG = root.FG = root.FG || {};
 
-  var W = 176, H = 136, FRAME = 10;
-  var GENERATED = 48;
-  var real = [];            // pixels of the paintings in js/paintings.js, once loaded
-  var made = {};
+  // the picture at most this wide and high (tiles; a wall is 1 tile high),
+  // in a frame BORDER wide, its middle V_MID down the wall
+  var PIC_MAX_W = 1.15, PIC_MAX_H = 0.5, BORDER = 0.035, V_MID = 0.42;
+  // the Like plaque: its size, how far right of the frame, its top
+  var PLAQUE_W = 0.2, PLAQUE_H = 0.088, PLAQUE_GAP = 0.06, PLAQUE_TOP = 0.45;
+  var GENERATED = 48, GEN_W = 156, GEN_H = 116;
+  // images kept that are not wanted any more, at most
+  var KEEP = {large: 8, small: 24};
+  var LOADING_AT_ONCE = 4;
+  var FRAME_RGB = [176, 136, 62], PLAQUE_RGB = [236, 228, 206], LIKED_RGB = [46, 156, 90];
+
+  var list = [];            // FG.PAINTINGS
+  var atlas = null;         // {data, w, h}: the pixels of FG.PAINTINGS_ATLAS
+  var made = {};            // generated landscapes: {canvas, data}
+  var layouts = {};
+  var frames = {};          // frame canvases by shape
+  var plaques = {};
+  var labels = {like: "Like", liked: "Liked"};
+  var images = {};          // "p:size" -> {img, framed (the picture in its frame), ready, failed, used}
+  var wanted = [];          // [{p, size}], most wanted first
+  var active = 0;
+  var listeners = [];
 
   function noise(seed) {
     var a = seed >>> 0;
@@ -249,99 +275,393 @@
     }
   }
 
-  /* A gilded frame around the picture area of a W x H canvas. */
-  function frame(g) {
-    var grad = g.createLinearGradient(0, 0, W, H);
-    grad.addColorStop(0, "#8a6a2c");
-    grad.addColorStop(0.3, "#d8b25a");
-    grad.addColorStop(0.55, "#9b7633");
-    grad.addColorStop(0.8, "#e0bf6c");
-    grad.addColorStop(1, "#7c5d25");
-    g.fillStyle = grad;
-    g.fillRect(0, 0, W, FRAME);
-    g.fillRect(0, H - FRAME, W, FRAME);
-    g.fillRect(0, 0, FRAME, H);
-    g.fillRect(W - FRAME, 0, FRAME, H);
-    g.strokeStyle = "rgba(60,40,10,0.8)";
-    g.lineWidth = 2;
-    g.strokeRect(1, 1, W - 2, H - 2);
-    g.strokeRect(FRAME - 1, FRAME - 1, W - 2 * FRAME + 2, H - 2 * FRAME + 2);
-    g.strokeStyle = "rgba(255,240,190,0.5)";
-    g.lineWidth = 1;
-    g.strokeRect(4.5, 4.5, W - 9, H - 9);
+  // ------------------------------------------------------------ the list
+  function count() {
+    return list.length;
   }
 
-  function pixels(c) {
-    var d = c.getContext("2d").getImageData(0, 0, c.width, c.height);
-    return {w: c.width, h: c.height, data: d.data};
+  function info(p) {
+    return p >= 0 ? list[p] : null;
   }
 
-  function generated(i) {
-    if (!made[i]) {
-      var c = document.createElement("canvas");
-      c.width = W;
-      c.height = H;
-      var g = c.getContext("2d");
-      var inner = document.createElement("canvas");
-      inner.width = W - 2 * FRAME;
-      inner.height = H - 2 * FRAME;
-      var ig = inner.getContext("2d");
-      landscape(ig, inner.width, inner.height, i);
-      brush(ig, inner.width, inner.height, i);
-      g.drawImage(inner, FRAME, FRAME);
-      frame(g);
-      made[i] = pixels(c);
+  /* The paintings for a maze's places (js/world.js paintingPlaces), drawn
+   * at random with rand: every place a different painting while there are
+   * enough of them (the biggest maze, 140 rooms, has 560 places). Without
+   * paintings (or with real false) the game's own landscapes, 1 for each
+   * room colour, as before 2.5.0. */
+  function hang(places, rand, real) {
+    var out = new Int32Array(places.length);
+    if (!list.length || real === false) {
+      places.forEach(function (pl, k) { out[k] = -1 - (pl.colour % GENERATED); });
+      return out;
     }
-    return made[i];
+    var order = [];
+    for (var k = 0; k < places.length; k++) {
+      if (k % list.length === 0) {
+        order = shuffled(list.length, rand);
+      }
+      out[k] = order[k % list.length];
+    }
+    return out;
   }
 
-  /* A loaded picture, cut to the frame's shape from its middle. */
-  function framed(img) {
-    var c = document.createElement("canvas");
-    c.width = W;
-    c.height = H;
-    var g = c.getContext("2d");
-    var iw = W - 2 * FRAME, ih = H - 2 * FRAME;
-    var scale = Math.max(iw / img.width, ih / img.height);
-    var sw = iw / scale, sh = ih / scale;
-    g.imageSmoothingQuality = "high";
-    g.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, FRAME, FRAME, iw, ih);
-    frame(g);
-    return pixels(c);
+  function shuffled(n, rand) {
+    var a = [];
+    for (var i = 0; i < n; i++) {
+      a.push(i);
+    }
+    for (i = n - 1; i > 0; i--) {
+      var j = Math.floor(rand() * (i + 1)), t = a[i];
+      a[i] = a[j];
+      a[j] = t;
+    }
+    return a;
   }
 
-  /* Loads the paintings of js/paintings.js; resolves when they are ready
-   * (at once when there are none). A painting that cannot be loaded is left
-   * out. */
-  function load() {
-    var list = FG.PAINTINGS || [];
-    return Promise.all(list.map(function (p) {
-      return new Promise(function (resolve) {
-        var img = new Image();
-        img.onload = function () {
+  function aspect(p) {
+    return p >= 0 ? list[p].w / list[p].h : GEN_W / GEN_H;
+  }
+
+  /* Where a picture, its frame and its plaque are on their 2 wall tiles:
+   * across (x, tiles from the start of the 2 tiles as seen from the room)
+   * and down (v, from the top of the wall, which is 1 tile high). */
+  function layout(p) {
+    var key = p >= 0 ? p : "g";
+    if (!layouts[key]) {
+      var a = aspect(p);
+      var pw = Math.min(PIC_MAX_W, PIC_MAX_H * a), ph = pw / a;
+      var fw = pw + 2 * BORDER, fh = ph + 2 * BORDER;
+      var x0 = (2 - (fw + PLAQUE_GAP + PLAQUE_W)) / 2;
+      var L = {fx0: x0, fx1: x0 + fw, fv0: V_MID - fh / 2, fv1: V_MID + fh / 2,
+        px0: x0 + BORDER, px1: x0 + fw - BORDER, pv0: V_MID - ph / 2, pv1: V_MID + ph / 2,
+        qx0: x0 + fw + PLAQUE_GAP, qx1: x0 + fw + PLAQUE_GAP + PLAQUE_W,
+        qv0: PLAQUE_TOP, qv1: PLAQUE_TOP + PLAQUE_H};
+      layouts[key] = L;
+    }
+    return layouts[key];
+  }
+
+  // ------------------------------------------------------------ pixels
+  function generated(n) {
+    if (!made[n]) {
+      var c = document.createElement("canvas");
+      c.width = GEN_W;
+      c.height = GEN_H;
+      var g = c.getContext("2d");
+      landscape(g, GEN_W, GEN_H, n);
+      brush(g, GEN_W, GEN_H, n);
+      made[n] = {canvas: c, data: g.getImageData(0, 0, GEN_W, GEN_H).data};
+    }
+    return made[n];
+  }
+
+  /* The small picture of p for the view's own pixels: {data, stride, x0, y0,
+   * w, h}, or null (then colour(p)). */
+  function pixels(p) {
+    if (p < 0) {
+      var m = generated(-1 - p);
+      return {data: m.data, stride: GEN_W, x0: 0, y0: 0, w: GEN_W, h: GEN_H};
+    }
+    if (!atlas) {
+      return null;
+    }
+    var c = list[p].cell;
+    return {data: atlas.data, stride: atlas.w, x0: c[0], y0: c[1], w: c[2], h: c[3]};
+  }
+
+  function colour(p) {
+    return p >= 0 ? list[p].rgb : [120, 130, 110];
+  }
+
+  // ------------------------------------------------------------ images
+  function key(p, size) {
+    return p + ":" + size;
+  }
+
+  function src(p, size) {
+    return "img/paintings/" + size + "/" + list[p].id + ".jpg";
+  }
+
+  /* The images to have ready, most wanted first: [{p, size}], size "small"
+   * (512 pixels) or "large" (1600). Images no longer wanted are kept a
+   * while (KEEP), then let go. */
+  function want(w) {
+    wanted = w.filter(function (x) { return x.p >= 0 && x.p < list.length; });
+    var now = performance.now();
+    wanted.forEach(function (x) {
+      var e = images[key(x.p, x.size)];
+      if (e) {
+        e.used = now;
+      }
+    });
+    pump();
+    trim();
+  }
+
+  function pump() {
+    for (var i = 0; i < wanted.length && active < LOADING_AT_ONCE; i++) {
+      var w = wanted[i], k = key(w.p, w.size);
+      if (!images[k]) {
+        start(w.p, w.size, k);
+      }
+    }
+  }
+
+  function start(p, size, k) {
+    var img = new Image(), e = {img: img, framed: null, ready: false, failed: false, used: performance.now(),
+      size: size};
+    images[k] = e;
+    active += 1;
+    var done = function (ok) {
+      active -= 1;
+      img.onload = img.onerror = null;
+      if (images[k] === e) {
+        if (ok) {
           try {
-            resolve(framed(img));
+            e.framed = framed(p, img);
           } catch (err) {
-            resolve(null);
+            ok = false;
           }
-        };
-        img.onerror = function () { resolve(null); };
-        img.src = p.data;
+          // the picture is kept in its frame: the image itself can go
+          img.src = "";
+        }
+        e.ready = ok;
+        e.failed = !ok;
+        if (ok) {
+          listeners.forEach(function (fn) { fn(p, size); });
+        }
+      }
+      pump();
+    };
+    img.decoding = "async";
+    img.onload = function () {
+      if (img.decode) {
+        img.decode().then(function () { done(true); }, function () { done(img.naturalWidth > 0); });
+      } else {
+        done(true);
+      }
+    };
+    img.onerror = function () { done(false); };
+    img.src = src(p, size);
+  }
+
+  function trim() {
+    ["large", "small"].forEach(function (size) {
+      var keepNow = {};
+      wanted.forEach(function (w) {
+        if (w.size === size) {
+          keepNow[key(w.p, size)] = true;
+        }
       });
-    })).then(function (got) {
-      real = got.filter(Boolean);
-      return real.length;
+      var spare = Object.keys(images).filter(function (k) {
+        return images[k].size === size && !keepNow[k] && images[k].ready;
+      }).sort(function (a, b) { return images[b].used - images[a].used; });
+      spare.slice(KEEP[size]).forEach(function (k) {
+        images[k].img.src = "";
+        images[k].framed = null;
+        delete images[k];
+      });
     });
   }
 
-  /* The painting of room colour n. */
-  function painting(n) {
-    return real.length ? real[n % real.length] : generated(n % GENERATED);
+  /* The sharpest picture of p in its frame there is, for a picture px
+   * pixels high on the screen: a canvas that is the frame (layout fx0 to
+   * fx1, fv0 to fv1) with the picture in it, from the large copy when it is
+   * needed and ready, else from the small one; null while none is ready. */
+  function image(p, px) {
+    if (p < 0) {
+      var m = generated(-1 - p);
+      if (!m.framed) {
+        m.framed = framed(p, m.canvas);
+      }
+      return m.framed;
+    }
+    var s = images[key(p, "small")], l = images[key(p, "large")];
+    var now = performance.now();
+    var big = l && l.ready && (px > list[p].sh * 0.8 || !(s && s.ready));
+    var e = big ? l : (s && s.ready ? s : (l && l.ready ? l : null));
+    if (!e) {
+      return null;
+    }
+    e.used = now;
+    return e.framed;
+  }
+
+  /* The picture img of p in its frame, at the picture's own pixels. */
+  function framed(p, img) {
+    var L = layout(p), iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    var per = iw / (L.px1 - L.px0);              // pixels a tile
+    var c = document.createElement("canvas");
+    c.width = Math.round((L.fx1 - L.fx0) * per);
+    c.height = Math.round((L.fv1 - L.fv0) * per);
+    var g = c.getContext("2d"), b = BORDER * per;
+    g.imageSmoothingQuality = "high";
+    g.drawImage(frame(p), 0, 0, c.width, c.height);
+    g.drawImage(img, b, b, c.width - 2 * b, c.height - 2 * b);
+    return c;
+  }
+
+  /* fn(p, size) when an image has come in. */
+  function onLoad(fn) {
+    listeners.push(fn);
+    return function () {
+      listeners = listeners.filter(function (f) { return f !== fn; });
+    };
+  }
+
+  function loaded() {
+    var out = {small: 0, large: 0, failed: 0};
+    Object.keys(images).forEach(function (k) {
+      var e = images[k];
+      if (e.ready) {
+        out[e.size] += 1;
+      } else if (e.failed) {
+        out.failed += 1;
+      }
+    });
+    return out;
+  }
+
+  // ------------------------------------------------------------ frame and plaque
+  /* The gilded frame of p, with its middle clear: a canvas the shape of the
+   * frame. */
+  function frame(p) {
+    var L = layout(p), fw = L.fx1 - L.fx0, fh = L.fv1 - L.fv0;
+    var k = Math.round(fw * 1000) + "x" + Math.round(fh * 1000);
+    if (!frames[k]) {
+      var per = 360 / Math.max(fw, fh);          // pixels a tile
+      var c = document.createElement("canvas");
+      c.width = Math.round(fw * per);
+      c.height = Math.round(fh * per);
+      var g = c.getContext("2d"), W = c.width, H = c.height, b = BORDER * per;
+      var grad = g.createLinearGradient(0, 0, W, H);
+      grad.addColorStop(0, "#8a6a2c");
+      grad.addColorStop(0.3, "#d8b25a");
+      grad.addColorStop(0.55, "#9b7633");
+      grad.addColorStop(0.8, "#e0bf6c");
+      grad.addColorStop(1, "#7c5d25");
+      g.fillStyle = grad;
+      g.fillRect(0, 0, W, H);
+      g.lineJoin = "miter";
+      g.strokeStyle = "rgba(60,40,10,0.85)";
+      g.lineWidth = Math.max(1.5, b * 0.12);
+      g.strokeRect(g.lineWidth / 2, g.lineWidth / 2, W - g.lineWidth, H - g.lineWidth);
+      g.strokeStyle = "rgba(255,240,190,0.55)";
+      g.lineWidth = Math.max(1, b * 0.08);
+      g.strokeRect(b * 0.32, b * 0.32, W - b * 0.64, H - b * 0.64);
+      g.strokeStyle = "rgba(70,48,14,0.7)";
+      g.lineWidth = Math.max(1, b * 0.1);
+      g.strokeRect(b * 0.62, b * 0.62, W - b * 1.24, H - b * 1.24);
+      // the inner edge, in the shadow of the frame
+      g.fillStyle = "rgba(40,26,8,0.9)";
+      g.fillRect(b - 2, b - 2, W - 2 * b + 4, H - 2 * b + 4);
+      g.clearRect(b, b, W - 2 * b, H - 2 * b);
+      frames[k] = c;
+    }
+    return frames[k];
+  }
+
+  /* The Like plaque beside every painting: a small plate with a thumb up
+   * and "Like"; once liked, green, with "Liked". */
+  function plaque(liked) {
+    var k = liked ? "on" : "off";
+    if (!plaques[k]) {
+      var c = document.createElement("canvas");
+      c.width = 264;
+      c.height = Math.round(264 * PLAQUE_H / PLAQUE_W);
+      var g = c.getContext("2d"), W = c.width, H = c.height, r = H * 0.18;
+      g.fillStyle = liked ? "#2e9c5a" : "#ece4ce";
+      g.strokeStyle = liked ? "#1c6a3b" : "#8f7a52";
+      g.lineWidth = 5;
+      g.beginPath();
+      g.moveTo(r, 3);
+      g.arcTo(W - 3, 3, W - 3, H - 3, r);
+      g.arcTo(W - 3, H - 3, 3, H - 3, r);
+      g.arcTo(3, H - 3, 3, 3, r);
+      g.arcTo(3, 3, W - 3, 3, r);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      thumb(g, H * 0.58, H * 0.5, H * 0.56, liked ? "#ffffff" : "#5a4a2c");
+      g.fillStyle = liked ? "#ffffff" : "#3b301c";
+      g.font = "bold " + Math.round(H * 0.44) + "px ui-sans-serif, system-ui, sans-serif";
+      g.textBaseline = "middle";
+      g.textAlign = "center";
+      g.fillText(liked ? labels.liked : labels.like, (H * 1.05 + W - H * 0.2) / 2, H * 0.53, W - H * 1.3);
+      plaques[k] = c;
+    }
+    return plaques[k];
+  }
+
+  /* A thumb up, s high, its middle at (cx, cy). */
+  function thumb(g, cx, cy, s, ink) {
+    var u = s / 10;
+    g.save();
+    g.translate(cx - 5 * u, cy - 5 * u);
+    g.fillStyle = ink;
+    // the cuff
+    g.fillRect(0, 4.4 * u, 2.2 * u, 5.4 * u);
+    // the hand, its fingers folded, and the thumb up
+    g.beginPath();
+    g.moveTo(2.9 * u, 4.6 * u);
+    g.lineTo(4.6 * u, 0.9 * u);
+    g.quadraticCurveTo(5.4 * u, -0.2 * u, 6.1 * u, 0.6 * u);
+    g.quadraticCurveTo(6.6 * u, 1.4 * u, 6.0 * u, 3.4 * u);
+    g.lineTo(9.0 * u, 3.4 * u);
+    g.quadraticCurveTo(10 * u, 3.6 * u, 9.8 * u, 4.6 * u);
+    g.lineTo(9.0 * u, 9.0 * u);
+    g.quadraticCurveTo(8.8 * u, 9.8 * u, 7.9 * u, 9.8 * u);
+    g.lineTo(2.9 * u, 9.8 * u);
+    g.closePath();
+    g.fill();
+    g.restore();
+  }
+
+  function setLabels(like, liked) {
+    if (like && liked && (like !== labels.like || liked !== labels.liked)) {
+      labels = {like: like, liked: liked};
+      plaques = {};
+    }
+  }
+
+  // ------------------------------------------------------------ loading
+  /* Gets the small pictures of all paintings ready (from js/paintings.js, so
+   * also for the game opened from a file); resolves to the number of
+   * paintings. Without them, paintings far away are drawn in 1 colour. */
+  function load() {
+    list = FG.PAINTINGS || [];
+    if (!list.length || !FG.PAINTINGS_ATLAS) {
+      return Promise.resolve(list.length);
+    }
+    return new Promise(function (resolve) {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var c = document.createElement("canvas");
+          c.width = img.width;
+          c.height = img.height;
+          var g = c.getContext("2d");
+          g.drawImage(img, 0, 0);
+          atlas = {data: g.getImageData(0, 0, c.width, c.height).data, w: c.width, h: c.height};
+        } catch (err) {
+          atlas = null;
+        }
+        resolve(list.length);
+      };
+      img.onerror = function () { resolve(list.length); };
+      img.src = FG.PAINTINGS_ATLAS;
+    });
   }
 
   function source() {
-    return real.length ? "paintings" : "generated";
+    return list.length ? "paintings" : "generated";
   }
 
-  FG.art = {W: W, H: H, load: load, painting: painting, source: source, landscape: landscape};
+  FG.art = {
+    load: load, source: source, count: count, info: info, hang: hang, layout: layout, aspect: aspect,
+    pixels: pixels, colour: colour, want: want, image: image, onLoad: onLoad, loaded: loaded,
+    frame: frame, plaque: plaque, setLabels: setLabels, landscape: landscape,
+    FRAME_RGB: FRAME_RGB, PLAQUE_RGB: PLAQUE_RGB, LIKED_RGB: LIKED_RGB
+  };
+  list = FG.PAINTINGS || [];
 })(typeof window !== "undefined" ? window : globalThis);

@@ -1,5 +1,44 @@
 # Changes
 
+## 2.5.0
+
+- Paintings: 641 famous paintings in the public domain, from Wikimedia
+  Commons, chosen from ArtEmis (painters who died in 1955 or before, the 8
+  emotions of ArtEmis mixed, no food, nudity or violence in the titles).
+  Every game hangs them anew: each wall of each room another painting, so no
+  painting hangs twice in a game. Each keeps its own shape, in a gilded
+  frame. Near paintings are drawn from their own images at the screen's
+  pixels (512 pixels, and 1600 in the room the player is in), far ones from 1
+  small picture of all of them. `game.paintings: false` keeps the landscapes
+  of before (1 for each room colour).
+- A Like plaque beside every frame (`game.likes`): L likes the painting in
+  the middle of the view, a click likes the painting of the plaque, again
+  takes the like back.
+- Looking is recorded: the painting in the middle of the view (up to 6
+  tiles away), how far and how big, in the track every 100 ms and summed up
+  for every painting seen (`looks`).
+- The music room (`game.music_room`, both views): 1 room, never the start
+  or a food room, has a gramophone. Near it, P or a click plays a famous
+  piece (8 real recordings from Wikimedia Commons, `js/music.js`) and stops
+  it; the music fades on the way out of the room; what plays is shown with
+  its players and licence.
+- Liking and the music cost nothing, are not steps and do not hold up the
+  stays: standing before a painting is standing still, a stay every second.
+- Sharper 3D: the ray casting draws at 1 of 6 levels of the screen's pixels
+  (100% to 32%), as sharp as the computer draws quickly, going down and up
+  with the time a drawing takes; a pixel takes about two thirds of the time
+  it took before (whole pixels written at once). Paintings, food, signs, the gramophone and the mouse are drawn
+  over it at the screen's pixels.
+- File format 7: `gallery_seed`, `gallery`, `looks`, `likes`, `clicks`,
+  `music`, `render`; the track has `look`, `look_d`, `look_share` and
+  `music`; keys have the outcomes of L and P.
+- `check/make_paintings.py` puts the paintings and the music into the game;
+  `check/media/` has the scripts that chose and downloaded them
+  (`check/get_paintings.py`, for the paintings of the Art Institute of
+  Chicago, is gone).
+- Nothing changes in the rules, the steps, the food or the energy: the
+  games replay in the model as before.
+
 ## 2.4.0
 
 - The player is a little mouse (`game.player: "mouse"`; `"arrow"` keeps

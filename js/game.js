@@ -29,6 +29,19 @@
  * room the player is in (check/map_check.py). New rooms come into light as
  * the player walks into the room they are next to.
  *
+ * Paintings (3D). Every wall of every room has a painting (js/art.js), hung
+ * anew every game, and beside it a Like plaque: L likes the painting in the
+ * middle of the view, a click likes the painting of the plaque clicked, and
+ * again un-likes it. Looking is recorded: which painting is in the middle
+ * of the view, how far away and how big, every frame (looks) and with the
+ * place of the player (track).
+ *
+ * The music room (both views). 1 room has a gramophone (js/gramophone.js):
+ * near it, P or a click on it plays a record, again stops it.
+ *
+ * Liking and the music cost nothing and do not hold up the stays: standing
+ * before a painting is standing still, a stay every idle_stay_ms as ever.
+ *
  * The caller hears of every change (g.onChange(record)), so that the game so
  * far is kept and reaches the researchers even if the page is closed. */
 (function (root) {
@@ -68,6 +81,12 @@
   var GROW_MS = 700, BITE_MS = 320;
   var LIGHT_MS = 450, HERE_MS = 400;         // new rooms coming into light, the food coming into view
   var QUARTER = Math.PI / 2;
+  // the gramophone: how wide it stands, how high it is drawn in 3D, how near
+  // the player must be to play it (tiles from its middle)
+  var GRAMOPHONE_RADIUS = 0.3, GRAMOPHONE_SIZE = 0.62, GRAMOPHONE_NEAR = 3.2;
+  // a frame this long (ms) or longer is counted as this long for looking
+  // (after the page was hidden, for example)
+  var LONGEST_FRAME_MS = 250;
 
   function $(id) {
     return document.getElementById(id);
@@ -122,8 +141,10 @@
     return k * k * (3 - 2 * k);
   }
 
-  /* g: {number, view ("2d" or "3d"), renderer (draw(scene)), settings,
-   * layout, seed, layout_seed, onChange(record)}. Resolves to the record. */
+  /* g: {number, view ("2d" or "3d"), renderer (draw(scene), and canvas,
+   * look(), seen(), hit(x, y), mark(), renderInfo(mark)), settings, layout,
+   * seed, layout_seed, gallery_seed, onChange(record)}. Resolves to the
+   * record. */
   function play(g) {
     var s = g.settings;
     var three = g.view === "3d";
@@ -153,6 +174,10 @@
       SND.space(three && MOUSE ? "room" : null);
     }
     var RAD = C.body_radius_tiles;
+    var ART = FG.art, GRAM = FG.gramophone;
+    var texts = Object.assign({music_play: "<kbd>P</kbd> play the gramophone", music_stop: "<kbd>P</kbd> stop the music"},
+      (FG.SETTINGS && FG.SETTINGS.texts) || {});
+    var gallerySeed = g.gallery_seed === undefined ? FG.random.derive(g.seed, 2) : g.gallery_seed;
 
     var room = g.layout.start_room.slice();
     var t = 0;
@@ -195,7 +220,8 @@
     var STOP_FULL = s.stomach.when_full !== "keep";
     var COUNT_MOVES = s.count_steps !== "all";
     var TRACK_MS = s.track_ms || 0;
-    var track = {every_ms: TRACK_MS, fields: ["t", "x", "y", "angle", "step"], rows: []};
+    var track = {every_ms: TRACK_MS, fields: ["t", "x", "y", "angle", "step", "look", "look_d", "look_share", "music"],
+      rows: []};
     var nextTrack = null;         // when the next place of the player is recorded (performance.now)
     var lastBump = -1e9;
     var fade = null;              // {from, to, t0}: new rooms coming into light
@@ -204,6 +230,39 @@
     var hereName = null, hereFade = 1, hereT0 = null;
     var lastFrame = null, dirty = true;
     var soundToggles = [];
+
+    // the paintings (3D): the picture of every place, the places liked
+    var places = three ? Wd.paintingPlaces(M) : null;
+    var REAL = three && s.paintings && ART && ART.count() > 0;
+    var gallery = three && ART ? {pics: ART.hang(places.list, FG.random.make(gallerySeed), REAL),
+      liked: new Uint8Array(places.list.length), likes: REAL && s.likes} : null;
+    scene.gallery = gallery;
+    var looks = {}, lookAt = null, likes = [], clicks = [];
+    var renderMark = three && g.renderer.mark ? g.renderer.mark() : 0;
+
+    // the music room: a room that is neither the start nor a food room
+    var musicRand = FG.random.make(FG.random.derive(gallerySeed, 1));
+    var musicRoom = null, pieces = [], nextPiece = 0, playingNow = null, player = null;
+    if (s.music_room && GRAM && FG.MUSIC && FG.MUSIC.length) {
+      var notFree = [g.layout.start_room].concat(names.map(function (n) { return g.layout.food_rooms[n]; }));
+      var freeRooms = maze.rooms().filter(function (r) {
+        return !notFree.some(function (q) { return R.sameRoom(q, r); });
+      });
+      if (freeRooms.length) {
+        musicRoom = musicRand.pick(freeRooms);
+        pieces = FG.MUSIC.map(function (m, i) { return i; });
+        for (var pi = pieces.length - 1; pi > 0; pi--) {
+          var pj = musicRand.int(pi + 1), pt = pieces[pi];
+          pieces[pi] = pieces[pj];
+          pieces[pj] = pt;
+        }
+        player = GRAM.player();
+      }
+    }
+    var musicAt = musicRoom ? Wd.centre(M, musicRoom) : null;
+    scene.music = musicRoom ? {room: musicRoom, x: musicAt[0], y: musicAt[1], playing: false, t0: 0} : null;
+    var music = musicRoom ? {room: R.roomName(musicRoom), pieces: pieces.map(function (i) { return FG.MUSIC[i].id; }),
+      plays: []} : null;
     var record = {
       number: g.number, view: g.view, camera: CAMERA, maze: g.layout.maze, seed: g.seed, layout_seed: g.layout_seed,
       layout: layoutNames(g.layout), settings: s, speeds: sp, food_kinds: copy(kinds),
@@ -211,8 +270,18 @@
       started: new Date().toISOString(), started_at: REC.now(), ended: null, steps: steps, turns: turns,
       walks_back: back, draws: draws, sound: {on_at_start: SND ? SND.on : null, toggles: soundToggles},
       track: TRACK_MS ? track : null, maze_def: mazeDef(g.layout.maze), path: null, known_rooms: null,
+      gallery_seed: gallerySeed, gallery: null, looks: null, likes: three ? likes : null, clicks: clicks,
+      music: music, render: null,
       result: null
     };
+    if (gallery) {
+      record.gallery = {source: REAL ? "paintings" : "landscapes", likes: gallery.likes,
+        places: places.list.map(function (pl, k) {
+          var rm = M.list[pl.room], p = gallery.pics[k], info = ART.info(p);
+          return {place: k, room: R.roomName([rm.i, rm.j]), side: Wd.SIDES[pl.side],
+            painting: info ? info.id : "landscape_" + (-1 - p), artemis: info ? info.artemis : null};
+        })};
+    }
 
     function levels() {
       var out = {};
@@ -275,6 +344,29 @@
       }
       scene.food = names.filter(function (n) { return known[Wd.key(g.layout.food_rooms[n])]; })
         .map(function (n) { return {room: g.layout.food_rooms[n], worth: s.food_rooms[n].worth, kind: kinds[n]}; });
+      wantImages();
+    }
+
+    /* The images of the paintings to have ready: those of the room the
+     * player is in, sharp, and of the rooms next to it. */
+    function wantImages() {
+      if (!REAL) {
+        return;
+      }
+      var list = [], here = M.index[Wd.key(room)];
+      var mine = [0, 1, 2, 3].map(function (sd) { return gallery.pics[here * 4 + sd]; });
+      mine.forEach(function (p) { list.push({p: p, size: "small"}); });
+      mine.forEach(function (p) { list.push({p: p, size: "large"}); });
+      maze.legal(room).forEach(function (m) {
+        if (m === "STAY") {
+          return;
+        }
+        var ri = M.index[Wd.key(maze.next(room, m))];
+        for (var sd = 0; sd < 4; sd++) {
+          list.push({p: gallery.pics[ri * 4 + sd], size: "small"});
+        }
+      });
+      ART.want(list);
     }
 
     function updateLight(now) {
@@ -370,7 +462,11 @@
       return base;
     }
 
+    var summed = null;            // brings the looking and the sharpness so far into the record
     function changed() {
+      if (summed) {
+        summed();
+      }
       if (g.onChange) {
         g.onChange(record);
       }
@@ -404,6 +500,12 @@
         }
         var c = Wd.centre(M, fr), rr = (kinds[names[i]] === "bread" ? FOOD_RADIUS.bread : FOOD_RADIUS.cheese) + RAD;
         if ((x - c[0]) * (x - c[0]) + (y - c[1]) * (y - c[1]) < rr * rr) {
+          return false;
+        }
+      }
+      if (musicRoom && known[Wd.key(musicRoom)]) {
+        var gr = GRAMOPHONE_RADIUS + RAD;
+        if ((x - musicAt[0]) * (x - musicAt[0]) + (y - musicAt[1]) * (y - musicAt[1]) < gr * gr) {
           return false;
         }
       }
@@ -633,6 +735,251 @@
         soundToggles.push({t: entry.t, step: t, on: entry.on, by: entry.by});
         changed();
       }) : function () {};
+      var stopImages = ART ? ART.onLoad(function () { dirty = true; }) : function () {};
+      summed = function () {
+        record.looks = looksSummary();
+        if (three && g.renderer.renderInfo) {
+          record.render = g.renderer.renderInfo(renderMark);
+        }
+      };
+      if (g.renderer.canvas) {
+        g.renderer.canvas.addEventListener("mousedown", onClick);
+        g.renderer.canvas.addEventListener("mousemove", onHover);
+      }
+      if (player) {
+        player.onEnd(function () {
+          if (playingNow) {
+            stopMusic("ended", REC.now());
+          }
+        });
+        player.onFail(function (piece, why) {
+          if (playingNow) {
+            stopMusic("failed: " + why, REC.now());
+          }
+        });
+      }
+
+      // ------------------------------------------------------ paintings
+      function placeInfo(k) {
+        var pl = places.list[k], rm = M.list[pl.room], info = ART.info(gallery.pics[k]);
+        return {place: k, painting: info ? info.id : "landscape_" + (-1 - gallery.pics[k]),
+          room: R.roomName([rm.i, rm.j]), side: Wd.SIDES[pl.side]};
+      }
+
+      function lookStats(k) {
+        if (!looks[k]) {
+          var o = placeInfo(k);
+          o.look_ms = 0;
+          o.looks = 0;
+          o.seen_ms = 0;
+          o.first_seen_at = null;
+          o.first_look_at = null;
+          o.nearest = null;
+          o.liked = false;
+          o.likes = 0;
+          looks[k] = o;
+        }
+        return looks[k];
+      }
+
+      /* A painting liked or un-liked: by "L" (the painting in the middle of
+       * the view) or "click" (its plaque). */
+      function like(k, by, at, d) {
+        gallery.liked[k] = gallery.liked[k] ? 0 : 1;
+        var on = !!gallery.liked[k];
+        var o = placeInfo(k);
+        o.t = at;
+        o.step = t;
+        o.liked = on;
+        o.by = by;
+        o.d = d === null || d === undefined ? null : round(d, 2);
+        likes.push(o);
+        var st = lookStats(k);
+        st.liked = on;
+        st.likes += 1;
+        dirty = true;
+        changed();
+        return on ? "like" : "unlike";
+      }
+
+      /* Looking: the painting in the middle of the view, and every painting
+       * seen, for the time of this frame. */
+      function updateLooks(ms) {
+        if (!gallery || !g.renderer.look) {
+          return;
+        }
+        var lk = g.renderer.look(), seen = g.renderer.seen ? g.renderer.seen() : {};
+        var at = REC.now();
+        Object.keys(seen).forEach(function (k) {
+          if (seen[k] > 0) {
+            var st = lookStats(Number(k));
+            st.seen_ms += ms;
+            if (st.first_seen_at === null) {
+              st.first_seen_at = at;
+            }
+          }
+        });
+        var k = lk ? lk.place : null;
+        if (k !== null) {
+          var st = lookStats(k);
+          st.look_ms += ms;
+          if (lookAt !== k) {
+            st.looks += 1;
+          }
+          if (st.first_look_at === null) {
+            st.first_look_at = at;
+          }
+          st.nearest = st.nearest === null ? round(lk.d, 2) : Math.min(st.nearest, round(lk.d, 2));
+        }
+        lookAt = k;
+      }
+
+      function looksSummary() {
+        if (!gallery) {
+          return null;
+        }
+        return Object.keys(looks).map(Number).sort(function (a, b) { return a - b; }).map(function (k) {
+          var o = copy(looks[k]);
+          o.look_ms = round(o.look_ms, 1);
+          o.seen_ms = round(o.seen_ms, 1);
+          return o;
+        });
+      }
+
+      // ------------------------------------------------------ the music
+      function nearGramophone() {
+        return musicRoom && known[Wd.key(musicRoom)] &&
+          Math.hypot(scene.x - musicAt[0], scene.y - musicAt[1]) <= GRAMOPHONE_NEAR;
+      }
+
+      function startMusic(by, at) {
+        var piece = FG.MUSIC[pieces[nextPiece % pieces.length]];
+        nextPiece += 1;
+        if (SND && !SND.on) {
+          // the player asks for music: the sound comes on
+          SND.set(true, by === "click" ? "gramophone" : "P");
+        }
+        playingNow = {piece: piece.id, started_at: at, step: t, by: by, stopped_at: null, stopped_by: null,
+          played_s: null};
+        music.plays.push(playingNow);
+        scene.music.playing = true;
+        scene.music.t0 = performance.now();
+        player.play(piece);
+        player.set(GRAM.loudness(Math.hypot(scene.x - musicAt[0], scene.y - musicAt[1])), SND && !SND.on);
+        if (SND && SND.duck) {
+          SND.duck(true);
+        }
+        $("nowPlaying").textContent = "\u266a " + piece.composer + ": " + piece.piece + " \u00b7 " + piece.performer +
+          " \u00b7 " + piece.licence;
+        $("nowPlaying").hidden = false;
+        dirty = true;
+        changed();
+        return "music on";
+      }
+
+      function stopMusic(how, at) {
+        var played = player ? player.at() : 0;
+        if (player && how !== "ended") {
+          player.stop();
+        }
+        if (SND && SND.duck) {
+          SND.duck(false);
+        }
+        playingNow.stopped_at = at;
+        playingNow.stopped_by = how;
+        playingNow.played_s = round(played, 1);
+        playingNow = null;
+        scene.music.playing = false;
+        $("nowPlaying").hidden = true;
+        dirty = true;
+        changed();
+        return "music off";
+      }
+
+      function gramophone(by, at) {
+        if (!musicRoom) {
+          return "ignored: no music room";
+        }
+        if (!nearGramophone()) {
+          return "ignored: not at the gramophone";
+        }
+        return playingNow ? stopMusic(by, at) : startMusic(by, at);
+      }
+
+      /* The keys of the paintings and the music: L, P. */
+      function extraKey(low, entry) {
+        if (low === "l") {
+          if (!gallery || !gallery.likes) {
+            return "ignored: no likes";
+          }
+          var lk = g.renderer.look ? g.renderer.look() : null;
+          if (!lk) {
+            return "ignored: no painting in view";
+          }
+          return like(lk.place, "L", entry.t, lk.d);
+        }
+        return gramophone("P", entry.t);
+      }
+
+      function onClick(e) {
+        if (over || shownAt === null || e.button !== 0) {
+          return;
+        }
+        var at = REC.at(e.timeStamp);
+        var h = g.renderer.hit ? g.renderer.hit(e.offsetX, e.offsetY) : null;
+        var c = {t: at, step: t, x: Math.round(e.offsetX), y: Math.round(e.offsetY), on: h ? h.kind : null,
+          place: h && h.place !== null && h.place !== undefined ? h.place : null, outcome: null};
+        clicks.push(c);
+        if (h && h.kind === "plaque" && gallery && gallery.likes) {
+          c.outcome = like(h.place, "click", at, h.d);
+        } else if (h && h.kind === "gramophone") {
+          c.outcome = gramophone("click", at);
+        } else {
+          c.outcome = "nothing";
+        }
+        e.preventDefault();
+        changed();
+      }
+
+      function onHover(e) {
+        var h = !over && g.renderer.hit ? g.renderer.hit(e.offsetX, e.offsetY) : null;
+        var on = h && ((h.kind === "plaque" && gallery && gallery.likes) || (h.kind === "gramophone" && nearGramophone()));
+        g.renderer.canvas.style.cursor = on ? "pointer" : "";
+      }
+
+      /* The gramophone and its notes, for the views; the music as loud as
+       * the player is near; the hint to play it. */
+      function updateMusic() {
+        if (!musicRoom) {
+          return;
+        }
+        var d = Math.hypot(scene.x - musicAt[0], scene.y - musicAt[1]);
+        if (player && playingNow) {
+          player.set(GRAM.loudness(d), SND && !SND.on);
+        }
+        var ex = [];
+        if (three) {
+          ex.push({x: musicAt[0], y: musicAt[1], pic: GRAM.sprite(), size: GRAMOPHONE_SIZE, hit: "gramophone"});
+          if (playingNow) {
+            GRAM.rising(musicAt[0], musicAt[1], scene.music.t0, performance.now()).forEach(function (n) {
+              ex.push({x: n.x, y: n.y, pic: GRAM.note(n.n), size: n.size, lift: n.lift, fade: n.fade});
+            });
+          }
+        }
+        scene.extras = ex;
+        if (playingNow && known[Wd.key(musicRoom)]) {
+          dirty = true;                      // the notes rise
+        }
+        var near = nearGramophone() && !over;
+        var hint = $("gameHint");
+        if (near) {
+          var txt = playingNow ? texts.music_stop : texts.music_play;
+          if (hint.innerHTML !== txt) {
+            hint.innerHTML = txt;
+          }
+        }
+        hint.hidden = !near;
+      }
       REC.shown().then(function (at) {
         shownAt = at;
         steps[0].shown_at = at;
@@ -642,12 +989,31 @@
 
       function finish(how) {
         over = true;
+        FG.game.where = function () { return null; };
         if (turning) {
           endTurn();
         }
+        if (playingNow) {
+          stopMusic("game over", REC.now());
+        }
+        if (player) {
+          player.close();
+        }
         REC.listen(null);
         stopSound();
+        stopImages();
+        if (g.renderer.canvas) {
+          g.renderer.canvas.removeEventListener("mousedown", onClick);
+          g.renderer.canvas.removeEventListener("mousemove", onHover);
+          g.renderer.canvas.style.cursor = "";
+        }
+        $("nowPlaying").hidden = true;
+        $("gameHint").hidden = true;
         root.removeEventListener("blur", onBlur);
+        record.looks = looksSummary();
+        if (three && g.renderer.renderInfo) {
+          record.render = g.renderer.renderInfo(renderMark);
+        }
         Object.keys(holding).forEach(function (code) { delete holding[code]; });
         record.ended = ended(record, how, REC.now());
         wayFields(record);
@@ -706,8 +1072,32 @@
         }
       }
 
+      // where the player is now, for the browser check (null between games)
+      FG.game.where = function () {
+        var lk = gallery && g.renderer.look ? g.renderer.look() : null;
+        return over ? null : {x: scene.x, y: scene.y, angle: three ? degrees(scene.angle) : null, room: R.roomName(room),
+          look: lk ? lk.place : null};
+      };
+
       REC.listen(function (e, entry) {
         var code = e.code || e.key;
+        var low = typeof e.key === "string" && e.key.length === 1 ? e.key.toLowerCase() : null;
+        if (low === "l" || low === "p") {
+          // free, and they do not hold up the stays: not kept as held keys
+          if (e.type === "keyup") {
+            return undefined;
+          }
+          if (e.repeat) {
+            return "ignored: repeat";
+          }
+          if (modified(e)) {
+            return "ignored: with Ctrl, Alt or Meta";
+          }
+          if (over || shownAt === null || ending) {
+            return "ignored: busy";
+          }
+          return extraKey(low, entry);
+        }
         if (e.type === "keyup") {
           delete keysDown[code];
           if (!Object.keys(keysDown).length) {
@@ -1261,8 +1651,12 @@
         if (over) {
           return;
         }
+        var frameMs = lastFrame === null ? 0 : Math.min(LONGEST_FRAME_MS, ts - lastFrame);
         var dt = lastFrame === null ? 0 : Math.min(0.05, (ts - lastFrame) / 1000);
         lastFrame = ts;
+        if (shownAt !== null && frameMs > 0) {
+          updateLooks(frameMs);
+        }
         var now = performance.now();
         if (three) {
           updateTurn(dt);
@@ -1295,10 +1689,15 @@
             }
           }
         }
+        updateMusic();
         if (TRACK_MS && shownAt !== null && (nextTrack === null || now >= nextTrack)) {
-          // the place and the view of the player, at the first frame from each mark on
+          // the place and the view of the player, at the first frame from each mark on; the
+          // painting looked at; how loud the music is where the player is
+          var lk = gallery && g.renderer.look ? g.renderer.look() : null;
           track.rows.push([round(REC.now(), 1), round(scene.x, 2), round(scene.y, 2),
-            three ? degrees(scene.angle) : null, t]);
+            three ? degrees(scene.angle) : null, t, lk ? lk.place : null, lk ? round(lk.d, 2) : null,
+            lk ? round(lk.share, 3) : null,
+            playingNow ? round(GRAM.loudness(Math.hypot(scene.x - musicAt[0], scene.y - musicAt[1])), 2) : null]);
           nextTrack = (nextTrack === null || now - nextTrack >= TRACK_MS ? now : nextTrack) + TRACK_MS;
         }
         if (ending && now - ending.t0 >= END_MS) {

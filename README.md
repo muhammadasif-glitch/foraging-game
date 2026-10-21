@@ -23,8 +23,10 @@ A game file also holds the game in the form of a model run, so the measures
 of the agents' runs (`forage.lab.measures`) score people's games the same way.
 
 Plain HTML and JavaScript: no server, no library, no build step, nothing to
-install; the 3D view, the food, the paintings and the music are made by the
-game itself.
+install; the 3D view, the food and the quiet music are made by the game
+itself. The paintings on the walls are 641 famous public-domain paintings and
+the gramophone of the music room plays 8 famous recordings, all from
+Wikimedia Commons (`img/paintings/CREDITS.md`, `audio/music/CREDITS.md`).
 
 ## Putting it online (GitHub Pages)
 
@@ -127,11 +129,62 @@ it; in 2D it is seen from above. Which room shows which food is set in
 room worth the most shows cheese and the others bread).
 
 **The walls** of the 3D view are plaster in the colour of the room, with a
-framed painting on each side of the room. Each room colour has its own
-painting, so a painting tells the player no more than the colour of the
-wall; corridors are grey. The paintings are public-domain works of the Art
-Institute of Chicago, fetched once by `check/get_paintings.py` (see Paintings
-below); until then the game paints its own landscapes.
+painting in a gilded frame on each side of the room; corridors are grey.
+Every game hangs the paintings anew: each wall of each room gets a different
+painting, drawn at random from all 641 (`game.paintings`; see Paintings
+below), so the 4 paintings of a room are different and no painting hangs
+twice (the biggest maze the editor makes, 140 rooms, has 560 walls). A
+painting keeps its own shape: it is fitted into at most 1.15 x 0.5 tiles (a
+wall is 1 tile high). With `game.paintings: false` the game paints its own
+landscapes instead, the same one for the same room colour, as before 2.5.0.
+
+**Liking a painting** (3D, `game.likes`). Beside every frame hangs a small
+plaque with a thumb up and "Like". L likes the painting in the middle of the
+view (up to 6 tiles away), a click on a plaque likes its painting; the plaque
+turns green and says "Liked", and L or a click again takes the like back.
+Liking costs nothing, is not a step and does not hold up the stays: a player
+who stands before a painting stands still, so a stay comes every second as
+ever, also while L is pressed. Every like is recorded (`likes`).
+
+**Looking at paintings** (3D) is recorded, as people look where they face:
+the painting in the middle of the view, up to 6 tiles away, is the one looked
+at (its frame across the middle column of the view), with how far the player
+is from it and how much of the width of the screen the painting covers. The
+track (every 100 ms) has it, and the file sums it up for every painting seen:
+how long it was looked at, in how many looks, how long it was on the screen
+at all, when it was first seen and first looked at, how near the player
+came, and whether it was liked at the end (`looks`).
+
+**The music room** (both views, `game.music_room`). 1 room of every game,
+never the start room or a food room, has a gramophone in its middle (the
+player walks round it, as round the food). Near it (up to 3.2 tiles from its
+middle, so in the room or at its door) P or a click on the gramophone plays a
+record, and P or a click again stops it; a hint at the top says so. Each
+record is another of the 8 famous pieces of `js/music.js`, real recordings
+(Debussy's Clair de lune, the first movement of Beethoven's Moonlight Sonata,
+Satie's first Gymnopedie, the Prelude of Bach's first cello suite, the
+Romanze of Mozart's Eine kleine Nachtmusik, the first movement of Vivaldi's
+Spring, Chopin's Nocturne op. 9 no. 2 and Pachelbel's Canon), in an order
+shuffled for the game; what plays, who plays it and its licence is shown at
+the top while it plays, and notes rise from the horn. The music is loudest in
+the room and fades out on the way to the rooms around it (gone 9 tiles
+away); it stops at its end or at the end of the game. While it plays, the
+game's own quiet music rests. P when the sound is off turns the sound on (M
+mutes the gramophone too). Like the likes, the music costs nothing and is
+not a step. Every record played is recorded (`music`).
+
+**Sharpness** (3D). The game draws the 3D view as sharp as the computer can
+draw it quickly: its ray casting draws a picture of its own at 1 of 6 levels
+of the screen's pixels (100%, 84%, 71%, 59%, 45% and 32% across), the
+sharpest of at most 520,000 pixels at first, a level down when a drawing
+takes longer than 13 ms, a level up when the level above would take less
+than 10.5 ms (a level it had to leave is not tried again for 30 s). The
+paintings near enough to be at least 90 pixels high on the screen, the food,
+the signs, the gramophone and the mouse are drawn over it at the screen's
+own pixels, so they stay sharp at every level: a painting from its 512 pixel
+copy, or from its 1600 pixel copy for the room the player is in. The file
+records the screen, the level at the start, every change and the drawing
+times (`render`).
 
 **The mouse** (`game.player: "mouse"`). In 2D it is seen from above: its
 feet move in diagonal pairs with every step, its tail swings, its whiskers
@@ -200,8 +253,9 @@ Everything a study changes is in `settings.js`, with a comment on every key:
   this many ms with no key held), `count_steps` (`moves`: only moves use up
   the steps; `all`: every step, as in the model), `track_ms` (the player's
   place and view recorded every this many ms; 0: not at all), whether a
-  session starts with sound, the player (`player`: `mouse` or `arrow`) and
-  whether the mouse squeaks (`voice`).
+  session starts with sound, the player (`player`: `mouse` or `arrow`),
+  whether the mouse squeaks (`voice`), and the paintings, their Like plaques
+  and the music room (`paintings`, `likes`, `music_room`).
 - `conditions`: the versions of the game. A condition changes any key of
   `game`; under `food_rooms` it changes rooms or adds new ones.
 - `texts`: everything the player reads.
@@ -229,24 +283,42 @@ checks it as the model does. With `start_rooms: "environment"`,
 takes the start rooms, food rooms or steps of the maze's environment file.
 Rooms from row or column 10 on are named with a `_`: `s10_3`.
 
-### Paintings
+### Paintings and music
 
-`check/get_paintings.py` fetches about 48 public-domain landscape paintings
-from the Art Institute of Chicago, whose images of public-domain works are
-released under CC0, into `img/paintings/` (400 pixels wide, with
-`CREDITS.md` and `credits.json`), and packs them into `js/paintings.js`, which
-the page reads. It leaves out still lifes, food, portraits and violent
-scenes, and waits 1 second between requests, as the museum asks; run it once
-from the game's folder, with internet:
+The paintings come from [ArtEmis](https://www.artemisdataset.org)
+(Achlioptas et al., 2021), the 80,031 paintings of WikiArt that people named
+the emotions of: famous painters who died in 1955 or before (so their works
+are in the public domain), chosen so that the 8 emotions of ArtEmis are mixed
+(each painting's most named emotion; anger and disgust are rarer), with no
+food, nudity or violence in their titles, then found on Wikimedia Commons,
+which marks each as public domain or CC0. Their ArtEmis names (`artemis`) are
+in `js/paintings.js`; the emotions stay with the research team, outside this
+repository. The steps, in `check/media/` (only Python, run where there is
+internet):
 
 ```
-python check/get_paintings.py            # fetch and pack (about a minute)
-python check/get_paintings.py --pack     # pack again what is in img/paintings/
+python make_shortlist.py <artemis_dataset_release_v0.csv> <Contrastive.csv> artemis_shortlist.json
+python get_paintings.py      # finds each painting on Wikimedia Commons, downloads it (30 to 45 minutes)
+python get_music.py          # the recordings (about 5 minutes)
 ```
 
-Images can also be added to or taken out of `img/paintings/` by hand; run it
-with `--pack` after. The paintings are packed into a script, not loaded as
-image files, so that they also show when the game is opened from a file.
+`get_paintings.py` keeps a painting only when Wikimedia Commons has the same
+painting: the painter and the title match, the years agree within 5 (else it
+is another version), and no other ArtEmis painting has the same picture; it
+goes on where it stopped and never downloads a painting twice. Then the
+copies for the game (at most 1600 and 512 pixels on the longest side) go
+into the game with
+
+```
+python check/make_paintings.py <folder with paintings.json, large/ and small/> --music <folder with music.json and music/>
+```
+
+which writes `img/paintings/`, `js/paintings.js` (the list, with a small
+picture of every painting in 1 image, for paintings far away and for the
+game opened from a file), `audio/music/`, `js/music.js` and both
+`CREDITS.md`. The game loads the image of a painting only when the player
+comes near it: the 512 pixel copies of the room the player is in and the
+rooms next to it, and the 1600 pixel copies of the room the player is in.
 
 ### Links
 
@@ -378,7 +450,7 @@ Every file has at its top:
 | Key | |
 |---|---|
 | `trial_type` | `foraging-game` (for DataPipe's validation) |
-| `format`, `format_version`, `file` | `foraging-game`, 6, and `game` or `partial game` |
+| `format`, `format_version`, `file` | `foraging-game`, 7, and `game` or `partial game` |
 | `game_version` | the version of this code |
 | `player`, `player_code` | the player code (8 hex digits), and whether it was `new` or `kept in this browser` |
 | `session_id`, `session_started`, `test` | a random id of the page's visit, when it opened (UTC), test or not |
@@ -413,9 +485,16 @@ adds up to about one frame (`frame_ms`).
 | `walks_back` | every time the player went out into a door or corridor and back into the same room: `{left_at, back_at, step (steps taken before), room, toward, move, furthest (the share of the way to the next room's floor reached)}` |
 | `maze_def` | the maze as the game had it: `rooms` (colour numbers, -1 for no room) and, for a maze of the team, `team`: its drawing (`shape`), `start`, `food` (cheese and bread rooms), `moves`, `saved_by`, `saved_at` |
 | `started`, `started_at`, `ended` | `ended`: `{how, step, moves, idle_stays, space_stays, at}`: how is `finished`, `starved` or `page closed` (then `at` is when the page closed); `step` the steps of the world (moves and stays), `moves` the moves, `idle_stays` and `space_stays` the stays standing still and by Space |
-| `track` | the place and the view of the player every `track_ms` (100) during the game: `{every_ms, fields, rows}`, a row `[t, x, y, angle, step]` taken at the first screen frame from each mark on (so about 100 ms apart, more while the tab is hidden): `x`, `y` in tiles from the top left of the maze (a room is 4 tiles, a corridor 3, `x` to the right, `y` down), `angle` the way the player looks in degrees (0 east, 90 south; null in 2D), `step` the steps taken by then. Null when `track_ms` is 0. Not in the short form |
+| `track` | the place and the view of the player every `track_ms` (100) during the game: `{every_ms, fields, rows}`, a row `[t, x, y, angle, step, look, look_d, look_share, music]` taken at the first screen frame from each mark on (so about 100 ms apart, more while the tab is hidden): `x`, `y` in tiles from the top left of the maze (a room is 4 tiles, a corridor 3, `x` to the right, `y` down), `angle` the way the player looks in degrees (0 east, 90 south; null in 2D), `step` the steps taken by then; `look` the place of the painting in the middle of the view (3D, see `gallery`; null when none is, and in 2D), `look_d` how far away it is (tiles), `look_share` how much of the width of the screen it covers (0 to 1); `music` how loud the gramophone is where the player is (0 to 1; null when it does not play). Null when `track_ms` is 0. Not in the short form |
 | `steps` | 1 row per step, step 0 being the start (below) |
 | `turns` | 3D: every turn, `{t, step (steps taken before it), key, from, to, from_angle, to_angle, ms, held_ms}`: `from` and `to` are the doors faced (`RIGHT`, `DOWN`, `LEFT`, `UP`), the angles in degrees (0 east, 90 south), `held_ms` how long the key was held. A turn still going on when a step is taken ends there (`split`), and the rest is a turn of its own (`continued`, with no key press of its own) |
+| `gallery_seed` | the seed the paintings were hung and the music room and its records picked with |
+| `gallery` | 3D: the paintings on the walls: `{source (paintings, or landscapes with game.paintings false), likes (whether plaques hang), places}`, a place `{place, room, side, painting, artemis}`: its number (place k is side k % 4 of the room k / 4 in the order of `maze_def`, sides `east`, `south`, `west`, `north`), the room, the side of the room the wall is on, the painting (its id in `js/paintings.js`, or `landscape_<n>`) and its name in ArtEmis. Null in 2D |
+| `looks` | 3D: every painting seen during the game: `{place, painting, room, side, look_ms, looks, seen_ms, first_seen_at, first_look_at, nearest, liked, likes}`: how long it was in the middle of the view (up to 6 tiles away) in all, in how many looks, how long any of it was on the screen, when it was first on the screen and first looked at, how near (tiles) the player came while looking at it, whether it was liked at the end, and how often it was liked or un-liked. Times are frames of the screen added up (a frame counts at most 250 ms). Null in 2D |
+| `likes` | 3D: every like and un-like: `{t, step (steps taken before it), place, painting, room, side, liked, by, d}`: `liked` true for a like, false when it was taken back, `by` `L` (the painting in the middle of the view) or `click` (its plaque), `d` how far away the painting was (tiles). Null in 2D |
+| `clicks` | every click on the view during the game: `{t, step, x, y (CSS pixels on the view), on (plaque, gramophone or null), place, outcome (like, unlike, music on, music off, ignored: not at the gramophone, nothing)}` |
+| `music` | the music room: `{room, pieces (the records in the order they come), plays}`, a play `{piece, started_at, step, by (P or click), stopped_at, stopped_by (P, click, ended, game over, or failed: why), played_s (seconds of it played)}`. Null with `game.music_room` false |
+| `render` | 3D: the sharpness: `{levels, screen {width, height, pixel_ratio}, at_start {level, width, height}, level, width, height (at the end), changes, draw_ms}`, a change `{t, level, scale, width, height, why (slow, fast, window size, start), draw_ms}`, `draw_ms` the median and 90th percentile time of a drawing, how many drawings, and the ray casting's and the rest's share at the end. Null in 2D |
 | `result` | the game as a model run: `settings` (world, run, satiety) and `rows` as in `forage.v3.record`, for `forage.lab.measures.of_run`; laid over the defaults of `forage.v3.settings` they are valid settings of a model run |
 
 A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
@@ -456,7 +535,9 @@ not recorded 1 by 1), `with` (Shift, Ctrl, Alt, Meta, when held), `phase`
 (`menu`, `game 3`, `end 3`) and `outcome`: in a game `walk`, `back` (3D, the
 down arrow), `stay`, `turn`, `not allowed` (a move on a first step that must
 be a stay), `ignored: too soon`, `ignored: key`,
-`ignored: with Ctrl, Alt or Meta`; on the first page `view`, `maze`, `row`, `play`, `ignored: not
+`ignored: with Ctrl, Alt or Meta`, and for L and P `like`, `unlike`,
+`ignored: no painting in view`, `ignored: no likes`, `music on`, `music off`,
+`ignored: not at the gramophone`, `ignored: no music room`; on the first page `view`, `maze`, `row`, `play`, `ignored: not
 ready`; at the end of a game `menu`; anywhere `sound on` or `sound off` (M),
 `ignored: too soon` or `ignored: key`, or null for a key nothing listens to (a
 key release, a key between 2 screens). A walk taken with a key held on has no
@@ -507,7 +588,7 @@ python check/rules_check.py          # the rules against the model, 2,000 random
 python check/export_mazes.py --check # js/mazes.js is the model's mazes
 python check/layout_check.py         # the maze drawn as in the model's films (needs node)
 python check/map_check.py            # what the player is shown against the model's agent (a few minutes)
-node check/play_check.js out/        # games in Chromium, 2D and 3D (needs Playwright; about 35 minutes;
+node check/play_check.js out/        # games in Chromium, 2D and 3D (needs Playwright; about 55 minutes;
                                      # --only hold,closed for some scenarios, --files out/ to check saved files again)
 python check/data_check.py out/      # the recorded games replayed through the model
 python check/draw_route.py GAME.json # the way a player went, as on the end page (needs matplotlib)
@@ -542,7 +623,18 @@ with DataPipe stood in for (with its validation of the required fields):
 - the page opened from a file;
 - the mouse in all 3 views, with the camera behind it checked at every place
   of the track (never in a wall, never with a wall between it and the mouse),
-  and the arrow player of the versions before 2.4.0 in 2D and 3D.
+  and the arrow player of the versions before 2.4.0 in 2D and 3D;
+- the paintings: a painting looked at and liked with L, L pressed again and
+  again while standing (the stays go on every second), a plaque clicked;
+- the music room in 2D and 3D: P at the gramophone, P a room away (nothing),
+  the music fading on the way out, a click on the gramophone to stop it.
+
+In every game the bot presses L and P now and then and clicks the view.
+Every file is checked: in 3D the paintings hung as the game's seed says
+(every wall another painting), the likes as the keys and clicks say, the
+looking as long as the track says, the sharpness recorded; in both views the
+music room as the seed says (never the start or a food room), the records in
+their order, 1 at a time, and stopped by the end of the game.
 
 `data_check.py` replays every game file through the model's world, checks
 its settings are those of a valid model run, scores it with the model's

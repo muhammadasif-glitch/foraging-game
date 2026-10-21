@@ -20,7 +20,12 @@
  * hand out a condition; DataPipe down, then the file sent on the next visit;
  * a tab closed in the middle of a game, then the partial game sent; the page
  * opened from a file; the mouse with the camera behind it and through its
- * eyes (the camera never in or behind a wall), and the old arrow player.
+ * eyes (the camera never in or behind a wall), and the old arrow player; the
+ * paintings (each game's hanging from its seed, looking, likes by L and by a
+ * click on a plaque, L held to stand before a painting without holding up
+ * the stays) and the music room (P and a click on the gramophone, in both
+ * views, the music fading with the way away). Every game the bot plays
+ * presses L and P now and then and clicks the view.
  */
 "use strict";
 var fs = require("fs");
@@ -49,6 +54,10 @@ require(path.join(ROOT, "js", "maze_tools.js"));
 require(path.join(ROOT, "settings.js"));
 require(path.join(ROOT, "js", "random.js"));
 require(path.join(ROOT, "js", "config.js"));
+require(path.join(ROOT, "js", "paintings.js"));
+require(path.join(ROOT, "js", "art.js"));
+require(path.join(ROOT, "js", "music.js"));
+require(path.join(ROOT, "js", "gramophone.js"));
 var R = globalThis.FG.rules;
 var Wd = globalThis.FG.world;
 var SETTINGS = globalThis.FG.SETTINGS;
@@ -87,7 +96,8 @@ function serve() {
           res.end();
           return;
         }
-        var type = p.endsWith(".js") ? "text/javascript" : p.endsWith(".css") ? "text/css" : "text/html";
+        var type = p.endsWith(".js") ? "text/javascript" : p.endsWith(".css") ? "text/css" :
+          p.endsWith(".jpg") ? "image/jpeg" : p.endsWith(".mp3") ? "audio/mpeg" : "text/html";
         res.writeHead(200, {"Content-Type": type});
         res.end(data);
       });
@@ -325,6 +335,18 @@ async function play(page, rnd, plan, opts) {
       if (rnd() < 0.03) {
         k = "x";
       }
+      if (!opts.noExtras) {
+        var ex = rnd();
+        if (ex < 0.05) {
+          // a like (3D), the gramophone, or a click on the view: free, a step never waits for them
+          await page.keyboard.press(ex < 0.025 ? "l" : "p");
+          await sleep(40);
+        } else if (ex < 0.07) {
+          var vp = page.viewportSize();
+          await page.mouse.click(Math.floor(vp.width * (0.3 + 0.4 * rnd())), Math.floor(vp.height * (0.25 + 0.4 * rnd())));
+          await sleep(40);
+        }
+      }
       if (rnd() < (s.here ? 0.45 : 0.18)) {
         // stands still: a stay every second with no key held
         await sleep(1100 + Math.floor(rnd() * 2400));
@@ -389,12 +411,183 @@ function roomOf(text) {
   return R.roomFromName(text);
 }
 
+/* The game going on, as the page keeps it (the slot sent if the page is
+ * closed). */
+function keptGame(page) {
+  return page.evaluate(function () {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k.indexOf(":slot:") >= 0 && /:game$/.test(k)) {
+        return JSON.parse(JSON.parse(localStorage.getItem(k)).text).game;
+      }
+    }
+    return null;
+  });
+}
+
+function movesOf(g) {
+  // the game over: its slot is gone
+  return g ? g.steps.filter(function (st) { return st.move !== "STAY"; }).length : Infinity;
+}
+
+/* The moves from room a to room b (names), the shortest way not through
+ * the rooms of avoid (names: food stands in their way). */
+function way(mazeName, a, b, avoid) {
+  var maze = R.maze(mazeName), from = {}, q = [roomOf(a)];
+  from[roomOf(a).join()] = null;
+  while (q.length) {
+    var r = q.shift();
+    if (R.roomName(r) === b) {
+      break;
+    }
+    maze.legal(r).forEach(function (m) {
+      var n = maze.next(r, m);
+      if (m !== "STAY" && !(n.join() in from) && (avoid || []).indexOf(R.roomName(n)) < 0) {
+        from[n.join()] = [r, m];
+        q.push(n);
+      }
+    });
+  }
+  var out = [];
+  for (var k = roomOf(b).join(); from[k]; k = from[k][0].join()) {
+    out.unshift(from[k][1]);
+  }
+  return out;
+}
+
+var BACK_MOVE = {LEFT: "RIGHT", RIGHT: "LEFT", UP: "DOWN", DOWN: "UP"};
+
+/* Where the player is now: [x, y, angle] (FG.game.where). */
+async function placeNow(page) {
+  var w = await page.evaluate(function () { return window.FG.game.where ? window.FG.game.where() : null; });
+  return w ? [w.x, w.y, w.angle] : null;
+}
+
+/* The middle of the door of the room the player is in, on the way to the
+ * next room that way (move). */
+function doorOf(g, move) {
+  var M = Wd.build(g.layout.maze), room = roomOf(g.steps[g.steps.length - 1].room);
+  var d = Wd.DIRS[move];
+  var t = Wd.doorAndCorridor(room[0], room[1], room[0] + d[0], room[1] + d[1], M.rs, M.cs);
+  return [t[0][1] + 0.5, t[0][0] + 0.5];
+}
+
+/* 2D: walks to the next room that way (a move): first in line with its
+ * door, then through it. */
+async function walk2d(page, move) {
+  var KEY = {LEFT: "ArrowLeft", RIGHT: "ArrowRight", UP: "ArrowUp", DOWN: "ArrowDown"};
+  var g = await keptGame(page);
+  if (!g) {
+    return;
+  }
+  var n0 = movesOf(g), door = doorOf(g, move), across = move === "LEFT" || move === "RIGHT" ? 1 : 0;
+  for (var i = 0; i < 40; i++) {
+    var at = await placeNow(page);
+    if (!at) {
+      return;
+    }
+    var off = door[across] - at[across];
+    if (Math.abs(off) < 0.2) {
+      break;
+    }
+    var side = across ? (off > 0 ? "DOWN" : "UP") : (off > 0 ? "RIGHT" : "LEFT");
+    await page.keyboard.down(KEY[side]);
+    await sleep(Math.min(250, 40 + Math.abs(off) * 90));
+    await page.keyboard.up(KEY[side]);
+    await sleep(120);
+  }
+  await page.keyboard.down(KEY[move]);
+  for (i = 0; i < 60; i++) {
+    await sleep(50);
+    if (movesOf(await keptGame(page)) > n0) {
+      break;
+    }
+  }
+  await page.keyboard.up(KEY[move]);
+  await sleep(150);
+}
+
+/* 3D: walks to the next room that way (a move): to its door, then through. */
+async function walk3d(page, move) {
+  var g = await keptGame(page);
+  if (!g) {
+    return;
+  }
+  var n0 = movesOf(g), door = doorOf(g, move);
+  for (var leg = 0; leg < 2; leg++) {
+    var at = await placeNow(page);
+    if (!at) {
+      return;
+    }
+    var far = Math.hypot(door[0] - at[0], door[1] - at[1]);
+    if (leg === 0 && far < 0.6) {
+      continue;
+    }
+    // first to the door, then on through it
+    await turnTo(page, leg === 0 ? (Math.atan2(door[1] - at[1], door[0] - at[0]) * 180 / Math.PI + 360) % 360 :
+      {RIGHT: 0, DOWN: 90, LEFT: 180, UP: 270}[move]);
+    await page.keyboard.down("ArrowUp");
+    for (var i = 0; i < 70; i++) {
+      await sleep(50);
+      if (movesOf(await keptGame(page)) > n0) {
+        break;
+      }
+      var now = await placeNow(page);
+      if (leg === 0 && now && Math.hypot(door[0] - now[0], door[1] - now[1]) < 0.5) {
+        break;
+      }
+    }
+    await page.keyboard.up("ArrowUp");
+    await sleep(250);
+    if (movesOf(await keptGame(page)) > n0) {
+      break;
+    }
+  }
+  await sleep(200);
+}
+
+/* 3D: turns to face target (degrees, 0 east, 90 south). */
+async function turnTo(page, target) {
+  for (var i = 0; i < 60; i++) {
+    var at = await placeNow(page);
+    if (!at) {
+      return;
+    }
+    var d = ((target - at[2] + 540) % 360) - 180;
+    if (Math.abs(d) < 6) {
+      break;
+    }
+    var key = d > 0 ? "ArrowRight" : "ArrowLeft";
+    await page.keyboard.down(key);
+    await sleep(Math.min(400, Math.max(40, Math.abs(d) * 5)));
+    await page.keyboard.up(key);
+    await sleep(350);
+  }
+}
+
+/* Where on the screen the pointer turns to a hand (a plaque, the
+ * gramophone), looking over the part of the view given (0 to 1). */
+async function findPointer(page, canvasId, x0, x1, y0, y1) {
+  var box = await page.locator("#" + canvasId).boundingBox();
+  for (var y = y0; y <= y1; y += 0.03) {
+    for (var x = x0; x <= x1; x += 0.02) {
+      var px = box.x + x * box.width, py = box.y + y * box.height;
+      await page.mouse.move(px, py);
+      var cur = await page.evaluate(function (id) { return document.getElementById(id).style.cursor; }, canvasId);
+      if (cur === "pointer") {
+        return {x: px, y: py};
+      }
+    }
+  }
+  return null;
+}
+
 /* A game file: the header, the steps against the rules and the map rule,
  * the moves against the keys and the view. */
 function checkGameFile(name, f) {
   var where = name;
   var g = f.game;
-  expect(f.format === "foraging-game" && f.format_version === 6, where + ": format");
+  expect(f.format === "foraging-game" && f.format_version === 7, where + ": format");
   expect(f.trial_type === "foraging-game", where + ": trial_type");
   expect(/^[0-9a-f]{8}$/.test(f.player), where + ": player code " + f.player);
   expect(/^[0-9a-f]{12}$/.test(f.session_id), where + ": session id");
@@ -486,8 +679,9 @@ function checkGameFile(name, f) {
       var prevStep = steps[t - 1];
       expect(st.entered_at - prevStep.entered_at >= s.idle_stay_ms - 40 || prevStep.move !== "STAY",
         where + " step " + t + ": an idle stay " + Math.round(st.entered_at - prevStep.entered_at) + " ms after the step before");
+      // L and P (likes, the music) do not hold up the stays
       var keyBetween = f.keys.some(function (k) {
-        return k.t > st.entered_at - s.idle_stay_ms + 40 && k.t < st.entered_at - 5;
+        return k.t > st.entered_at - s.idle_stay_ms + 40 && k.t < st.entered_at - 5 && !freeKey(k);
       });
       expect(!keyBetween, where + " step " + t + ": no key in the second before an idle stay");
     }
@@ -565,6 +759,8 @@ function checkGameFile(name, f) {
   }
   expect(g.draws.length === steps.length - 1, where + ": draws " + g.draws.length);
   checkTrack(where, g);
+  checkPaintings(where, f);
+  checkMusic(where, f);
   expect(g.result && g.result.rows.length === steps.length, where + ": result rows");
   var downs = f.keys.filter(function (k) { return k.type === "down" && k.phase === "game " + g.number; });
   var stayKeys = downs.filter(function (k) { return k.outcome === "stay"; });
@@ -645,10 +841,22 @@ function checkTrack(where, g) {
     return;
   }
   var tr = g.track;
-  if (!expect(tr && tr.every_ms === s.track_ms && tr.fields.join() === "t,x,y,angle,step" && tr.rows.length > 1,
-    where + ": track")) {
+  if (!expect(tr && tr.every_ms === s.track_ms && tr.fields.join() === "t,x,y,angle,step,look,look_d,look_share,music" &&
+    tr.rows.length > 1, where + ": track")) {
     return;
   }
+  var nPlaces = Wd.paintingPlaces(Wd.build(g.layout.maze)).list.length;
+  tr.rows.forEach(function (p, i) {
+    if (g.view !== "3d" || !g.gallery) {
+      expect(p[5] === null && p[6] === null && p[7] === null, where + ": track " + i + ": no painting looked at in 2D");
+    } else if (p[5] !== null) {
+      expect(p[5] >= 0 && p[5] < nPlaces && p[6] >= 0 && p[6] <= globalThis.FG_LOOK_FAR && p[7] >= 0 && p[7] <= 1,
+        where + ": track " + i + ": the painting looked at " + JSON.stringify(p.slice(5)));
+    } else {
+      expect(p[6] === null && p[7] === null, where + ": track " + i + ": nothing looked at");
+    }
+    expect(p[8] === null || (p[8] >= 0 && p[8] <= 1), where + ": track " + i + ": music " + p[8]);
+  });
   var M = Wd.build(g.layout.maze);
   var start = Wd.centre(M, R.roomFromName(g.layout.start_room));
   var first = tr.rows[0];
@@ -674,6 +882,130 @@ function checkTrack(where, g) {
   var mean = usual.reduce(function (a, b) { return a + b; }, 0) / Math.max(1, usual.length);
   expect(usual.length >= 0.95 * gaps.length && Math.abs(mean - s.track_ms) < 0.15 * s.track_ms,
     where + ": track every " + mean.toFixed(1) + " ms (" + (gaps.length - usual.length) + " long gaps of " + gaps.length + ")");
+}
+
+/* L and P: liking a painting and the gramophone; free, they do not hold
+ * up the stays. */
+function freeKey(k) {
+  return typeof k.key === "string" && /^[lLpP]$/.test(k.key);
+}
+
+/* The paintings of a 3D game: hung as its seed says (every place another
+ * painting), looking and likes as the keys and clicks say; in 2D none. */
+globalThis.FG_LOOK_FAR = 6;
+function checkPaintings(where, f) {
+  var g = f.game, s = g.settings, FGg = globalThis.FG;
+  var downs = f.keys.filter(function (k) { return k.type === "down" && k.phase === "game " + g.number; });
+  var lKeys = downs.filter(function (k) { return /^[lL]$/.test(k.key); });
+  if (g.view !== "3d") {
+    expect(g.gallery === null && g.looks === null && g.likes === null && g.render === null,
+      where + ": no paintings, likes or sharpness in 2D");
+    expect(lKeys.every(function (k) { return k.outcome === "ignored: no likes" || /^ignored/.test(k.outcome); }),
+      where + ": L does nothing in 2D");
+    return;
+  }
+  var M = Wd.build(g.layout.maze), places = Wd.paintingPlaces(M);
+  var real = s.paintings && FGg.art.count() > 0;
+  if (!expect(g.gallery && g.gallery.places.length === places.list.length && typeof g.gallery_seed === "number",
+    where + ": the gallery")) {
+    return;
+  }
+  var pics = FGg.art.hang(places.list, FGg.random.make(g.gallery_seed), real);
+  var ids = {}, sameAsSeed = 0;
+  g.gallery.places.forEach(function (pl, k) {
+    var info = FGg.art.info(pics[k]);
+    var want = info ? info.id : "landscape_" + (-1 - pics[k]);
+    var rm = M.list[places.list[k].room];
+    if (pl.painting === want && pl.place === k && pl.room === R.roomName([rm.i, rm.j]) &&
+        pl.side === Wd.SIDES[places.list[k].side] && pl.artemis === (info ? info.artemis : null)) {
+      sameAsSeed += 1;
+    }
+    ids[pl.painting] = (ids[pl.painting] || 0) + 1;
+  });
+  expect(sameAsSeed === places.list.length, where + ": the paintings hung as the seed says (" + sameAsSeed + " of " +
+    places.list.length + ")");
+  expect(g.gallery.source === (real ? "paintings" : "landscapes") && g.gallery.likes === (real && s.likes),
+    where + ": gallery source " + g.gallery.source);
+  if (real && places.list.length <= FGg.art.count()) {
+    expect(Object.keys(ids).length === places.list.length, where + ": every wall another painting");
+  }
+  // likes: each a change of its place, by L or a click on its plaque
+  var liked = {}, byL = 0, byClick = 0, last = -Infinity;
+  (g.likes || []).forEach(function (lk, i) {
+    expect(lk.place >= 0 && lk.place < places.list.length && lk.painting === g.gallery.places[lk.place].painting,
+      where + ": like " + i + " of place " + lk.place);
+    liked[lk.place] = !liked[lk.place];
+    expect(lk.liked === liked[lk.place], where + ": like " + i + " liked " + lk.liked);
+    expect(lk.t >= last && (lk.by === "L" || lk.by === "click"), where + ": like " + i + " at " + lk.t + " by " + lk.by);
+    last = lk.t;
+    if (lk.by === "L") {
+      byL += 1;
+    } else {
+      byClick += 1;
+    }
+  });
+  var lOutcomes = lKeys.filter(function (k) { return k.outcome === "like" || k.outcome === "unlike"; }).length;
+  expect(lOutcomes === byL, where + ": " + lOutcomes + " L keys that liked, " + byL + " likes by L");
+  var clickLikes = (g.clicks || []).filter(function (c) { return c.outcome === "like" || c.outcome === "unlike"; }).length;
+  expect(clickLikes === byClick, where + ": " + clickLikes + " clicks that liked, " + byClick + " likes by a click");
+  // looking: as long as the track says, roughly
+  var looks = g.looks || [];
+  var lookMs = 0;
+  looks.forEach(function (o, i) {
+    expect(o.place >= 0 && o.place < places.list.length && o.painting === g.gallery.places[o.place].painting &&
+      o.look_ms >= 0 && o.seen_ms >= 0 && (o.look_ms > 0) === (o.looks > 0) && o.liked === !!liked[o.place],
+      where + ": looks " + i + " " + JSON.stringify(o));
+    lookMs += o.look_ms;
+  });
+  var partial = /partial/.test(where);
+  if (!partial && g.track && g.track.rows.length > 20) {
+    var tracked = g.track.rows.filter(function (r) { return r[5] !== null; }).length * g.track.every_ms;
+    expect(Math.abs(lookMs - tracked) <= 0.25 * Math.max(lookMs, tracked) + 2000,
+      where + ": looked at paintings " + Math.round(lookMs) + " ms, the track says about " + tracked);
+  }
+  var rd = g.render;
+  expect(rd && rd.levels.length === 6 && rd.level >= 0 && rd.level < 6 && rd.width > 0 && Array.isArray(rd.changes),
+    where + ": sharpness " + JSON.stringify(rd && {level: rd.level, width: rd.width}));
+}
+
+/* The music room: a room neither the start nor a food room, as the seed
+ * says; the records in the order of the game; P and clicks as the plays. */
+function checkMusic(where, f) {
+  var g = f.game, s = g.settings, FGg = globalThis.FG;
+  var downs = f.keys.filter(function (k) { return k.type === "down" && k.phase === "game " + g.number; });
+  var pKeys = downs.filter(function (k) { return /^[pP]$/.test(k.key); });
+  if (!s.music_room) {
+    expect(g.music === null, where + ": no music room");
+    return;
+  }
+  if (!expect(g.music && typeof g.music.room === "string" && Array.isArray(g.music.plays), where + ": the music room")) {
+    return;
+  }
+  var maze = R.maze(g.layout.maze);
+  var rand = FGg.random.make(FGg.random.derive(g.gallery_seed, 1));
+  var notFree = [g.layout.start_room].concat(Object.keys(g.layout.food_rooms).map(function (n) { return g.layout.food_rooms[n]; }));
+  var free = maze.rooms().filter(function (r) { return notFree.indexOf(R.roomName(r)) < 0; });
+  expect(g.music.room === R.roomName(rand.pick(free)), where + ": the music room as the seed says, " + g.music.room);
+  expect(g.music.pieces.slice().sort().join() === FGg.MUSIC.map(function (m) { return m.id; }).sort().join(),
+    where + ": every record once");
+  var byP = 0;
+  g.music.plays.forEach(function (pl, i) {
+    expect(pl.piece === g.music.pieces[i % g.music.pieces.length], where + ": record " + i + " " + pl.piece);
+    expect(pl.by === "P" || pl.by === "click", where + ": record " + i + " by " + pl.by);
+    var open = i === g.music.plays.length - 1 && pl.stopped_at === null;
+    expect(open || (pl.stopped_at >= pl.started_at && pl.played_s >= 0 &&
+      /^(P|click|ended|game over|failed: .*)$/.test(pl.stopped_by)), where + ": record " + i + " " + JSON.stringify(pl));
+    if (i) {
+      expect(pl.started_at >= g.music.plays[i - 1].stopped_at, where + ": 1 record at a time");
+    }
+    byP += pl.by === "P" ? 1 : 0;
+  });
+  var on = pKeys.filter(function (k) { return k.outcome === "music on"; }).length;
+  expect(on === byP, where + ": " + on + " P keys that played, " + byP + " records by P");
+  if (!/partial/.test(where) && g.music.plays.length) {
+    var lastPlay = g.music.plays[g.music.plays.length - 1];
+    expect(lastPlay.stopped_at !== null, where + ": the music stops at the end of the game");
+  }
 }
 
 /* GitHub and GitHub Pages stood in for, for the saves of the maze editor:
@@ -1490,6 +1822,163 @@ function checkSaved(folder) {
   arn.forEach(function (n) { checkGameFile(n, ar.files[n]); });
   save("mouse_arrow", ar.files);
   await ar.context.close();
+
+  }
+  if (want("paintings")) {
+  // 12. the paintings: a painting looked at and liked with L, then L again
+  // and again while standing (the stays go on), a plaque clicked
+  var pc = await browser.newContext({viewport: {width: 1200, height: 800}});
+  var pp = await pc.newPage();
+  var perr = [], pfiles = {};
+  pp.on("pageerror", function (e) { perr.push(String(e)); });
+  await pipe(pp, pfiles, {value: "ok"}, 0);
+  await pp.goto(base + "?test=1&condition=linear_fast&set.steps=6");
+  await choose(pp, "3d", "grid_4x4");
+  await sleep(1200);
+  var looked = null;
+  for (var ti = 0; ti < 60 && !looked; ti++) {
+    await pp.keyboard.down("ArrowRight");
+    await sleep(70);
+    await pp.keyboard.up("ArrowRight");
+    // the turn slows down to a stop, then the painting must stay in the middle
+    await sleep(700);
+    var w1 = await pp.evaluate(function () { return window.FG.game.where(); });
+    await sleep(200);
+    var w2 = await pp.evaluate(function () { return window.FG.game.where(); });
+    looked = w1 && w2 && w1.look !== null && w1.look === w2.look ? w2 : null;
+  }
+  expect(looked, "paintings: a painting in the middle of the view");
+  await pp.keyboard.press("l");
+  await sleep(300);
+  var before = (await keptGame(pp)).steps.length;
+  for (var li = 0; li < 12; li++) {
+    await pp.keyboard.press("l");
+    await sleep(260);
+  }
+  var standing = (await keptGame(pp)).steps.slice(before).filter(function (st) { return st.by === "idle"; }).length;
+  expect(standing >= 2, "paintings: L pressed while standing, still " + standing + " idle stays in 3.4 s");
+  var plaque = await findPointer(pp, "c3d", 0.05, 0.95, 0.2, 0.7);
+  expect(plaque, "paintings: a plaque to click");
+  if (plaque) {
+    await pp.mouse.click(plaque.x, plaque.y);
+    await sleep(300);
+  }
+  var pg0 = await keptGame(pp);
+  var legal0 = pg0.steps[pg0.steps.length - 1].legal.filter(function (m) { return m !== "STAY"; })[0];
+  for (var mi = 0; mi < 6 && !(await ui(pp)).end; mi++) {
+    await walk3d(pp, mi % 2 ? BACK_MOVE[legal0] : legal0);
+  }
+  await waitFor(pp, async function () { return (await ui(pp)).end; }, 6000);
+  await sleep(1500);
+  var pn = gameFiles(pfiles);
+  if (expect(pn.length === 1, "paintings: 1 game file, got " + Object.keys(pfiles).join(" "))) {
+    var pgf = pfiles[pn[0]].game;
+    checkGameFile(pn[0], pfiles[pn[0]]);
+    var byKey = pgf.likes.filter(function (l) { return l.by === "L"; }).length;
+    var byClick = pgf.likes.filter(function (l) { return l.by === "click"; }).length;
+    expect(byKey >= 12 && byClick === 1, "paintings: likes by L " + byKey + ", by a click " + byClick);
+    expect(pgf.looks.some(function (o) { return o.look_ms > 1000; }), "paintings: a painting looked at for a second or more");
+    notes.push("paintings: " + pgf.looks.length + " paintings seen, " + pgf.likes.length + " likes, sharpness level " +
+      pgf.render.level + " (" + pgf.render.width + " x " + pgf.render.height + "), " + pgf.render.changes.length +
+      " changes, drawing " + pgf.render.draw_ms.median + " ms");
+  }
+  expect(perr.length === 0, "paintings: page errors " + JSON.stringify(perr));
+  save("paintings", pfiles);
+  await pc.close();
+
+  }
+  if (want("music")) {
+  // 13. the music room, in 2D and in 3D: P plays a record there, not a room
+  // away, the music fades on the way out, a click on the gramophone stops it
+  for (var vi = 0; vi < 2; vi++) {
+    var view = vi ? "3d" : "2d", walk = vi ? walk3d : walk2d, canvasId = vi ? "c3d" : "c2d";
+    var mc = await browser.newContext({viewport: {width: 1200, height: 800}});
+    var mp = await mc.newPage();
+    var merr = [], mfiles = {};
+    mp.on("pageerror", function (e) { merr.push(String(e)); });
+    await pipe(mp, mfiles, {value: "ok"}, 0);
+    // no plaques: only the gramophone can be clicked
+    await mp.goto(base + "?test=1&condition=linear_fast&set.steps=40&set.stomach.start=20&set.likes=false");
+    await choose(mp, view, "grid_4x4");
+    await sleep(1200);
+    var mg = await keptGame(mp);
+    // not through the food rooms: the food stands in the middle of the way
+    var foodNames = Object.keys(mg.layout.food_rooms).map(function (n) { return mg.layout.food_rooms[n]; });
+    var route = way("grid_4x4", mg.layout.start_room, mg.music.room, foodNames);
+    for (var ri = 0; ri < route.length; ri++) {
+      await walk(mp, route[ri]);
+      if (process.env.PLAY_DEBUG) {
+        var dbg = await keptGame(mp);
+        console.error("  music " + view + ": " + route[ri] + " -> " + (dbg ? dbg.steps[dbg.steps.length - 1].room +
+          ", energy " + dbg.steps[dbg.steps.length - 1].energy + " at " +
+          JSON.stringify(dbg.track.rows.slice(-1)[0]) : "the game is over"));
+        await mp.screenshot({path: path.join(OUT, "music_" + view + "_walk" + ri + ".png")});
+      }
+    }
+    if (vi) {
+      await mp.keyboard.down("ArrowUp");
+      await sleep(200);
+      await mp.keyboard.up("ArrowUp");
+    }
+    await sleep(500);
+    var hintShown = await mp.evaluate(function () { return !document.getElementById("gameHint").hidden; });
+    if (!expect(hintShown, "music " + view + ": the hint at the gramophone, " + mg.music.room + " by " + route.join(" "))) {
+      await mp.screenshot({path: path.join(OUT, "music_" + view + "_nohint.png")});
+    }
+    await mp.keyboard.press("p");
+    await sleep(2500);
+    var nowShown = await mp.evaluate(function () { return !document.getElementById("nowPlaying").hidden; });
+    expect(nowShown, "music " + view + ": what plays is shown");
+    var lastMove = route.length ? route[route.length - 1] : "LEFT";
+    await walk(mp, BACK_MOVE[lastMove]);
+    await sleep(1200);
+    await mp.keyboard.press("p");
+    await sleep(200);
+    await walk(mp, lastMove);
+    await sleep(600);
+    if (vi) {
+      // face the gramophone
+      var at0 = await placeNow(mp);
+      var gc = Wd.centre(Wd.build("grid_4x4"), roomOf(mg.music.room));
+      await turnTo(mp, (Math.atan2(gc[1] - at0[1], gc[0] - at0[0]) * 180 / Math.PI + 360) % 360);
+      await sleep(500);
+    }
+    var gram = await findPointer(mp, canvasId, vi ? 0.2 : 0, vi ? 0.8 : 1, vi ? 0.3 : 0, vi ? 0.8 : 1);
+    if (!gram) {
+      await mp.screenshot({path: path.join(OUT, "music_" + view + "_noclick.png")});
+    }
+    if (expect(gram, "music " + view + ": the gramophone to click")) {
+      await mp.mouse.click(gram.x, gram.y);
+      await sleep(400);
+    }
+    var mk = await keptGame(mp);
+    if (!expect(mk, "music " + view + ": the game goes on")) {
+      await mc.close();
+      continue;
+    }
+    expect(mk.music.plays.length === 1 && mk.music.plays[0].stopped_by === "click" && mk.music.plays[0].played_s > 2,
+      "music " + view + ": 1 record played, stopped by a click: " + JSON.stringify(mk.music.plays));
+    var mi2 = mk.track.fields.indexOf("music");
+    var heard = mk.track.rows.map(function (r) { return r[mi2]; }).filter(function (v) { return v !== null; });
+    expect(heard.length > 10 && Math.min.apply(null, heard) < 0.6 && Math.max.apply(null, heard) === 1,
+      "music " + view + ": loudest at the gramophone, less a room away (" + Math.min.apply(null, heard) + ")");
+    // the end: walking to and fro
+    for (var wi = 0; wi < 60 && !(await ui(mp)).end; wi++) {
+      await walk(mp, wi % 2 ? lastMove : BACK_MOVE[lastMove]);
+    }
+    await waitFor(mp, async function () { return (await ui(mp)).end; }, 6000);
+    await sleep(1500);
+    var mn2 = gameFiles(mfiles);
+    if (expect(mn2.length === 1, "music " + view + ": 1 game file")) {
+      checkGameFile(mn2[0], mfiles[mn2[0]]);
+      var keysP = mfiles[mn2[0]].keys.filter(function (k) { return k.type === "down" && k.key === "p"; });
+      expect(keysP.length === 2 && keysP[0].outcome === "music on" && keysP[1].outcome === "ignored: not at the gramophone",
+        "music " + view + ": P at the gramophone and a room away " + JSON.stringify(keysP.map(function (k) { return k.outcome; })));
+    }
+    expect(merr.length === 0, "music " + view + ": page errors " + JSON.stringify(merr));
+    save("music_" + view, mfiles);
+    await mc.close();
+  }
 
   }
   if (want("file")) {

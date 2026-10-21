@@ -53,6 +53,14 @@
                                   // steps and paw prints; arrow: a disc with an arrow, as before 2.4.0
       voice: true,                // with the mouse: its squeaks (a food room found, a wall, full)
                                   // and sniffs (a new room)
+      paintings: true,            // 3D: famous paintings on the walls (js/paintings.js), a different one on
+                                  // every wall, hung anew every game; false: the game's own landscapes, 1 for
+                                  // each room colour (as before 2.5.0)
+      likes: true,                // 3D, with paintings: a Like plaque beside every painting; L (the painting in
+                                  // the middle of the view) or a click on the plaque likes it, again un-likes it
+      music_room: true,           // 1 room of every game (never the start or a food room) has a gramophone:
+                                  // near it, P or a click plays a famous piece (js/music.js), again stops it
+                                  // (liking and the music cost nothing and do not hold up the stays)
       start_rooms: "random",      // random, a room such as "s00", or "environment": 1 of the start rooms
                                   // of the maze's environment file
       start_area: null,           // null: random start rooms anywhere; 4: only in rows and columns 0 to 3
@@ -106,7 +114,7 @@
       keys_2d: "<kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&rarr;</kbd> <kbd>&darr;</kbd> walk (hold) &middot; " +
         "<kbd>Space</kbd> stay &middot; <kbd>M</kbd> sound",
       keys_3d: "<kbd>&uarr;</kbd> walk &middot; <kbd>&darr;</kbd> back &middot; <kbd>&larr;</kbd> <kbd>&rarr;</kbd> turn &middot; " +
-        "<kbd>Space</kbd> stay &middot; <kbd>M</kbd> sound",
+        "<kbd>Space</kbd> stay &middot; <kbd>L</kbd> like &middot; <kbd>M</kbd> sound",
       menu_keys: "<kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd> choose &middot; " +
         "<kbd>Enter</kbd> play &middot; <kbd>M</kbd> sound",
       view_2d: "From above",
@@ -116,6 +124,10 @@
       starved: "You ran out of energy",
       eaten: "food eaten",
       full_sign: "full: eat again after you walk out",
+      like: "Like",               // the plaque beside a painting, and once liked
+      liked: "Liked",
+      music_play: "<kbd>P</kbd> play the gramophone",
+      music_stop: "<kbd>P</kbd> stop the music",
       again: "Press <kbd>Enter</kbd> to go back to the menu.",
       route: "Your way through the maze",
       saving: "Saving your game...",

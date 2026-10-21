@@ -240,13 +240,19 @@
   /* Where the paintings hang: on every side of every room, 1 painting
    * across 2 wall tiles, in the middle of the wall or beside its door.
    * Returns {at: Int16Array over (tile * 4 + side) giving the place's index
-   * or -1, list: [{colour, start, flip}]}: the tile in front of the wall,
-   * the side the wall is on from it (0 east, 1 south, 2 west, 3 north), the
-   * room colour, where the 2 tiles start along the wall, and whether the
-   * picture runs against the wall's coordinate when seen from the room. */
+   * or -1, list: [place]}: the tile in front of the wall, the side the wall
+   * is on from it (0 east, 1 south, 2 west, 3 north). A place: the room
+   * (its index in M.list) and its colour, the side, where the 2 tiles start
+   * along the wall, whether the picture runs against the wall's coordinate
+   * when seen from the room (flip), the wall itself (on x = wall for east and
+   * west, y = wall for south and north) and the first tile in front of it.
+   * Place k is side k % 4 of room k / 4 (sides in the order east, south,
+   * west, north). */
+  var SIDES = ["east", "south", "west", "north"];
+
   function paintingPlaces(M) {
     var at = new Int16Array(M.W * M.H * 4).fill(-1), list = [];
-    M.list.forEach(function (rm) {
+    M.list.forEach(function (rm, ri) {
       var colour = M.rooms[rm.i][rm.j];
       [[0, 1, 0], [1, 0, 1], [0, -1, 2], [-1, 0, 3]].forEach(function (d) {
         var door = -1;
@@ -257,12 +263,18 @@
         var from = door === 1 ? 2 : door === 2 ? 0 : 1;
         var side = d[2];
         var k = list.length;
-        // east and north walls run with the coordinate, seen from inside
-        list.push({colour: colour, start: (d[1] !== 0 ? rm.r0 : rm.c0) + from, flip: side === 1 || side === 2});
+        var wall = side === 0 ? rm.c0 + ROOM : side === 2 ? rm.c0 : side === 1 ? rm.r0 + ROOM : rm.r0;
+        var place = {room: ri, colour: colour, side: side, start: (d[1] !== 0 ? rm.r0 : rm.c0) + from,
+          // east and north walls run with the coordinate, seen from inside
+          flip: side === 1 || side === 2, wall: wall, alongX: d[1] === 0, front: -1};
+        list.push(place);
         for (var n = from; n < from + 2; n++) {
           var tile = d[1] !== 0 ? (rm.r0 + n) * M.W + (d[1] > 0 ? rm.c0 + ROOM - 1 : rm.c0) :
             (d[0] > 0 ? rm.r0 + ROOM - 1 : rm.r0) * M.W + rm.c0 + n;
           at[tile * 4 + side] = k;
+          if (place.front < 0) {
+            place.front = tile;
+          }
         }
       });
     });
@@ -280,6 +292,6 @@
   FG.world = {
     ROOM: ROOM, PALETTE: PALETTE, DIRS: DIRS, WALL: WALL, FLOOR: FLOOR, DOOR: DOOR, CORRIDOR: CORRIDOR,
     key: key, build: build, isRoom: isRoom, centre: centre, STAND: STAND, standPoint: standPoint,
-    paintingPlaces: paintingPlaces, lit: lit, doorAndCorridor: doorAndCorridor, textures: tex
+    paintingPlaces: paintingPlaces, SIDES: SIDES, lit: lit, doorAndCorridor: doorAndCorridor, textures: tex
   };
 })(typeof window !== "undefined" ? window : globalThis);

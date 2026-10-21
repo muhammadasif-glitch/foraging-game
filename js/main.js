@@ -24,9 +24,9 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "2.4.0";
+  FG.VERSION = "2.5.0";
   var FORMAT = "foraging-game";
-  var FORMAT_VERSION = 6;
+  var FORMAT_VERSION = 7;
   var TRIAL_TYPE = "foraging-game";
   // keys sooner than this after the first page or the end of a game appear
   // are taken as left over from the screen before
@@ -254,12 +254,39 @@
       scene = {maze: M, x: c[0], y: c[1], angle: facing * Math.PI / 2, facing: facing,
         lit: Wd.lit(M, all2, all2), food: [], here: null,
         mouse: mouse ? {phase: 0, move: 0, t: 0, eat: false, turn: 0} : null,
-        eye: mouse ? FG.mouse.EYE : 0.5};
+        eye: mouse ? FG.mouse.EYE : 0.5, gallery: v === "3d" ? previewGallery(M, start) : null};
       if (mouse && v === "3d" && cameraOf(entry) === "behind") {
         scene.camera = "behind";
         scene.cam = FG.mouse.camera(c[0], c[1], scene.angle, FG.mouse.cameraBack(M, c[0], c[1], scene.angle));
       }
       useView(v).draw(scene);
+    }
+
+    /* The paintings behind the first page: always the same ones for a maze,
+     * the images of the first room wanted. */
+    var previews = {};
+    function previewGallery(M, start) {
+      if (!FG.art) {
+        return null;
+      }
+      if (!previews[M.name]) {
+        var places = Wd.paintingPlaces(M);
+        var real = all.game.paintings && FG.art.count() > 0;
+        previews[M.name] = {pics: FG.art.hang(places.list, FG.random.make(7), real),
+          liked: new Uint8Array(places.list.length), likes: real && all.game.likes};
+      }
+      var gal = previews[M.name], here = M.index[Wd.key(start)];
+      FG.art.want([0, 1, 2, 3].map(function (sd) { return {p: gal.pics[here * 4 + sd], size: "small"}; }));
+      return gal;
+    }
+
+    /* The keys under the game: without L when no paintings can be liked. */
+    function keysText(v, settings) {
+      var t = text("keys_" + v);
+      if (v === "3d" && !(settings.paintings && settings.likes && FG.art && FG.art.count())) {
+        t = t.replace(/\s*&middot;\s*<kbd>L<\/kbd>\s*like/, "");
+      }
+      return t;
     }
 
     function header(kind) {
@@ -307,6 +334,9 @@
     };
 
     function buildMenu() {
+      if (FG.art) {
+        FG.art.setLabels(text("like") || "Like", text("liked") || "Liked");
+      }
       $("title").textContent = text("title");
       $("intro").textContent = text("intro");
       $("fullSign").textContent = text("full_sign");
@@ -432,11 +462,12 @@
       var settings = FG.config.gameSettings(all, session.condition.name, menuRec.maze, link);
       var layoutSeed = FG.random.derive(session.seed, n);
       var seed = FG.random.derive(session.seed, 1000 + n);
+      var gallerySeed = FG.random.derive(session.seed, 2000 + n);
       var lay = FG.config.layout(settings, null, FG.random.make(layoutSeed));
       var view = useView(viewOf(menuRec.view));
       only(null);
       $("hud").hidden = false;
-      $("gameKeys").innerHTML = text("keys_" + viewOf(menuRec.view));
+      $("gameKeys").innerHTML = keysText(viewOf(menuRec.view), settings);
       $("gameKeys").hidden = false;
       playing = true;
 
@@ -478,12 +509,21 @@
         }
       };
       var g = {number: n, view: viewOf(menuRec.view), camera: cameraOf(menuRec.view),
-        renderer: {draw: function (sc, again) { scene = sc; view.draw(sc, again); }},
-        settings: settings, layout: lay, seed: seed, layout_seed: layoutSeed, trial: !!trial,
+        renderer: {
+          draw: function (sc, again) { scene = sc; view.draw(sc, again); },
+          canvas: view.canvas,
+          look: function () { return view.look || null; },
+          seen: function () { return view.seen || {}; },
+          hit: function (x, y) { return view.hit ? view.hit(x, y) : null; },
+          mark: function () { return view.mark ? view.mark() : 0; },
+          renderInfo: function (m) { return view.renderInfo ? view.renderInfo(m) : null; }
+        },
+        settings: settings, layout: lay, seed: seed, layout_seed: layoutSeed, gallery_seed: gallerySeed,
+        trial: !!trial,
         onChange: trial ? null : function (rec) { latest = rec; keepGame(rec); }};
       if (trial) {
         refreshGame = null;
-        $("gameKeys").innerHTML = text("keys_" + viewOf(menuRec.view)) + " &middot; <kbd>Esc</kbd> back to the editor";
+        $("gameKeys").innerHTML = keysText(viewOf(menuRec.view), settings) + " &middot; <kbd>Esc</kbd> back to the editor";
       }
       return FG.game.play(g).then(function (rec) {
         playing = false;
@@ -708,6 +748,14 @@
       });
     }
 
+    if (FG.art) {
+      // an image of a painting behind the first page has come in
+      FG.art.onLoad(function () {
+        if (!playing && current === "3d" && scene && !$("menu").hidden) {
+          views["3d"].draw(scene);
+        }
+      });
+    }
     buildMenu();
     sizeViews();
     var start = loop();

@@ -8,6 +8,9 @@
  * different every time. In 3D the mouse's sounds have a short echo of the
  * room or corridor it is in (space).
  *
+ * While the gramophone of the music room plays (js/gramophone.js), the quiet
+ * music rests (duck).
+ *
  * Sound starts with the first key the player presses (browsers allow sound
  * only after one). The player turns it on and off with M or the button in
  * the corner; settings.js gives how a session starts (game.sound). Every
@@ -18,13 +21,13 @@
 
   var ctx = null, master = null, music = null, effects = null, noiseBuf = null;
   var mouseBus = null, echo = null;           // the mouse's sounds, and their echo in 3D
-  var on = true, unlocked = false;
+  var on = true, unlocked = false, ducked = false;
   var log = [];
   var listeners = [];
   var timer = null, nextBeat = 0, beat = 0;
   var steps = 0;
 
-  var BPM = 68;
+  var BPM = 68, MUSIC_GAIN = 0.55;
   // 8 bars, 1 chord a bar (MIDI notes): Cmaj7 Am7 Fmaj7 G6 Em7 Am7 Dm7 Gsus
   var CHORDS = [[48, 55, 59, 64], [45, 52, 55, 60], [41, 48, 52, 57], [43, 50, 52, 59],
     [40, 47, 50, 55], [45, 52, 55, 60], [38, 45, 48, 53], [43, 50, 53, 60]];
@@ -45,7 +48,7 @@
     master.gain.value = on ? 1 : 0;
     master.connect(ctx.destination);
     music = ctx.createGain();
-    music.gain.value = 0.55;
+    music.gain.value = ducked ? 0 : MUSIC_GAIN;
     effects = ctx.createGain();
     effects.gain.value = 0.9;
     // a soft echo for the music
@@ -232,6 +235,15 @@
     return function () {
       listeners = listeners.filter(function (f) { return f !== fn; });
     };
+  }
+
+  /* The game's own music rests (on true) while the gramophone plays. */
+  function duck(value) {
+    ducked = !!value;
+    if (ctx && music) {
+      music.gain.cancelScheduledValues(ctx.currentTime);
+      music.gain.setTargetAtTime(ducked ? 0 : MUSIC_GAIN, ctx.currentTime, ducked ? 0.25 : 0.8);
+    }
   }
 
   function ready() {
@@ -452,7 +464,7 @@
   }
 
   FG.sound = {
-    unlock: unlock, set: set, start: start, toggle: toggle, listen: listen,
+    unlock: unlock, set: set, start: start, toggle: toggle, listen: listen, duck: duck,
     step: step, crunch: crunch, bump: bump, grown: grown, end: end,
     patter: patter, squeak: squeak, sniff: sniff, nibble: nibble, space: space,
     get on() { return on; },

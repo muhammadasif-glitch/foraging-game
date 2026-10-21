@@ -194,6 +194,9 @@
     flag(s.sound, "sound");
     oneOf(s.player, ["mouse", "arrow"], "player");
     flag(s.voice, "voice");
+    flag(s.paintings, "paintings");
+    flag(s.likes, "likes");
+    flag(s.music_room, "music_room");
     number(s.idle_stay_ms, "idle_stay_ms", 200, 60000);
     oneOf(s.stomach.when_full, ["stop", "keep"], "stomach.when_full");
     var maze = R.maze(s.maze);

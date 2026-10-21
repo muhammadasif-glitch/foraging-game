@@ -1,6 +1,7 @@
 /* The 2D view: the same maze as the 3D view, seen from above. The same
- * colours, food and food signs; rooms the player does not know yet are dark,
- * and come into light as the player learns of them. */
+ * colours, food and food signs, and the gramophone of the music room; rooms
+ * the player does not know yet are dark, and come into light as the player
+ * learns of them. */
 (function (root) {
   "use strict";
   var FG = root.FG = root.FG || {};
@@ -159,6 +160,10 @@
       var cs = Math.max(2, T * 0.09);
       g.fillRect(cr.x * T - cs / 2, (cr.y - cr.z * 0.8) * T - cs / 2, cs, cs);
     });
+    this.gramophone = null;
+    if (scene.music && FG.gramophone) {
+      this.gramophone = drawGramophone(g, scene, M, T);
+    }
 
     var a = scene.heading !== undefined ? scene.heading : (scene.facing || 0) * Math.PI / 2;
     if (scene.mouse && FG.mouse) {
@@ -193,6 +198,39 @@
     g.lineTo(px + Math.cos(a - 0.55) * pr * 1.05, py + Math.sin(a - 0.55) * pr * 1.05);
     g.closePath();
     g.fill();
+  };
+
+  /* The gramophone in the middle of the music room, its notes rising while
+   * it plays; returns where it is (CSS pixels), for clicks. */
+  function drawGramophone(g, scene, M, T) {
+    var mu = scene.music, rm = M.list[M.index[Wd.key(mu.room)]];
+    var L = lightOf(scene, (rm.r0 + 1) * M.W + rm.c0 + 1);
+    if (L <= 0) {
+      return null;
+    }
+    var pic = FG.gramophone.sprite(), h = Wd.ROOM * T * 0.62, w = h * pic.w / pic.h;
+    var cx = mu.x * T, top = mu.y * T - h * 0.6;
+    g.globalAlpha = L;
+    g.drawImage(pic.canvas, cx - w / 2, top, w, h);
+    if (mu.playing) {
+      FG.gramophone.rising(mu.x, mu.y, mu.t0, performance.now()).forEach(function (n) {
+        var note = FG.gramophone.note(n.n), nh = T * 0.55, nw = nh * note.w / note.h;
+        g.globalAlpha = L * n.fade;
+        g.drawImage(note.canvas, n.x * T - nw / 2 - w * 0.2, top + h * 0.1 - (n.lift - 0.5) * T * 2.4, nw, nh);
+      });
+    }
+    g.globalAlpha = 1;
+    return {x0: cx - w / 2, y0: top, x1: cx + w / 2, y1: top + h};
+  }
+
+  /* What is at (x, y), CSS pixels on the canvas: {kind: "gramophone"} or
+   * null. */
+  View.prototype.hit = function (x, y) {
+    var r = this.gramophone;
+    if (r && x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) {
+      return {kind: "gramophone", place: null, d: 0};
+    }
+    return null;
   };
 
   FG.view2d = {create: function (canvas) { return new View(canvas); }};
