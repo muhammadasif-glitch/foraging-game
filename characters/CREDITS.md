@@ -20,7 +20,7 @@ made anew (below) and it is drawn at a person's or a dog's height.
 - The man and the woman stand, walk and run, and the robot walks and runs (it stands with its own
   clip), as people of the CMU Graphics Lab Motion Capture Database did (mocap.cs.cmu.edu; the database was created with funding from NSF
   EIA-0196217; free to use), as BVH files converted by Bruce Hahne (cgspeed), from
-  github.com/Shriinivas/cmubvh: trials 16_46, 35_01, 86_10, 91_29, 91_31.
+  github.com/Shriinivas/cmubvh: trials 07_01, 09_09, 16_46, 86_10, 91_29, 91_31.
 - The knight walks and runs with its own clips, and stands as the man does.
 - The dog stands with its own clip; its trot and gallop are made in check/dog_gait.py.
 

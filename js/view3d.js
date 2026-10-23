@@ -198,7 +198,8 @@
     (scene.food || []).forEach(function (f) {
       var c = Wd.centre(M, f.room);
       if (scene.here && Wd.key(scene.here.room) === Wd.key(f.room)) {
-        out.push({x: c[0], y: c[1], pic: F.sideView(f.kind, scene.here.level), size: FOOD_SIZE[f.kind] || 0.45,
+        out.push({x: c[0], y: c[1], pic: F.sideView(f.kind, scene.here.level),
+          size: (FOOD_SIZE[f.kind] || 0.45) * (scene.foodScale || 1),
           fade: scene.here.fade === undefined ? 1 : scene.here.fade});
       } else {
         var at = Math.floor(c[1]) * M.W + Math.floor(c[0]);

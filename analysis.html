@@ -4,84 +4,81 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>Foraging game: the team's data</title>
+  <title>Foraging game data</title>
   <link rel="stylesheet" href="css/analysis.css">
 </head>
 <body>
   <div id="lock" class="lock">
-    <form id="lock-form" class="card lock-card" autocomplete="off">
-      <div class="stamp">Team only</div>
-      <svg class="maze-mark" width="58" height="58" viewBox="0 0 58 58" aria-hidden="true">
-        <rect x="3" y="3" width="52" height="52" rx="3" fill="none" stroke="#23201b" stroke-width="2.5"/>
-        <path d="M3 21h17M38 3v18M21 38h34M21 21v17M38 38v17" fill="none" stroke="#23201b" stroke-width="2.5"/>
-        <path d="M43 9l8 7h-8z" fill="#e1a52c" stroke="#a5622d" stroke-width="1.2"/>
-        <circle cx="12" cy="46" r="3.4" fill="#b5472b"/>
-      </svg>
-      <h1>The team's data</h1>
-      <p class="lead">The games of the foraging game as tables, for the research team.</p>
+    <form id="lock-form" class="lock-box" autocomplete="off">
+      <h1>Foraging game data</h1>
+      <p class="muted">For the research team only.</p>
       <label for="password">Team password</label>
       <input id="password" type="password" spellcheck="false" autocapitalize="off" required>
       <button id="open" type="submit" class="primary">Open</button>
-      <p id="lock-note" class="note" style="margin-top: 16px">The password is the one the team saves mazes with.
-        Game files opened here stay on this computer: nothing is sent.</p>
+      <p id="lock-note" class="note">The password is the one the team saves mazes with. Game files opened here
+        stay on this computer: nothing is sent.</p>
     </form>
   </div>
 
-  <div id="app" class="page" hidden>
-    <header class="top">
-      <div>
-        <p class="kicker">Foraging game &middot; the team's data</p>
-        <h1>Games, step by step</h1>
-        <p class="sub">Open the game files saved by DataPipe. Each game becomes rows of tables, 1 row for each
-          observation, ready for Excel, SPSS, R or Python.</p>
-      </div>
-      <button id="lock-again" class="quiet" type="button">Lock</button>
+  <div id="app" hidden>
+    <header class="bar">
+      <b class="title">Foraging game data</b>
+      <label class="btn">Open files<input id="pick-files" type="file" multiple
+        accept=".json,.zip,application/json,application/zip" hidden></label>
+      <label class="btn">Open folder<input id="pick-folder" type="file" multiple webkitdirectory hidden></label>
+      <span id="opened" class="status"></span>
+      <span class="grow"></span>
+      <button id="print" class="btn" type="button" disabled>Print / PDF</button>
+      <button id="get-xlsx" class="btn" type="button" disabled>Excel (.xlsx)</button>
+      <button id="get-csv" class="btn" type="button" disabled>CSV + SPSS (.zip)</button>
+      <button id="lock-again" class="btn" type="button">Lock</button>
     </header>
+    <div id="progress" class="progress" hidden><span></span></div>
 
-    <section class="card">
-      <h2><span class="num">1</span>Open the game files</h2>
-      <div id="drop" class="drop" tabindex="0">
-        <p><strong>Drop game files here:</strong> the <code>.json</code> files of the games, a folder of them, or the
-          zip a storage gives for a folder.</p>
-        <div class="buttons">
-          <label class="button">Choose files<input id="pick-files" type="file" multiple
-            accept=".json,.zip,application/json,application/zip" hidden></label>
-          <label class="button">Choose a folder<input id="pick-folder" type="file" multiple webkitdirectory hidden></label>
+    <div class="body">
+      <aside id="filters" class="filters">
+        <div class="filters-in">
+          <div class="fhead"><b>Filter</b><button id="reset" class="link" type="button">all</button></div>
+          <div id="filter-list"></div>
+          <label class="check tests"><input id="with-tests" type="checkbox"> Test games (files marked TEST_)</label>
         </div>
-        <div id="progress" class="progress" hidden><span></span></div>
-      </div>
-      <p id="opened" class="note" style="margin-top: 12px"></p>
-    </section>
+      </aside>
 
-    <div id="results" hidden>
-      <div id="stats" class="stats"></div>
-
-      <section class="card">
-        <h2><span class="num">2</span>Download the tables</h2>
-        <label class="check"><input id="with-tests" type="checkbox"> Include test games (files marked TEST_)</label>
-        <div class="buttons">
-          <button id="get-xlsx" class="primary" type="button">Excel workbook (.xlsx)</button>
-          <button id="get-csv" type="button">CSV files for SPSS, R or Python (.zip)</button>
+      <main id="main">
+        <div id="drop" class="drop" tabindex="0">
+          <p><b>Drop game files here</b>, or use Open files or Open folder above.</p>
+          <p class="muted">The .json files DataPipe saved, a folder of them, or the .zip a storage gives for a
+            folder. They are read in this browser only.</p>
         </div>
-        <p class="note">The workbook has a sheet for each table and a sheet that says what every column holds. The zip
-          has a CSV file for each table, the same dictionary, and for SPSS a file of variable labels for each table.</p>
-        <div id="table-list" class="table-list"></div>
-      </section>
 
-      <section class="card">
-        <h2><span class="num">3</span>The games</h2>
-        <p class="note">Click a game to see it below. Click a heading to sort.</p>
-        <div class="scroll"><table id="games" class="ledger"></table></div>
-      </section>
-
-      <section id="game-card" class="card" hidden></section>
-
-      <section class="card">
-        <h2><span class="num">4</span>What the columns hold</h2>
-        <div id="dictionary"></div>
-      </section>
+        <div id="results" hidden>
+          <div class="print-head">
+            <h1>Foraging game: results</h1>
+            <p id="print-meta"></p>
+          </div>
+          <div id="numbers" class="numbers"></div>
+          <div class="grid">
+            <section class="panel wide" data-kind="table"><h2>Games by condition</h2><div id="by-condition"></div></section>
+            <section class="panel" data-kind="figure"><h2>Moves by condition</h2><div id="moves-chart"></div>
+              <p class="cap">1 point a game. Line: the mean.</p></section>
+            <section class="panel" data-kind="figure"><h2>Starved by condition</h2><div id="starved-chart"></div>
+              <p class="cap">Games that ended because the energy ran out.</p></section>
+            <section class="panel" data-kind="figure"><h2>Food rooms: level when leaving</h2><div id="leave-chart"></div>
+              <p class="cap">1 point a visit. Filled: patch room, open: small room, blue: the game picked.</p></section>
+            <section class="panel" data-kind="figure"><h2>Rooms entered <select id="heat-maze"></select></h2>
+              <div id="heat-chart"></div><p class="cap">Moves into each room, all games on this maze.</p></section>
+            <section class="panel full" data-kind="figure"><h2>Energy over the steps</h2><div id="energy-chart"></div>
+              <p class="cap">Grey: every game. Blue: the game picked.</p></section>
+            <section class="panel full screen" data-kind="table"><h2>Games <span class="muted">click a row to pick it</span></h2>
+              <div class="scroll"><table id="games" class="grid-table"></table></div></section>
+            <section id="game-card" class="panel full" data-kind="game" hidden></section>
+            <section class="panel full screen"><h2>Tables</h2><div id="table-list" class="table-list"></div>
+              <details class="dict"><summary>What the columns hold</summary><div id="dictionary"></div></details></section>
+          </div>
+        </div>
+      </main>
     </div>
-    <footer id="footer"></footer>
+    <footer id="footer" class="foot"></footer>
   </div>
 
   <script src="js/mazes.js"></script>

@@ -27,7 +27,7 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "2.6.0";
+  FG.VERSION = "2.7.0";
   var FORMAT = "foraging-game";
   var FORMAT_VERSION = 9;
   var TRIAL_TYPE = "foraging-game";
@@ -757,6 +757,8 @@
             escape(CH.INFO[n].picture) + '"><canvas hidden></canvas></div><div class="card-size">' +
             escape(CH.INFO[n].label) + '</div><div class="card-meta"><kbd>' + (i + 1) + '</kbd></div></div>';
         }).join("");
+        // as many columns as characters (css/game.css)
+        $("whoCards").style.setProperty("--who-n", String(list.length));
         var cards = Array.prototype.slice.call($("whoCards").children);
         var walk = 0, last = null, open = true;
         function mark() {

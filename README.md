@@ -74,9 +74,16 @@ The player walks freely, as in other games, while a key is held:
   degrees and a hold turns steadily (also while walking, to steer). A turn
   is not a step: it costs nothing and the world does not change; it is
   recorded.
+- A short press walks 1 step, always to its end (the mouse's step, or the
+  character's walking step). Held, the player walks for half a second
+  (`walk_first_ms`) and then runs; let go, it slows down and stops. Walking
+  backwards (3D) the mouse walks, then runs, as forwards; a character only
+  walks.
 - The walk speeds up and slows down; the player slides along walls, and
   walking into a wall next to a door slides into the door; doors and
-  corridors draw the player to their middle. The food stands in the way.
+  corridors draw the player to their middle. The food stands in the way
+  (through the eyes in 3D it is drawn smaller, 0.7 of its size, and is as
+  much smaller in the way, so that near it does not fill the screen).
   In 3D the view rises and sways a little with the mouse's strides.
 
 **What is a step.** A move is a step when the player walks onto the floor of
@@ -271,35 +278,45 @@ and the woman stand, walk and run as people of the CMU motion capture
 database did, and the robot walks and runs as they do; the knight has its
 own walk and run; the dog's trot and gallop are made for its skeleton
 (`check/dog_gait.py`). The clips are blended by the speed and turned as fast
-as the ground goes by, so the feet keep to the floor: the steps grow longer
-and quicker together, and their sound comes as each foot lands. Walking
-backwards plays them backwards; turning on the spot takes small steps.
+as the ground goes by: the steps grow longer and quicker together, and their
+sound comes as each foot lands. Walking backwards plays the walk backwards
+(never the run); turning on the spot takes small steps. The man and the robot
+walk as CMU trial 07_01 does and run as 09_09 does; the woman walks as 91_31
+and runs as 16_46.
 
 A fourth clip comes in while the character eats standing still in a food
 room (from the first bite until a moment after the last, or until it
-walks): the man, the woman, the knight and the robot bring the food to the
+walks). Food is eaten on the step that enters the room, while the character
+is still walking in: if it stands still within 2 s, it takes a bite then (a
+longer one, 1.7 s), so that eating is seen. The man, the woman, the knight
+and the robot bring the food to the
 mouth with the right hand, bite with the head bent to meet it and chew
 with the food held before the chest; the dog puts its head down to the
 floor and bites, its tail wagging.
 
-Each runs at a person's speed (a dog's for the dog): a wall is 3.2 m high, so
-the mouse's speed in 3D (4.5 tiles a second) would be 14 metres a second,
-faster than anyone runs. `game.same_speed: true` gives every character the
-mouse's speed instead (its legs then go faster than a person's).
+All go at the mouse's speed (`game.same_speed: true`, from 2.7.0): 4.5 tiles
+a second at the run in 3D, 7 in 2D, so a move takes as long whoever plays. A
+wall is 3.2 m high, so that is 14 metres a second, faster than anyone runs:
+a character's steps are longer and quicker than a person's, each by the
+square root of how much faster it goes (for the man 1.6 times each). Its walk
+(a short press, the first half second of a hold, and backwards) is as much
+of the top speed as its walk clip is of a person's run: about a quarter.
+`game.same_speed: false` gives each a person's speed (a dog's for the dog),
+as in 2.6.0, and its steps a person's length.
 
-| | eyes (3D, part of the height of a wall) | top speed | speed (part of the mouse's) | the camera behind it (tiles back, its height) | steps | voice |
-|---|---|---|---|---|---|---|
-| man | 0.52 | 5.5 m/s | 38% | 1.6, 0.78 | shoes | "hm" and a satisfied sigh |
-| woman | 0.48 | 5.3 m/s | 37% | 1.55, 0.74 | bare feet | 2 kinds of "hmm" |
-| dog | 0.19 | 6 m/s | 42% | 1.0, 0.42 | paws with the click of claws (made by the browser) | barks, a whine, panting |
-| mouse | 0.25 | 14.4 m/s | 100% | 1.6, 0.55 | its patter (below) | its squeaks |
-| robot | 0.42 | 5 m/s | 35% | 1.5, 0.70 | heavy metal steps | beeps, a glitch |
-| knight | 0.53 | 5 m/s | 35% | 1.65, 0.80 | boots in chain mail | the man's voice, deeper |
+| | eyes (3D, part of the height of a wall) | a person's top speed (`same_speed: false`) | the camera behind it (tiles back, its height) | steps | voice |
+|---|---|---|---|---|---|
+| man | 0.52 | 5.5 m/s | 1.6, 0.78 | shoes | "hm" and a satisfied sigh |
+| woman | 0.48 | 5.3 m/s | 1.55, 0.74 | bare feet | 2 kinds of "hmm" |
+| dog | 0.19 | 6 m/s | 1.0, 0.42 | paws with the click of claws (made by the browser) | barks, a whine, panting |
+| mouse | 0.25 | 14.4 m/s (always) | 1.6, 0.55 | its patter (below) | its squeaks |
+| robot | 0.42 | 5 m/s | 1.5, 0.70 | heavy metal steps | beeps, a glitch |
+| knight | 0.53 | 5 m/s | 1.65, 0.80 | boots in chain mail | the man's voice, deeper |
 
 The steps, voices and bites are recordings (CC0, Freesound), each played a
 little differently every time; a step on the stone of a corridor rings
-brighter than on the floor of a room. The speed is also a part of the speed
-of the game in 2D. In 2D each is seen from above (the same model) with
+brighter than on the floor of a room. With `same_speed: false` the speed is
+also a part of the speed of the game in 2D. In 2D each is seen from above (the same model) with
 prints of its own (shoes, bare feet, boots, paws, the treads of the robot).
 The dog sniffs in a room it has not been in. Everything else is the same for
 all: the body that bumps into walls, turning, the rules and the steps, so
@@ -614,7 +631,7 @@ adds up to about one frame (`frame_ms`).
 | `seed`, `draws` | the seed of the game's own random numbers for refills (not numpy's) and every draw, 1 per step, used or not: the draws reproduce the game |
 | `layout_seed` | the seed the layout was picked with |
 | `settings`, `speeds` | all the settings of this game, and the eating and refill speeds used |
-| `controls` | how the player moves: walking speeds and their speeding up and slowing down (tiles a second; a room is 4 tiles, a corridor 3; for the character), the size of the body, how long a stay takes, and in 3D how fast turning goes and speeds up; `speed_factor` (the character's part of the game's speed), `eye` (3D: the eyes, part of the height of a wall), `step_tiles` (the length of a step of the mouse, or of the character at its top speed: its steps grow with its speed; null for the arrow) |
+| `controls` | how the player moves: the top speed (`walk_tiles_per_s`, the run), the walk of a short press and of the first `walk_first_ms` of a hold (`first_tiles_per_s`), backwards (3D), their speeding up and slowing down (tiles a second; a room is 4 tiles, a corridor 3; for the character), the size of the body, how long a stay takes, and in 3D how fast turning goes and speeds up; `speed_factor` (the character's part of the game's speed), `eye` (3D: the eyes, part of the height of a wall), `step_tiles` (the length of a step of the mouse, or of the character at its top speed: its steps grow with its speed; null for the arrow), `tap_tiles` (how far a short press walks), `food_radius_tiles` (how wide the food stands in the way) |
 | `food_kinds` | the food each food room shows: `cheese` or `bread` |
 | `sound` | `on_at_start`, and `toggles`: every switch during the game, `{t, step, on, by}` |
 | `path`, `known_rooms` | the room of every step from step 0, and the rooms the player knew at the end (what the end page draws) |
@@ -707,14 +724,31 @@ linked from the game.
   They are read in the browser; nothing is sent anywhere. Files that are not
   games are listed and left out; test games (`TEST_`) are left out unless
   ticked (or unless all the games are tests).
-- **What it shows:** the games, sortable, and for each its facts, its route on
-  the maze (as on the end page), its energy and the food rooms' levels step
-  by step, its visits to food rooms and its steps.
-- **Downloads:** an Excel workbook (a sheet for each table, an `about` sheet
-  and a `dictionary` sheet that says what every column holds), and a zip of
-  CSV files for SPSS, R or Python (a CSV for each table, `dictionary.csv`,
-  a `README.txt`, and for SPSS a `<table>_labels.sps` that gives the
-  variables their labels after the CSV is opened).
+- **The filter** (on the left) chooses the games by condition, maze, view,
+  character and how they ended, each with its count; "all" takes every game
+  again.
+- **What it shows** for the games in the filter: their numbers (games,
+  players, starved, moves, food, visits, minutes), a table by condition
+  (games, players, and the mean and SD of moves, food eaten, energy at the
+  end, food-room visits and rooms entered, the share starved, the median
+  minutes), moves by condition (1 point a game, the mean), the share starved
+  by condition, the food level when a food room was left by the stays of the
+  visit (1 point a visit: the patch-leaving question), energy over the steps
+  (1 line a game), the moves into each room of a maze, and the games as rows,
+  sortable. A click on a row, a point or a line picks a game: it turns blue
+  in the charts and is shown in full below (its facts, its route on the maze
+  as on the end page, its energy and the food rooms' levels step by step, its
+  visits to food rooms and its steps). Only descriptive numbers are worked
+  out here: tests and models belong in SPSS or R.
+- **Print / PDF** prints the results as a report (the numbers, Table 1, the
+  figures numbered, the game picked on its own page), for a meeting or a
+  supervisor; the browser's print saves it as a PDF.
+- **Downloads** hold the games in the filter: an Excel workbook (a sheet for
+  each table, an `about` sheet that says which games and which filter, and a
+  `dictionary` sheet that says what every column holds), and a zip of CSV
+  files for SPSS, R or Python (a CSV for each table, `dictionary.csv`, a
+  `README.txt`, and for SPSS a `<table>_labels.sps` that gives the variables
+  their labels after the CSV is opened).
 
 The tables (`js/tables.js`; every column is described on the page and in the
 dictionary):
@@ -787,9 +821,9 @@ with DataPipe stood in for (with its validation of the required fields):
   condition from DataPipe, and the player code kept for the next visit;
 - a 3D game played to its last move, with turns, where stays do not use up moves;
 - running out of energy, with keys pressed during stays;
-- keys held down in 2D and 3D: walking on from room to room, steering while
-  walking, stays repeated, the sound switched with M and with the button, and
-  the route map drawn at the end;
+- keys held down in 2D and 3D: a short press walking 1 step, walking on from
+  room to room, steering while walking, stays repeated, the sound switched
+  with M and with the button, and the route map drawn at the end;
 - the environments of the model in both views, starting anywhere, with
   cheese and bread, and the settings that take rooms and steps from an
   environment file;
@@ -806,12 +840,14 @@ with DataPipe stood in for (with its validation of the required fields):
 - the page opened from a file, with a character (its model, clips and sounds);
 - the team's data page: locked, a wrong password refused and the right one not
   kept; 2 short games opened as a file and as a zip, a file that is no game
-  left out; every table as node makes it from the same files; a game's map
-  and energy drawn; the workbook (a sheet for each table) and the CSV zip
-  (with the dictionary and the SPSS labels); Lock forgetting the files;
+  left out; every table as node makes it from the same files; the numbers,
+  the table by condition and the charts, a game picked and its map and energy
+  drawn; the filter, and a workbook of the games in it; the workbook (a sheet
+  for each table) and the CSV zip (with the dictionary and the SPSS labels);
+  Lock forgetting the files;
 - the characters: each chosen on its page, in 3D behind it, through its eyes
-  and in 2D, its model in, its speed and steps, its eating coming in and
-  going again; the knight with the 3D view below level 0 (`?level=3`: drawn
+  and in 2D, its model in, all at the mouse's speed with a walk first and
+  only a walk backwards, its steps, its eating coming in and going again; the knight with the 3D view below level 0 (`?level=3`: drawn
   into a buffer, the canvas keeping its size); without WebGL the mouse, and why;
 - the mouse in all 3 views, with the camera behind it checked at every place
   of the track (never in a wall, never with a wall between it and the mouse),

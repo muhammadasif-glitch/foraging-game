@@ -1462,6 +1462,13 @@ function checkSaved(folder) {
     await choose(page, view, maze);
     await sleep(700);
     var up = view === "3d" ? "ArrowUp" : "ArrowRight";
+    // a short press walks 1 step, to its end
+    var where = function () { return page.evaluate(function () { return window.FG.game.where(); }); };
+    var p0 = await where();
+    await page.keyboard.press(up);
+    await sleep(1200);
+    var p1 = await where();
+    var tapped = p0 && p1 ? Math.hypot(p1.x - p0.x, p1.y - p0.y) : -1;
     async function hold(key, ms) {
       await page.keyboard.down(key);
       for (var w = 0; w < ms; w += 100) {
@@ -1543,6 +1550,9 @@ function checkSaved(folder) {
       var g = checkGameFile(n, files[n]);
       var held = g.steps.filter(function (st) { return st.held; });
       var heldStays = held.filter(function (st) { return st.move === "STAY"; });
+      var tap = g.controls.tap_tiles;
+      expect(tap > 0 && tapped > tap * 0.8 && tapped < tap * 1.6 + 0.05,
+        "hold " + view + ": a short press walks 1 step (" + tap + " tiles), walked " + tapped);
       expect(held.length >= 6 && heldStays.length >= 3, "hold " + view + ": held steps " + held.length + ", held stays " + heldStays.length);
       expect(g.sound.toggles.length === 2 && g.sound.toggles[0].by === "M" && g.sound.toggles[1].by === "button" &&
         g.sound.toggles[0].on === false && g.sound.toggles[1].on === true, "hold " + view + ": sound toggles " + JSON.stringify(g.sound.toggles));
@@ -1950,16 +1960,36 @@ function checkSaved(folder) {
       !f.character.fallback;
   }), "characters: 7 games, each as the character chosen (its model in), got " +
     JSON.stringify(csn.map(function (n) { return cs.files[n].character; })));
+  // all at the mouse's speed (game.same_speed); each walks first at its own walk, and only walks backwards
+  var c3 = csn.map(function (n) { return cs.files[n].game.controls; });
   expect(csn.length === 7 && cs.files[csn[2]].game.camera === "behind" && cs.files[csn[3]].game.view === "2d" &&
-    cs.files[csn[2]].game.controls.walk_tiles_per_s > cs.files[csn[0]].game.controls.walk_tiles_per_s &&
-    cs.files[csn[0]].game.controls.walk_tiles_per_s < cs.files[csn[6]].game.controls.walk_tiles_per_s,
-    "characters: the dog behind it, faster than the man, the man slower than the mouse; the woman in 2D");
-  // steps as long as the clips': a person's run, about a metre a step
+    c3.every(function (c, i) {
+      var top = cs.files[csn[i]].game.view === "2d" ? 7 : 4.5;
+      return c.walk_tiles_per_s === top && c.first_tiles_per_s > 0.149 * top && c.first_tiles_per_s < 0.46 * top &&
+        c.walk_first_ms === 500 && (top === 7 ? c.back_tiles_per_s === undefined :
+          i === 6 ? c.back_tiles_per_s === 2.5 : c.back_tiles_per_s === c.first_tiles_per_s);
+    }), "characters: all at the mouse's speed, a walk first, backwards a walk; the dog behind it, the woman in 2D " +
+    JSON.stringify(c3.map(function (c) { return [c.walk_tiles_per_s, c.first_tiles_per_s, c.back_tiles_per_s]; })));
+  // steps as long as the clips', longer as the characters go faster than a person: a run of 1 to 3.5 metres a step
   csn.slice(0, 6).forEach(function (n) {
     var c = cs.files[n].game.controls, st = c.step_tiles * (cs.files[n].game.view === "3d" ? CH_TILE : 1);
-    expect(c.step_tiles > 0 && (cs.files[n].game.view !== "3d" || (st > 0.4 && st < 2.2)),
-      "characters: " + cs.files[n].character.name + " step " + c.step_tiles + " tiles");
+    expect(c.step_tiles > 0 && c.tap_tiles > 0 && c.tap_tiles < c.step_tiles &&
+      (cs.files[n].game.view !== "3d" || (st > 0.4 && st < 3.6)),
+      "characters: " + cs.files[n].character.name + " step " + c.step_tiles + " tiles, a short press " + c.tap_tiles);
   });
+  // backwards a character only walks: no run at any speed
+  var backs = await cs.page.evaluate(async function () {
+    var CH = window.FG.characters, out = {};
+    for (var name of ["man", "woman", "dog", "robot", "knight"]) {
+      var m = await CH.load(name), fig = {phase: 1, move: 1, t: 0, eat: false, turn: 0, back: true};
+      m.state.t = null;
+      m.pose(fig);
+      out[name] = [+m.actions.run.getEffectiveWeight().toFixed(3), +m.actions.walk.getEffectiveWeight().toFixed(3)];
+    }
+    return out;
+  });
+  expect(Object.keys(backs).every(function (n) { return backs[n][0] === 0 && backs[n][1] > 0.99; }),
+    "characters: backwards only the walk (run and walk weights) " + JSON.stringify(backs));
   // eating standing still: the eat clip comes in, and goes once the bites stop
   var eats = await cs.page.evaluate(async function () {
     var CH = window.FG.characters, out = {};
@@ -2322,6 +2352,46 @@ function checkSaved(folder) {
     return {card: !document.getElementById("game-card").hidden, route: ink("route"), energy: ink("energy")};
   });
   expect(drawn.card && drawn.route > 1000 && drawn.energy > 1000, "analysis: a game's map and energy drawn " + JSON.stringify(drawn));
+  // the results: the numbers, the table by condition and the charts, the game picked in blue in them
+  var shown = await ap.evaluate(function () {
+    return {numbers: document.getElementById("numbers").textContent, rows: document.querySelectorAll("#by-condition tbody tr").length,
+      charts: ["moves-chart", "starved-chart", "leave-chart", "energy-chart", "heat-chart"].map(function (id) {
+        // a chart, or what is missing for it (no visit to a food room, say)
+        return document.querySelectorAll("#" + id + " svg, #" + id + " p.muted").length;
+      }), blue: document.querySelectorAll("svg .on").length};
+  });
+  expect(/^2 games/.test(shown.numbers) && shown.rows > 5 && shown.charts.join() === "1,1,1,1,1" && shown.blue >= 2,
+    "analysis: numbers, the table by condition, 5 charts, the game picked in them " + JSON.stringify(shown));
+  // the filter: without the 2D game 1 game is left, in the charts and in the downloads; then all again
+  await ap.click("#filter-list input[data-filter=view][data-value='2D']");
+  await sleep(300);
+  var filtered = await ap.evaluate(function () {
+    var st = window.FG.analysis.state;
+    return {games: st.games.length, rows: document.querySelectorAll("#games tbody tr").length,
+      lines: document.querySelectorAll("#energy-chart path.line").length};
+  });
+  expect(filtered.games === 1 && filtered.rows === 1 && filtered.lines === 1, "analysis: the filter leaves the 3D game " +
+    JSON.stringify(filtered));
+  var oneXlsx = await (async function () {
+    var dl = await Promise.all([ap.waitForEvent("download", {timeout: 30000}), ap.click("#get-xlsx")]);
+    var p = path.join(dir, "filtered.xlsx");
+    await dl[0].saveAs(p);
+    return ap.evaluate(function (b64) {
+      var s = atob(b64), a = new Uint8Array(s.length);
+      for (var i = 0; i < s.length; i++) { a[i] = s.charCodeAt(i); }
+      return window.FG.zipfile.read(a.buffer).then(function (en) {
+        var g = en.filter(function (e) { return e.name === "xl/worksheets/sheet3.xml"; })[0];
+        var about = en.filter(function (e) { return e.name === "xl/worksheets/sheet1.xml"; })[0];
+        return {rows: (new TextDecoder().decode(g.bytes).match(/<row /g) || []).length,
+          filter: /view not 2D/.test(new TextDecoder().decode(about.bytes))};
+      });
+    }, fs.readFileSync(p).toString("base64"));
+  })();
+  expect(oneXlsx.rows === 2 && oneXlsx.filter, "analysis: the download holds the games in the filter, and says so " +
+    JSON.stringify(oneXlsx));
+  await ap.click("#reset");
+  await sleep(300);
+  expect(await ap.evaluate(function () { return window.FG.analysis.state.games.length; }) === 2, "analysis: all games again");
   // the downloads
   async function fetchDownload(button) {
     var dl = await Promise.all([ap.waitForEvent("download", {timeout: 30000}), ap.click(button)]);

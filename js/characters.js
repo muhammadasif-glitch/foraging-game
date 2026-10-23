@@ -257,7 +257,8 @@
     var st = this.state, dt = st.t === null ? 0 : clamp(fig.t - st.t, 0, 0.1);
     st.t = fig.t;
     var v = clamp(fig.move || 0, 0, 1) * this.info.speed;
-    var go = smooth(0.04, 0.5, v), run = this.runShare(v);
+    // backwards it only walks
+    var go = smooth(0.04, 0.5, v), run = fig.back ? 0 : this.runShare(v);
     // turning on the spot: small steps
     var spin = (1 - go) * smooth(0.6, 2.5, Math.abs(fig.turn || 0));
     st.turnPhase += dt * Math.abs(fig.turn || 0) * 0.3;
@@ -304,6 +305,13 @@
     return Math.max(0.05, stride / 2 * tilesPerMetre);
   }
 
+  /* The character's walk as a share of its top speed: its walk clip's own
+   * pace; before the model has come in, a person's. */
+  function walkShare(name) {
+    var m = ready[name];
+    return m ? clamp(m.pace.walk.speed / INFO[name].speed, 0.15, 0.45) : 0.27;
+  }
+
   // ------------------------------------------------------------ the 3D view
   /* The camera of the 3D view (js/gl3d.js) as a 4 x 4 matrix: at cam
    * (x, y, eye height), looking along dir, x across the screen tx / fov,
@@ -340,7 +348,10 @@
     this.three.outputEncoding = THREE.sRGBEncoding;
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.Fog(0x000000, 0, 10);
+    // the sky light from above: three's z is up here (its own up is y, which
+    // would light whatever faces north and darken whatever faces south)
     this.sky = new THREE.HemisphereLight(0xfff6ea, 0x4a4440, 1);
+    this.sky.position.set(0, 0, 1);
     this.sun = new THREE.DirectionalLight(0xffffff, 1);
     this.back = new THREE.DirectionalLight(0xdfe8ff, 0.4);
     this.scene.add(this.sky, this.sun, this.sun.target, this.back, this.back.target);
@@ -436,6 +447,12 @@
         }
         this.target = new THREE.WebGLRenderTarget(w, h, {depthBuffer: true});
         this.target.texture.generateMipmaps = false;
+        // the maze's buffer holds screen colours (sRGB), as the canvas does;
+        // three.js r147 writes sRGB only to the canvas and to targets marked
+        // as XR ones (the mark changes nothing else for a buffer it does not
+        // make itself), so without it the character came out too dark
+        this.target.texture.encoding = THREE.sRGBEncoding;
+        this.target.isXRRenderTarget = true;
         three.setRenderTargetFramebuffer(this.target, fbo);
         this.targetOf = fbo;
       }
@@ -470,7 +487,7 @@
           var sun = new THREE.DirectionalLight(0xffffff, 1.35);
           var fill = new THREE.DirectionalLight(0xdfe8ff, 0.35);
           scene.add(sky, sun, fill);
-          pictures = {canvas: c, r: r, scene: scene, sun: sun, fill: fill, model: null,
+          pictures = {canvas: c, r: r, scene: scene, sky: sky, sun: sun, fill: fill, model: null,
             perspective: new THREE.PerspectiveCamera(30, 1, 0.05, 50), above: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 20)};
         }
       } catch (err) {
@@ -522,6 +539,7 @@
     cam.up.set(0, -1, 0);
     cam.lookAt(0, 0, 0);
     cam.updateProjectionMatrix();
+    P.sky.position.set(0, 0, -1);
     P.sun.position.set(-1, -2, -6);
     P.fill.position.set(2, 1, -3);
     P.scene.updateMatrixWorld(true);
@@ -549,6 +567,7 @@
     cam.position.set(0, H * 0.5 + E * 0.12, d);
     cam.lookAt(0, H * 0.48, 0);
     cam.updateProjectionMatrix();
+    P.sky.position.set(0, 1, 0);
     P.sun.position.set(-2, 4, 3);
     P.fill.position.set(3, 2, -2);
     P.scene.updateMatrixWorld(true);
@@ -608,7 +627,7 @@
   }
 
   FG.characters = {
-    LIST: LIST, INFO: INFO, TILE: TILE, is: is, load: load, loaded: loaded, stepTiles: stepTiles,
+    LIST: LIST, INFO: INFO, TILE: TILE, is: is, load: load, loaded: loaded, stepTiles: stepTiles, walkShare: walkShare,
     painter: function (gl) { return root.THREE ? new Painter(gl) : null; }, mazeCamera: mazeCamera,
     topView: topView, portrait: portrait, available: available, print2d: print2d
   };

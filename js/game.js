@@ -6,8 +6,11 @@
  *   3D  the up arrow walks where the player looks, the down arrow walks
  *       backwards, the left and right arrows turn (speeding up and slowing
  *       down: a tap turns a few degrees, a hold turns steadily).
- * The walk speeds up and slows down, slides along walls, and doors and
- * corridors guide the player to their middle. The food stands in the way.
+ * A short press walks 1 step, always to its end. Held, the player walks for
+ * walk_first_ms and then runs; let go, it slows down and stops. Backwards
+ * (3D) a character only walks. The walk speeds up and slows down, slides
+ * along walls, and doors and corridors guide the player to their middle.
+ * The food stands in the way.
  *
  * Steps. The moves are the model's: LEFT, RIGHT, UP, DOWN and STAY, 1 room
  * a step. A move is a step when the player walks onto the floor of the next
@@ -55,14 +58,24 @@
   // keys pressed sooner than this after a game starts are taken as left over
   // from the menu
   var TOO_SOON_MS = 300;
-  // how the player moves; written into every game file
+  // how the player moves; written into every game file. walk_tiles_per_s is
+  // the top speed, the run; first_tiles_per_s the walk of a short press and
+  // of the first walk_first_ms of a hold (for a character: its own walk)
   var CONTROLS = {
-    "2d": {walk_tiles_per_s: 7, speed_up_tiles_per_s2: 45, slow_down_tiles_per_s2: 60, body_radius_tiles: 0.3},
-    "3d": {walk_tiles_per_s: 4.5, back_tiles_per_s: 2.5, speed_up_tiles_per_s2: 16, slow_down_tiles_per_s2: 22,
-      turn_degrees_per_s: 130, turn_speed_up_degrees_per_s2: 1000, body_radius_tiles: 0.3}
+    "2d": {walk_tiles_per_s: 7, first_tiles_per_s: 2.1, walk_first_ms: 500, speed_up_tiles_per_s2: 45,
+      slow_down_tiles_per_s2: 60, body_radius_tiles: 0.3},
+    "3d": {walk_tiles_per_s: 4.5, first_tiles_per_s: 1.35, walk_first_ms: 500, back_tiles_per_s: 2.5,
+      speed_up_tiles_per_s2: 16, slow_down_tiles_per_s2: 22, turn_degrees_per_s: 130,
+      turn_speed_up_degrees_per_s2: 1000, body_radius_tiles: 0.3}
   };
-  // the food stands in the middle of its room, this wide (tiles)
-  var FOOD_RADIUS = {cheese: 0.42, bread: 0.32};
+  // a short press of the arrow (no steps of its own) walks this far (tiles)
+  var ARROW_STEP = 0.5;
+  // a character faster than a person (game.same_speed) takes longer steps
+  // and quicker ones: each by the square root of how much faster it goes
+  var LONGER_STEPS = 0.5;
+  // the food stands in the middle of its room, this wide (tiles); seen
+  // through the eyes in 3D, smaller (near, it filled the screen)
+  var FOOD_RADIUS = {cheese: 0.42, bread: 0.32}, EYES_FOOD = 0.7;
   // a room is entered this far onto its floor (tiles)
   var ENTER_TILES = 0.3;
   // doors guide the player when they are this far ahead (tiles), the walk
@@ -81,6 +94,9 @@
   // eyes, and how long its prints stay in 2D
   var FIG_BOB = 0.006, FIG_SWAY = 0.006, PRINT_MS = 1600;
   var MAX_PRINTS = 60, SQUEAK_MS = 1200, EAT_MS = 900;
+  // food eaten while walking into a room: a longer bite once the player
+  // stands, if it stands this soon after
+  var BITE_WAIT_MS = 2000, ARRIVE_BITE_MS = 1700;
   var GROW_MS = 700, BITE_MS = 320;
   var LIGHT_MS = 450, HERE_MS = 400;         // new rooms coming into light, the food coming into view
   var QUARTER = Math.PI / 2;
@@ -169,11 +185,20 @@
     // its top speed (metres a second) as a share of the game's in 3D (a
     // tile is CH.TILE metres); the same share in 2D
     var SPEED = FIG && !s.same_speed ? FIG.speed / (CH.TILE * CONTROLS["3d"].walk_tiles_per_s) : 1;
-    ["walk_tiles_per_s", "back_tiles_per_s", "speed_up_tiles_per_s2", "slow_down_tiles_per_s2"].forEach(function (k) {
+    ["walk_tiles_per_s", "first_tiles_per_s", "back_tiles_per_s", "speed_up_tiles_per_s2",
+      "slow_down_tiles_per_s2"].forEach(function (k) {
       if (C[k] !== undefined) {
         C[k] *= SPEED;
       }
     });
+    if (FIG) {
+      // a character's walk is as much of its top speed as its clips' walk is
+      // of a person's run; backwards it only walks
+      C.first_tiles_per_s = C.walk_tiles_per_s * CH.walkShare(s.player);
+      if (C.back_tiles_per_s !== undefined) {
+        C.back_tiles_per_s = C.first_tiles_per_s;
+      }
+    }
     var maze = R.maze(g.layout.maze);
     var M = Wd.build(g.layout.maze);
     var sp = FG.config.speeds(s.food);
@@ -197,10 +222,16 @@
     var BEHIND = three && (MOUSE || !!FIG) && g.camera === "behind";
     var CAMERA = three ? (BEHIND ? "behind" : "eyes") : null;
     var CAM = FIG ? FIG.camera : null;
+    var FOOD_SCALE = CAMERA === "eyes" ? EYES_FOOD : 1;
     var STEP = MOUSE_STEP;
-    // tiles a metre for a character's steps: in 3D a tile is CH.TILE metres;
+    // tiles a metre for a character's steps: in 3D a tile is CH.TILE metres,
+    // and the steps are longer if it goes faster than a person (LONGER_STEPS);
     // in 2D its top speed is as far as the view's top speed
-    var PER_METRE = FIG ? (three ? 1 / CH.TILE : C.walk_tiles_per_s / FIG.speed) : null;
+    var PER_METRE = FIG ? (three ? Math.pow(C.walk_tiles_per_s * CH.TILE / FIG.speed, LONGER_STEPS) / CH.TILE :
+      C.walk_tiles_per_s / FIG.speed) : null;
+    // the walk of a short press: 1 step
+    var TAP_TILES = MOUSE ? STEP[g.view] : FIG ? CH.stepTiles(s.player, C.first_tiles_per_s / C.walk_tiles_per_s,
+      PER_METRE) : ARROW_STEP;
     if (SND && SND.space) {
       SND.space(three && (MOUSE || FIG) ? "room" : null);
     }
@@ -227,7 +258,7 @@
     var scene = {maze: M, x: start[0], y: start[1], angle: facing0 * QUARTER, facing: facing0, heading: 0,
       lit: null, light: new Float32Array(M.W * M.H), food: [], here: null, crumbs: [], bob: 0, sway: 0, tilt: 0,
       back: 0,
-      eye: MOUSE ? FG.mouse.EYE : FIG ? FIG.eye : 0.5, camera: CAMERA, cam: null,
+      eye: MOUSE ? FG.mouse.EYE : FIG ? FIG.eye : 0.5, camera: CAMERA, cam: null, foodScale: FOOD_SCALE,
       mouse: MOUSE ? {phase: 0, move: 0, t: 0, eat: false, turn: 0} : null,
       figure: FIG ? {name: s.player, phase: 0, move: 0, t: 0, eat: false, turn: 0, back: false} : null, prints: [],
       now: 0};
@@ -241,12 +272,15 @@
     var order = 0;
     var vx = 0, vy = 0, omega = 0, bobPhase = 0, walked = 0;
     var gait = 0, lastEat = -1e9, lastSqueak = -1e9;
+    var biteFor = -1e9, biteAt = -1e9, biteMs = EAT_MS;   // the eating shown: for the food eaten at, since, how long
     var camBack = null;           // how far the camera is behind the mouse (BEHIND)
     if (BEHIND) {
       camBack = FG.mouse.cameraBack(M, scene.x, scene.y, scene.angle, CAM && CAM.back);
       scene.cam = FG.mouse.camera(scene.x, scene.y, scene.angle, camBack, CAM);
     }
     var moveStart = null;         // the walk since the player last stood still: {t, press, key, code, held, angle}
+    var heldSince = null;         // since when a walking key has been held (performance.now)
+    var tap = null;               // the step of a press, walked to its end: {left (tiles), f (3D), x, y (2D)}
     var away = null;              // the player out of the floor of its room: {left_at, side, furthest}
     var leftAt = null;            // when the player last left the floor of its room
     var crossing = null;          // another room whose floor the player has been on since the last step
@@ -313,6 +347,8 @@
         c.eye = three ? scene.eye : null;
         // a character's steps grow with its speed: at full speed
         c.step_tiles = MOUSE ? STEP[g.view] : FIG ? CH.stepTiles(s.player, 1, PER_METRE) : null;
+        c.tap_tiles = TAP_TILES;
+        c.food_radius_tiles = {cheese: FOOD_RADIUS.cheese * FOOD_SCALE, bread: FOOD_RADIUS.bread * FOOD_SCALE};
         return c;
       })(),
       started: new Date().toISOString(), started_at: REC.now(), ended: null, steps: steps, turns: turns,
@@ -546,7 +582,8 @@
         if (!known[Wd.key(fr)]) {
           continue;
         }
-        var c = Wd.centre(M, fr), rr = (kinds[names[i]] === "bread" ? FOOD_RADIUS.bread : FOOD_RADIUS.cheese) + RAD;
+        var c = Wd.centre(M, fr);
+        var rr = (kinds[names[i]] === "bread" ? FOOD_RADIUS.bread : FOOD_RADIUS.cheese) * FOOD_SCALE + RAD;
         if ((x - c[0]) * (x - c[0]) + (y - c[1]) * (y - c[1]) < rr * rr) {
           return false;
         }
@@ -774,6 +811,11 @@
         var p = Wd.standPoint(M, room, Wd.DIRS[FACING[facing0]]);
         scene.x = p[0];
         scene.y = p[1];
+        if (BEHIND) {
+          // the camera behind it from there, not sliding back from the middle
+          camBack = FG.mouse.cameraBack(M, scene.x, scene.y, scene.angle, CAM && CAM.back);
+          scene.cam = FG.mouse.camera(scene.x, scene.y, scene.angle, camBack, CAM);
+        }
       }
       $("gain").textContent = "";
       hud();
@@ -1221,6 +1263,9 @@
         if (t === 0 && s.first_step_stay) {
           return "not allowed";
         }
+        // the step starts with the press, however short it is
+        var d = Wd.DIRS[key];
+        walkHeld(three ? (key === "DOWN" ? -1 : 1) : 0, three ? 0 : d[1], three ? 0 : d[0], performance.now(), down[code]);
         return three && key === "DOWN" ? "back" : "walk";
       });
 
@@ -1465,13 +1510,36 @@
         voiceFor(st.row);
       }
 
+      /* A walking key is held (3D: f forward or backwards; 2D: towards x,
+       * y): the first press (press: its key, from down) starts the walk and
+       * its step. */
+      function walkHeld(f, x, y, now, press) {
+        if (heldSince === null) {
+          // still running from the last press: runs on
+          var running = Math.hypot(vx, vy) > C.first_tiles_per_s * 1.2;
+          heldSince = running ? now - C.walk_first_ms : now;
+          tap = {left: TAP_TILES, f: f, x: x, y: y, press: press || lastMoveKey()};
+        } else if (tap) {
+          tap.f = f;
+          tap.x = x;
+          tap.y = y;
+        }
+      }
+
       /* Moves the player for the keys held: speeding up and slowing down,
-       * sliding along walls, guided through doors. */
+       * sliding along walls, guided through doors. A short press walks its
+       * step to the end; a hold walks, then runs. */
       function updateBody(dt) {
-        var wx = 0, wy = 0, top = C.walk_tiles_per_s;
+        var wx = 0, wy = 0, top = C.walk_tiles_per_s, nowW = performance.now(), held = false;
         if (!ending) {
           if (three) {
             var f = (isDown("UP") ? 1 : 0) - (isDown("DOWN") ? 1 : 0);
+            held = f !== 0;
+            if (held) {
+              walkHeld(f, 0, 0, nowW);
+            } else if (tap) {
+              f = tap.f;
+            }
             if (f < 0) {
               top = C.back_tiles_per_s;
             }
@@ -1484,8 +1552,21 @@
             if (l > 0) {
               wx /= l;
               wy /= l;
+              held = true;
+              walkHeld(0, wx, wy, nowW);
+            } else if (tap) {
+              wx = tap.x;
+              wy = tap.y;
             }
           }
+        } else {
+          tap = null;
+        }
+        if (!held) {
+          heldSince = null;
+        }
+        if (!held || nowW - heldSince < C.walk_first_ms) {
+          top = Math.min(top, C.first_tiles_per_s);
         }
         wx *= top;
         wy *= top;
@@ -1505,7 +1586,8 @@
           speed = 0;
         }
         if (speed > 0 && pushing && !moveStart) {
-          var k = lastMoveKey();
+          // the key held, or the press of a step walked on after its key went up
+          var k = lastMoveKey() || (tap && tap.press) || null;
           moveStart = {t: REC.now(), press: k ? k.t : REC.now(), key: k ? k.key : "ArrowUp", code: k ? k.code : "",
             held: k ? k.t < shownAt : true, facing: FACING[scene.facing], angle: three ? degrees(scene.angle) : null};
         }
@@ -1542,6 +1624,13 @@
           guide(dt, Math.hypot(vx, vy));
           var moved = Math.hypot(scene.x - x0, scene.y - y0);
           walked += moved;
+          if (tap) {
+            tap.left -= moved;
+            // walked to its end, or stopped by a wall
+            if (tap.left <= 0 || (!held && moved < 1e-6)) {
+              tap = null;
+            }
+          }
           if (!three) {
             if (Math.hypot(vx, vy) > 0.3) {
               scene.heading = Math.atan2(vy, vx);
@@ -1587,6 +1676,15 @@
           }
           dirty = true;
         }
+        // the eating shown: a bite as the player eats standing, or, for food
+        // eaten on the way into the room, as soon as it stands (if it stands
+        // within BITE_WAIT_MS)
+        if (speed < 0.2 && lastEat > biteFor && nowW - lastEat < BITE_WAIT_MS) {
+          biteMs = nowW - lastEat < 50 ? EAT_MS : ARRIVE_BITE_MS;
+          biteFor = lastEat;
+          biteAt = nowW;
+        }
+        var eating = speed < 0.2 && nowW - biteAt < biteMs;
         if (FIG) {
           var fg = scene.figure, nowF = performance.now();
           fg.phase = gait;
@@ -1594,7 +1692,7 @@
           // walking backwards (3D): the clips run backwards
           fg.back = three && speed > 0.05 && vx * Math.cos(scene.angle) + vy * Math.sin(scene.angle) < 0;
           fg.t = nowF / 1000;
-          fg.eat = nowF - lastEat < EAT_MS && speed < 0.2;
+          fg.eat = eating;
           fg.turn += (omega - fg.turn) * Math.min(1, dt * 8);
           scene.now = nowF;
           while (scene.prints.length && nowF - scene.prints[0].t0 > PRINT_MS) {
@@ -1609,7 +1707,7 @@
           m.phase = gait;
           m.move += (Math.min(1, speed / C.walk_tiles_per_s) - m.move) * Math.min(1, dt * 12);
           m.t = now / 1000;
-          m.eat = now - lastEat < EAT_MS && speed < 0.2;
+          m.eat = eating;
           m.turn += (omega - m.turn) * Math.min(1, dt * 8);
           scene.now = now;
           while (scene.prints.length && now - scene.prints[0].t0 > FG.mouse.PRINT_MS) {

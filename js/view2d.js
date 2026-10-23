@@ -148,7 +148,9 @@
       g.globalAlpha = L;
       label(g, "food " + fd.worth, x0 + side / 2, y0 + T * 0.2, size);
       var top = y0 + T * 0.2 + size + 10, room2 = y0 + side - top;
-      if (!here) {
+      if (room2 < 4) {
+        // a very small window: only the sign
+      } else if (!here) {
         F.icon(g, fd.kind, x0 + side / 2, top + room2 * 0.45, Math.min(side * 0.42, room2 * 0.9));
       } else {
         g.globalAlpha = L * (scene.here.fade === undefined ? 1 : scene.here.fade);

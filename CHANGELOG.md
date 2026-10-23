@@ -1,5 +1,46 @@
 # Changes
 
+## 2.7.0
+
+- All characters go at the mouse's speed (`game.same_speed: true`, now the
+  default): a move takes as long whoever plays. Their steps are longer and
+  quicker than a person's, each by the square root of how much faster they
+  go. `game.same_speed: false` gives each a person's speed, as in 2.6.0.
+- A short press of an arrow walks 1 step, always to its end; held, the
+  player walks for half a second (`walk_first_ms`) and then runs; let go, it
+  slows down and stops. Backwards a character only walks (it ran backwards
+  at full speed before). The rules, the steps, the food and the energy do
+  not change.
+- The man and the robot walk and run as CMU trials 07_01 and 09_09 do (the
+  man walked as 35_01 did, which looked like a woman's walk).
+- Eating is seen: food is eaten on the step that enters a food room, while
+  the character is still walking in, so the bite never showed. Now, if it
+  stands still within 2 s, it takes a bite then.
+- The characters were drawn too dark and too red (the dog brown, the robot
+  red, the knight almost black) whenever the 3D picture was drawn below
+  level 0, into a buffer: three.js wrote the colours there unconverted. The
+  sky light also came from the north, so a character facing north was dark
+  from behind; it comes from above now, also in 2D and on the characters
+  page.
+- Through the eyes in 3D the food is drawn 0.7 of its size, and stands as
+  much less in the way, so that near it does not fill the screen.
+- Starting in a food room with the camera behind, the camera no longer
+  slides back at the start.
+- The team's data page is a working page now, like a statistics program's:
+  a filter on the left (condition, maze, view, character, how the games
+  ended), the numbers, a table by condition, moves and starving by
+  condition, the food level when a food room was left by the stays of the
+  visit, energy over the steps, the moves into each room of a maze, and the
+  games as rows; a game picked by a click is shown in full and in blue in
+  the charts. Print / PDF prints the results as a report with numbered
+  tables and figures. The downloads hold the games in the filter, and say
+  which. Building the tables takes as long as the games, no longer more.
+- The game's pages (the characters page, the first page, the end page, the
+  maze editor) are light and plain; the bar over the game stays dark.
+- The 2D view in a very small window no longer stops at drawing the food.
+- `controls` in the file has `first_tiles_per_s`, `walk_first_ms`,
+  `tap_tiles` and `food_radius_tiles` (format 9 still: 2.6.0 was never out).
+
 ## 2.6.0
 
 - Characters: the player can be a man, a woman, a dog, the mouse, a robot or

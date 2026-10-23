@@ -57,9 +57,9 @@
                                   // drawn with WebGL; else the mouse); or always 1 of them: man, woman,
                                   // dog, mouse, robot, knight (js/characters.js; mouse: js/mouse.js);
                                   // arrow: a disc with an arrow, as before 2.4.0
-      same_speed: false,          // false: each character runs at its own speed, a person's (js/characters.js:
-                                  // 5 to 7 metres a second, the mouse's 14); true: all at the speed of the
-                                  // mouse
+      same_speed: true,           // true: all at the speed of the mouse; false: each character runs at its
+                                  // own speed, a person's (js/characters.js: 5 to 6 metres a second, the
+                                  // mouse's 14)
       voice: true,                // the voice of the mouse or the character (a food room found, a wall,
                                   // full) and the sniffs of the animals (a new room)
       paintings: true,            // 3D: famous paintings on the walls (js/paintings.js), a different one on

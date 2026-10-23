@@ -754,7 +754,12 @@
         skipped.push({name: f.name, why: "could not be read: " + err.message});
         return;
       }
-      TABLES.forEach(function (t) { all[t.name] = all[t.name].concat(rows[t.name]); });
+      TABLES.forEach(function (t) {
+        var to = all[t.name], add = rows[t.name];
+        for (var i = 0; i < add.length; i++) {
+          to.push(add[i]);
+        }
+      });
     });
     var tables = TABLES.map(function (t) {
       var cols = columnsOf(t, foods);

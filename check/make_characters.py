@@ -42,8 +42,8 @@ TRIAL_FPS = {"143": 60}
 CHARACTERS = {
     "man": {
         "model": "models/man/bfbb95c3cb2b4e89a20d3d201b05045f.glb", "rig": "renderpeople",
-        "clips": {"idle": ("mocap", "86_10", 3110, 3250), "walk": ("mocap", "35_01", 144, 280),
-                  "run": ("mocap", "16_46", 54, 134), "eat": ("bite", -0.004, 0.058)},
+        "clips": {"idle": ("mocap", "86_10", 3110, 3250), "walk": ("mocap", "07_01", 55, 186),
+                  "run": ("mocap", "09_09", 35, 130), "eat": ("bite", -0.004, 0.058)},
     },
     "woman": {
         "model": "models/extra/woman_realistic/d1ce2b8009b8401481408aeecea903d0.glb", "rig": "cc",
@@ -64,8 +64,8 @@ CHARACTERS = {
     },
     "robot": {
         "model": "models/robot/8993602ca91f4c499e690e5dae19f978.glb", "rig": "robot",
-        "clips": {"idle": ("own", "IDLE"), "walk": ("mocap", "35_01", 144, 280),
-                  "run": ("mocap", "16_46", 54, 134), "eat": ("bite", 0.05, 0.08)},
+        "clips": {"idle": ("own", "IDLE"), "walk": ("mocap", "07_01", 55, 186),
+                  "run": ("mocap", "09_09", 35, 130), "eat": ("bite", 0.05, 0.08)},
     },
 }
 
