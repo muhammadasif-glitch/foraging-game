@@ -1,1 +1,4 @@
 * text=auto eol=lf
+# packed models and a minified library: no line diffs
+characters/*.js -diff
+js/three/*.js -diff

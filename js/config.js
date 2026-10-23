@@ -143,6 +143,9 @@
     return v;
   }
 
+  // who the player can be (game.player): chosen, a character, or the arrow
+  var PLAYERS = ["choose", "man", "woman", "dog", "mouse", "robot", "knight", "arrow"];
+
   function flag(v, place) {
     if (typeof v !== "boolean") {
       throw new SettingsError(place + " must be true or false, got " + JSON.stringify(v));
@@ -192,7 +195,8 @@
     number(s.track_ms, "track_ms", 0, 60000);
     flag(s.first_step_stay, "first_step_stay");
     flag(s.sound, "sound");
-    oneOf(s.player, ["mouse", "arrow"], "player");
+    oneOf(s.player, PLAYERS, "player");
+    flag(s.same_speed, "same_speed");
     flag(s.voice, "voice");
     flag(s.paintings, "paintings");
     flag(s.likes, "likes");
@@ -392,9 +396,15 @@
       throw new SettingsError("menu.views must list 1 or more of 2d, 3d, 3d_behind");
     }
     all.menu.views.forEach(function (v) { oneOf(v, ["2d", "3d", "3d_behind"], "menu.views"); });
-    if (all.menu.views.indexOf("3d_behind") >= 0 && all.game.player !== "mouse") {
-      throw new SettingsError("menu.views: 3d_behind (the camera behind the mouse) needs game.player mouse");
+    if (all.menu.views.indexOf("3d_behind") >= 0 && all.game.player === "arrow") {
+      throw new SettingsError("menu.views: 3d_behind (the camera behind the player) needs a character, not game.player arrow");
     }
+    if (!Array.isArray(all.menu.characters) || (all.game.player === "choose" && !all.menu.characters.length)) {
+      throw new SettingsError("menu.characters must list the characters to choose from (game.player choose)");
+    }
+    all.menu.characters.forEach(function (c) {
+      oneOf(c, PLAYERS.filter(function (n) { return n !== "choose" && n !== "arrow"; }), "menu.characters");
+    });
     all.menu.mazes.forEach(function (m) {
       checkMaze(all, m, link);
     });

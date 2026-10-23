@@ -58,9 +58,13 @@ require(path.join(ROOT, "js", "paintings.js"));
 require(path.join(ROOT, "js", "art.js"));
 require(path.join(ROOT, "js", "music.js"));
 require(path.join(ROOT, "js", "gramophone.js"));
+require(path.join(ROOT, "js", "characters.js"));
+require(path.join(ROOT, "js", "zipfile.js"));
+require(path.join(ROOT, "js", "tables.js"));
 var R = globalThis.FG.rules;
 var Wd = globalThis.FG.world;
 var SETTINGS = globalThis.FG.SETTINGS;
+var CH_TILE = globalThis.FG.characters.TILE;
 var FACING = ["RIGHT", "DOWN", "LEFT", "UP"];
 
 var problems = [];
@@ -181,7 +185,7 @@ function ui(page) {
       return kids.findIndex(function (c) { return c.classList.contains("on"); });
     }
     return {
-      menu: vis("menu"), end: vis("end"), message: vis("message"), hud: vis("hud"),
+      menu: vis("menu"), who: vis("who"), end: vis("end"), message: vis("message"), hud: vis("hud"),
       ready: !document.getElementById("play").disabled,
       view: on("views"), maze: on("mazes"),
       row: document.getElementById("viewLabel").classList.contains("active") ? 0 : 1,
@@ -207,15 +211,18 @@ function checkCamera(where, f) {
     expect(g.camera === null, where + ": no camera in 2D, got " + g.camera);
     return;
   }
-  var behind = f.menu.view === "3d_behind" && g.settings.player === "mouse";
+  // behind the mouse or a character (each its own camera), never the arrow
+  var behind = f.menu.view === "3d_behind" && g.settings.player !== "arrow";
   expect(g.camera === (behind ? "behind" : "eyes"), where + ": camera " + g.camera);
   if (!behind || !g.track || !globalThis.FG.MAZES[g.maze]) {
     return;
   }
+  var fig = globalThis.FG.characters.is(g.settings.player) ? globalThis.FG.characters.INFO[g.settings.player].camera : null;
+  var far = fig ? fig.back : globalThis.FG.mouse.BACK;
   var M = Wd.build(g.maze), bad = 0, faded = 0;
   g.track.rows.forEach(function (p) {
-    var a = p[3] * Math.PI / 180, back = globalThis.FG.mouse.cameraBack(M, p[1], p[2], a);
-    var cam = globalThis.FG.mouse.camera(p[1], p[2], a, back);
+    var a = p[3] * Math.PI / 180, back = globalThis.FG.mouse.cameraBack(M, p[1], p[2], a, far);
+    var cam = globalThis.FG.mouse.camera(p[1], p[2], a, back, fig);
     for (var d = 0; d <= back + 1e-9; d += 0.02) {
       var tx = Math.floor(p[1] - Math.cos(a) * d), ty = Math.floor(p[2] - Math.sin(a) * d);
       if (tx < 0 || ty < 0 || tx >= M.W || ty >= M.H || M.kind[ty * M.W + tx] === Wd.WALL) {
@@ -223,19 +230,40 @@ function checkCamera(where, f) {
         break;
       }
     }
-    faded += cam.back < globalThis.FG.mouse.BACK - 0.5 ? 1 : 0;
+    faded += cam.back < far - 0.5 ? 1 : 0;
   });
-  expect(bad === 0, where + ": the camera behind the mouse in or behind a wall at " + bad + " of " +
+  expect(bad === 0, where + ": the camera behind the " + g.settings.player + " in or behind a wall at " + bad + " of " +
     g.track.rows.length + " places");
-  notes.push(where + ": camera behind the mouse, more than 0.5 tiles closer than usual at " + faded + " of " + g.track.rows.length +
-    " places");
+  notes.push(where + ": camera behind the " + g.settings.player + ", more than 0.5 tiles closer than usual at " + faded +
+    " of " + g.track.rows.length + " places");
 }
 
 /* Chooses view and maze on the first page and presses Enter. */
-async function choose(page, view, maze) {
+async function choose(page, view, maze, character) {
   var views = SETTINGS.menu.views, mazes = SETTINGS.menu.mazes;
   await sleep(450);
   var s = await ui(page);
+  for (var w0 = 0; !s.who && !s.menu && w0 < 60; w0++) {
+    await sleep(200);
+    s = await ui(page);
+  }
+  if (s.who) {
+    // the characters page (with WebGL): the character asked for, else the
+    // one marked at first (the mouse)
+    await sleep(500);
+    var at = character ? SETTINGS.menu.characters.indexOf(character) : -1;
+    if (at >= 0) {
+      await page.keyboard.press(String(at + 1));
+      await sleep(150);
+    }
+    await page.keyboard.press("Enter");
+    for (var w1 = 0; !s.menu && w1 < 100; w1++) {
+      await sleep(200);
+      s = await ui(page);
+    }
+    await sleep(500);
+    s = await ui(page);
+  }
   for (var w = 0; !s.ready && w < 60; w++) {
     await sleep(200);
     s = await ui(page);
@@ -272,14 +300,24 @@ async function play(page, rnd, plan, opts) {
   for (var gi = 0; gi < plan.length; gi++) {
     var gp = plan[gi];
     var s = await ui(page);
-    for (var w = 0; !s.menu && w < 100; w++) {
+    for (var w = 0; !s.menu && !s.who && w < 100; w++) {
       await sleep(100);
       s = await ui(page);
     }
-    if (!expect(s.menu, "game " + (gi + 1) + ": the first page is shown")) {
+    if (!expect(s.menu || s.who, "game " + (gi + 1) + ": the first page is shown")) {
       return {keys: keys, games: games};
     }
-    await choose(page, gp.view, gp.maze);
+    if (gp.character && s.menu) {
+      // another character: C, back to the characters page
+      await sleep(600);
+      await page.keyboard.press("c");
+      for (var wc = 0; !s.who && wc < 60; wc++) {
+        await sleep(100);
+        s = await ui(page);
+      }
+      expect(s.who, "game " + (gi + 1) + ": C shows the characters");
+    }
+    await choose(page, gp.view, gp.maze, gp.character);
     var inGame = 0;
     for (var guard = 0; guard < 4000; guard++) {
       s = await ui(page);
@@ -587,7 +625,25 @@ async function findPointer(page, canvasId, x0, x1, y0, y1) {
 function checkGameFile(name, f) {
   var where = name;
   var g = f.game;
-  expect(f.format === "foraging-game" && f.format_version === 8, where + ": format");
+  expect(f.format === "foraging-game" && f.format_version === 9, where + ": format");
+  // the character: who the player was, how it came to be, and what that changed
+  var CH = globalThis.FG.characters, ch = f.character, INFO = CH.INFO;
+  if (expect(ch && typeof ch.name === "string" && ch.name === g.settings.player && Array.isArray(ch.choices) &&
+      ["chosen", "settings", "no choice"].indexOf(ch.how) >= 0, where + ": character " + JSON.stringify(ch))) {
+    var fig = CH.is(ch.name) ? INFO[ch.name] : null;
+    // a character's top speed is a person's (metres a second, a tile CH.TILE metres)
+    var speed = fig && !g.settings.same_speed ? fig.speed / (CH.TILE * 4.5) : 1;
+    expect(Math.abs(g.controls.speed_factor - speed) < 1e-9 &&
+      (g.view !== "3d" || g.controls.eye === (fig ? fig.eye : ch.name === "mouse" ? 0.25 : 0.5)),
+      where + ": the character's speed and eyes " + JSON.stringify(g.controls));
+    if (fig) {
+      expect(/^webgl/.test(g.view === "3d" ? g.render.renderer : "webgl"), where + ": a character only with WebGL");
+    }
+    ch.choices.forEach(function (c, i) {
+      expect(c.shown_at !== null && c.chosen_at >= c.shown_at && c.character && c.actions.length &&
+        c.actions[c.actions.length - 1].character === c.character, where + ": characters page " + i + " " + JSON.stringify(c));
+    });
+  }
   expect(f.trial_type === "foraging-game", where + ": trial_type");
   expect(/^[0-9a-f]{8}$/.test(f.player), where + ": player code " + f.player);
   expect(/^[0-9a-f]{12}$/.test(f.session_id), where + ": session id");
@@ -726,7 +782,7 @@ function checkGameFile(name, f) {
       where + " step " + t + ": entered " + st.entered_at + " after the walk began " + st.key_at);
     if (st.move === "STAY") {
       // (at the next screen frame: much later where WebGL is drawn by the processor)
-      expect(st.entered_at - st.key_at < (softGL(g.render) ? 1500 : 50), where + " step " + t + ": a stay is taken at its key");
+      expect(st.entered_at - st.key_at < (slowGL(g) ? 1500 : 50), where + " step " + t + ": a stay is taken at its key");
     }
     if (st.held) {
       // a key held on from before: the walk (or the stay) began without a press
@@ -841,6 +897,16 @@ function softGL(rd) {
   return !!(rd && /^webgl/.test(rd.renderer) && SOFTWARE_GL.test(rd.gpu || ""));
 }
 
+/* Whether the browser of the check draws WebGL by the processor; in 2D a
+ * character is drawn by WebGL too (the 2D game records no renderer). */
+var SOFT_BROWSER = false;
+function slowGL(g) {
+  return softGL(g.render) || (SOFT_BROWSER && g.view === "2d" && globalThis.FG.characters.is(g.settings.player));
+}
+function slowNote(g) {
+  return g.render ? g.render.gpu.match(SOFTWARE_GL)[0] + " (WebGL by the processor)" : "WebGL by the processor (a character in 2D)";
+}
+
 /* The place and the view of the player every track_ms: never in a wall, the
  * angle in 3D only, the steps taken by then, and about track_ms apart. */
 function checkTrack(where, g) {
@@ -889,8 +955,8 @@ function checkTrack(where, g) {
     }
   });
   expect(gaps.every(function (d) { return d > 0; }), where + ": track times go up");
-  if (softGL(g.render)) {
-    notes.push(where + ": drawn by " + g.render.gpu.match(SOFTWARE_GL)[0] + " (WebGL by the processor), the times of the track not checked");
+  if (slowGL(g)) {
+    notes.push(where + ": drawn by " + slowNote(g) + ", the times of the track not checked");
     return;
   }
   var usual = gaps.filter(function (d) { return d < 3 * s.track_ms; });
@@ -973,7 +1039,7 @@ function checkPaintings(where, f) {
     lookMs += o.look_ms;
   });
   var partial = /partial/.test(where);
-  if (!partial && g.track && g.track.rows.length > 20 && !softGL(g.render)) {
+  if (!partial && g.track && g.track.rows.length > 20 && !slowGL(g)) {
     var tracked = g.track.rows.filter(function (r) { return r[5] !== null; }).length * g.track.every_ms;
     expect(Math.abs(lookMs - tracked) <= 0.25 * Math.max(lookMs, tracked) + 2000,
       where + ": looked at paintings " + Math.round(lookMs) + " ms, the track says about " + tracked);
@@ -1143,6 +1209,43 @@ async function waitFor(page, test, ms) {
   return false;
 }
 
+/* A zip of files {name: text} made with node's own deflate, as a storage
+ * gives a folder (for the team's data page). */
+function zipOf(files) {
+  var zlib = require("zlib"), parts = [], dir = [], offset = 0;
+  Object.keys(files).forEach(function (name) {
+    var raw = Buffer.from(files[name], "utf8"), data = zlib.deflateRawSync(raw), nm = Buffer.from("games/" + name, "utf8");
+    var crc = zlib.crc32 ? zlib.crc32(raw) : globalThis.FG.zipfile.crc32(raw);
+    var h = Buffer.alloc(30);
+    h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt16LE(8, 8);
+    h.writeUInt32LE(crc, 14); h.writeUInt32LE(data.length, 18); h.writeUInt32LE(raw.length, 22); h.writeUInt16LE(nm.length, 26);
+    var c = Buffer.alloc(46);
+    c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(8, 10);
+    c.writeUInt32LE(crc, 16); c.writeUInt32LE(data.length, 20); c.writeUInt32LE(raw.length, 24); c.writeUInt16LE(nm.length, 28);
+    c.writeUInt32LE(offset, 42);
+    parts.push(h, nm, data);
+    dir.push(c, nm);
+    offset += 30 + nm.length + data.length;
+  });
+  var size = dir.reduce(function (a, b) { return a + b.length; }, 0), e = Buffer.alloc(22);
+  e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(dir.length / 2, 8); e.writeUInt16LE(dir.length / 2, 10);
+  e.writeUInt32LE(size, 12); e.writeUInt32LE(offset, 16);
+  return Buffer.concat(parts.concat(dir, [e]));
+}
+
+/* The team key of the checks: a secret locked with password, as js/team_save.js locks it. */
+async function testKeyFile(password) {
+  var subtle = require("crypto").webcrypto.subtle, rnd = require("crypto").randomBytes;
+  var salt = rnd(16), iv = rnd(12), iterations = 600000;
+  var base = await subtle.importKey("raw", Buffer.from(password), "PBKDF2", false, ["deriveKey"]);
+  var key = await subtle.deriveKey({name: "PBKDF2", salt: salt, iterations: iterations, hash: "SHA-256"}, base,
+    {name: "AES-GCM", length: 256}, false, ["encrypt"]);
+  var data = Buffer.from(await subtle.encrypt({name: "AES-GCM", iv: iv}, key, Buffer.from("not a real key")));
+  return "(function (root) { (root.FG = root.FG || {}).TEAM_KEY = " + JSON.stringify({repo: "test/test", branch: "main",
+    iterations: iterations, salt: salt.toString("base64"), iv: iv.toString("base64"), data: data.toString("base64")}) +
+    "; })(window);";
+}
+
 function gameFiles(files) {
   return Object.keys(files).filter(function (n) { return /_\d+\.json$/.test(n); }).sort(function (a, b) {
     return Number(/_(\d+)\.json$/.exec(a)[1]) - Number(/_(\d+)\.json$/.exec(b)[1]);
@@ -1200,17 +1303,20 @@ function problemKinds() {
 }
 
 function checkSaved(folder) {
-  var n = 0;
+  var saved = [];
   fs.readdirSync(folder).forEach(function (sub) {
     var dir = path.join(folder, sub);
     if (!fs.statSync(dir).isDirectory()) {
       return;
     }
     fs.readdirSync(dir).filter(function (f) { return /\.json$/.test(f) && !/short/.test(f); }).forEach(function (f) {
-      checkGameFile(f, JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")));
-      n += 1;
+      saved.push([f, JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"))]);
     });
   });
+  // saved by one browser: WebGL by the processor if a 3D game says so
+  SOFT_BROWSER = saved.some(function (s) { return softGL(s[1].game && s[1].game.render); });
+  saved.forEach(function (s) { checkGameFile(s[0], s[1]); });
+  var n = saved.length;
   console.log(n + " files, " + problems.length + " problems");
   problemKinds();
   problems.slice(0, 15).forEach(function (p) { console.log("    " + p); });
@@ -1227,6 +1333,12 @@ function checkSaved(folder) {
   var server = await serve();
   var base = "http://localhost:" + server.address().port + "/index.html";
   var browser = await chromium.launch(fs.existsSync("/opt/pw-browsers/chromium") ? {executablePath: "/opt/pw-browsers/chromium"} : {});
+  var probe = await browser.newPage();
+  SOFT_BROWSER = SOFTWARE_GL.test(await probe.evaluate(function () {
+    var gl = document.createElement("canvas").getContext("webgl"), ext = gl && gl.getExtension("WEBGL_debug_renderer_info");
+    return gl ? String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER)) : "";
+  }));
+  await probe.close();
   var report = [];
 
   async function session(label, query, plan, opts) {
@@ -1820,6 +1932,90 @@ function checkSaved(folder) {
   await octx.close();
 
   }
+  if (want("characters")) {
+  // 13. the characters: chosen on their page (WebGL), each in 3D behind or
+  // through its eyes, or in 2D, C back to the page between the games
+  var cs = await session("characters", "?test=1&condition=linear_fast&set.steps=5&gl=1", [
+    {view: "3d_behind", maze: "grid_4x4", character: "man"}, {view: "3d", maze: "grid_4x4", character: "woman"},
+    {view: "3d_behind", maze: "grid_4x4", character: "dog"}, {view: "2d", maze: "grid_4x4", character: "woman"},
+    {view: "3d_behind", maze: "grid_4x4", character: "robot"}, {view: "2d", maze: "grid_4x4", character: "knight"},
+    {view: "3d_behind", maze: "grid_4x4", character: "mouse"}
+  ], {seed: 41});
+  var csn = gameFiles(cs.files);
+  csn.forEach(function (n) { checkGameFile(n, cs.files[n]); });
+  var want7 = ["man", "woman", "dog", "woman", "robot", "knight", "mouse"];
+  expect(csn.length === 7 && csn.every(function (n, i) {
+    var f = cs.files[n];
+    return f.character.name === want7[i] && f.character.how === "chosen" && f.character.choices.length === 1 &&
+      !f.character.fallback;
+  }), "characters: 7 games, each as the character chosen (its model in), got " +
+    JSON.stringify(csn.map(function (n) { return cs.files[n].character; })));
+  expect(csn.length === 7 && cs.files[csn[2]].game.camera === "behind" && cs.files[csn[3]].game.view === "2d" &&
+    cs.files[csn[2]].game.controls.walk_tiles_per_s > cs.files[csn[0]].game.controls.walk_tiles_per_s &&
+    cs.files[csn[0]].game.controls.walk_tiles_per_s < cs.files[csn[6]].game.controls.walk_tiles_per_s,
+    "characters: the dog behind it, faster than the man, the man slower than the mouse; the woman in 2D");
+  // steps as long as the clips': a person's run, about a metre a step
+  csn.slice(0, 6).forEach(function (n) {
+    var c = cs.files[n].game.controls, st = c.step_tiles * (cs.files[n].game.view === "3d" ? CH_TILE : 1);
+    expect(c.step_tiles > 0 && (cs.files[n].game.view !== "3d" || (st > 0.4 && st < 2.2)),
+      "characters: " + cs.files[n].character.name + " step " + c.step_tiles + " tiles");
+  });
+  // eating standing still: the eat clip comes in, and goes once the bites stop
+  var eats = await cs.page.evaluate(async function () {
+    var CH = window.FG.characters, out = {};
+    for (var name of ["man", "woman", "dog", "robot", "knight"]) {
+      var m = await CH.load(name), fig = {phase: 0, move: 0, t: 0, eat: false, turn: 0, back: false}, w = [];
+      m.state.t = null;
+      for (var k = 0; k <= 90; k++) {
+        fig.t = k / 30;
+        fig.eat = fig.t >= 0.2 && fig.t < 1.6 && fig.t % 1 < 0.9;
+        m.pose(fig);
+        if (k === 45 || k === 90) {
+          w.push(+m.actions.eat.getEffectiveWeight().toFixed(3), +m.actions.idle.getEffectiveWeight().toFixed(3));
+        }
+      }
+      out[name] = w;
+    }
+    return out;
+  });
+  expect(Object.keys(eats).every(function (n) {
+    var w = eats[n];
+    return w[0] > 0.99 && w[1] < 0.01 && w[2] === 0 && w[3] > 0.99;
+  }), "characters: eating comes in and goes again (eat and idle weights) " + JSON.stringify(eats));
+  save("characters", cs.files);
+  await cs.context.close();
+  // a picture below level 0 (drawn into a buffer and spread over the canvas, which keeps its size):
+  // the knight behind it, and the maze
+  var lv = await session("characters_level", "?test=1&condition=linear_fast&set.steps=5&gl=1&level=3", [
+    {view: "3d_behind", maze: "grid_4x4", character: "knight"}], {seed: 44});
+  var lvn = gameFiles(lv.files);
+  lvn.forEach(function (n) { checkGameFile(n, lv.files[n]); });
+  var lrd = lvn.length ? lv.files[lvn[0]].game.render : null;
+  expect(lrd && lrd.fixed_level === 3 && lrd.level === 3 && lrd.width < lrd.screen.width &&
+    lv.files[lvn[0]].character.name === "knight", "characters_level: the knight at level 3 " + JSON.stringify(lrd && {
+      fixed: lrd.fixed_level, level: lrd.level, width: lrd.width, screen: lrd.screen}));
+  var canvasW = await lv.page.evaluate(function () { return document.getElementById("c3d").width; });
+  expect(lrd && canvasW === lrd.screen.width, "characters_level: the canvas keeps the screen's pixels, " + canvasW);
+  await lv.context.close();
+  // without WebGL: no characters page, the mouse; a character set without WebGL: the mouse, and why
+  var nc = await session("no_characters", "?test=1&condition=linear_fast&set.steps=5&gl=0", [
+    {view: "3d", maze: "grid_4x4"}], {seed: 42});
+  var ncn = gameFiles(nc.files);
+  expect(ncn.length === 1 && nc.files[ncn[0]].character.name === "mouse" && nc.files[ncn[0]].character.how === "no choice" &&
+    nc.files[ncn[0]].character.fallback === "no WebGL", "no_characters: without WebGL the mouse, no page " +
+    JSON.stringify(ncn.length && nc.files[ncn[0]].character));
+  ncn.forEach(function (n) { checkGameFile(n, nc.files[n]); });
+  await nc.context.close();
+  var kn = await session("knight_no_webgl", "?test=1&condition=linear_fast&set.steps=5&gl=0&set.player=knight", [
+    {view: "3d_behind", maze: "grid_4x4"}], {seed: 43});
+  var knn = gameFiles(kn.files);
+  expect(knn.length === 1 && kn.files[knn[0]].character.name === "mouse" &&
+    /no WebGL/.test(kn.files[knn[0]].character.fallback || ""), "knight_no_webgl: the mouse instead, and why " +
+    JSON.stringify(knn.length && kn.files[knn[0]].character));
+  knn.forEach(function (n) { checkGameFile(n, kn.files[n]); });
+  await kn.context.close();
+
+  }
   if (want("mouse")) {
   // 11. the mouse: the camera behind it and through its eyes; then the old
   // arrow player
@@ -2032,7 +2228,150 @@ function checkSaved(folder) {
     return {gl: !!g, loaded: window.FG.art.loaded ? window.FG.art.loaded() : null};
   });
   expect(fgl.gl && ferr.length === 0, "file://: a 3D game drawn with WebGL, no errors " + JSON.stringify([fgl, ferr]));
+  // a character from a file: its model and sounds come in as a script
+  await fp.goto("file://" + path.join(ROOT, "index.html") + "?send=0&condition=linear_fast&gl=1");
+  await choose(fp, "3d_behind", "grid_4x4", "man");
+  await sleep(4000);
+  var fch = await fp.evaluate(function () {
+    var m = window.FG.characters.loaded("man");
+    return {model: !!m, clips: m ? Object.keys(m.actions).filter(function (k) { return m.actions[k]; }).sort().join() : null,
+      sounds: m && m.sounds ? Object.keys(m.sounds).length : 0};
+  });
+  expect(fch.model && fch.clips === "eat,idle,run,walk" && fch.sounds > 0 && ferr.length === 0,
+    "file://: the man's model, clips and sounds, no errors " + JSON.stringify([fch, ferr]));
   await ctx.close();
+
+  }
+  if (want("analysis")) {
+  // 14. the team's data page: locked with the team password; the games of 2 short games, a zip of them and a
+  // file that is no game; the tables as node makes them from the same files; a game drawn; both downloads
+  var an = await session("analysis_games", "?test=1&condition=linear_fast&set.steps=8&gl=1", [
+    {view: "3d_behind", maze: "grid_4x4", character: "dog"}, {view: "2d", maze: "grid_6x6", character: "mouse"}
+  ], {seed: 52});
+  save("analysis", an.files);
+  await an.context.close();
+  var anNames = gameFiles(an.files);
+  var PW = "the team password of the checks";
+  var actx = await browser.newContext({acceptDownloads: true});
+  var keyText = await testKeyFile(PW);
+  await actx.route("**/js/team_key.js*", function (route) {
+    route.fulfill({status: 200, contentType: "text/javascript", body: keyText});
+  });
+  var ap = await actx.newPage(), aerr = [];
+  ap.on("pageerror", function (err) { aerr.push(String(err)); });
+  await ap.goto(base.replace(/index\.html$/, "analysis.html"));
+  await sleep(800);
+  var locked = await ap.evaluate(function () {
+    return {app: document.getElementById("app").hidden, lock: document.getElementById("lock").hidden};
+  });
+  expect(locked.app && !locked.lock, "analysis: locked at first " + JSON.stringify(locked));
+  await ap.fill("#password", "not the password");
+  await ap.click("#open");
+  await ap.waitForFunction(function () { return /not the team password/.test(document.getElementById("lock-note").textContent); },
+    null, {timeout: 20000}).catch(function () {});
+  expect(await ap.evaluate(function () { return document.getElementById("app").hidden; }), "analysis: a wrong password opens nothing");
+  await ap.fill("#password", PW);
+  await ap.click("#open");
+  await ap.waitForFunction(function () { return !document.getElementById("app").hidden; }, null, {timeout: 20000}).catch(function () {});
+  expect(await ap.evaluate(function () {
+    return !document.getElementById("app").hidden && document.getElementById("password").value === "";
+  }), "analysis: the team password opens the page and is not kept");
+  // the files: 1 as itself, the other in a zip, and a file that is no game
+  var dir = path.join(OUT, "analysis_in");
+  fs.mkdirSync(dir, {recursive: true});
+  var zipped = {};
+  zipped[anNames[1]] = JSON.stringify(an.files[anNames[1]]);
+  fs.writeFileSync(path.join(dir, anNames[0]), JSON.stringify(an.files[anNames[0]]));
+  fs.writeFileSync(path.join(dir, "games.zip"), zipOf(zipped));
+  fs.writeFileSync(path.join(dir, "notes.json"), JSON.stringify({note: "not a game"}));
+  await ap.setInputFiles("#pick-files", [path.join(dir, anNames[0]), path.join(dir, "games.zip"), path.join(dir, "notes.json")]);
+  await ap.waitForFunction(function () { return !document.getElementById("results").hidden; }, null, {timeout: 20000}).catch(function () {});
+  var got = await ap.evaluate(function () {
+    var b = window.FG.analysis.state.built;
+    var out = {games: b.games.map(function (f) { return f.name; }).sort(), skipped: window.FG.analysis.state.skipped, rows: {}};
+    b.tables.forEach(function (t) { out.rows[t.name] = t.rows; });
+    return out;
+  });
+  var mine = globalThis.FG.tables.build(anNames.map(function (n) { return {name: n, data: an.files[n]}; }));
+  expect(JSON.stringify(got.games) === JSON.stringify(anNames.slice().sort()), "analysis: both games read, one from the zip " +
+    JSON.stringify(got.games));
+  expect(got.skipped.length === 1 && got.skipped[0].name === "notes.json", "analysis: the file that is no game is left out " +
+    JSON.stringify(got.skipped));
+  mine.tables.forEach(function (t) {
+    expect(JSON.stringify(got.rows[t.name]) === JSON.stringify(t.rows), "analysis: the " + t.name + " table as node makes it (" +
+      (got.rows[t.name] || []).length + " and " + t.rows.length + " rows)");
+  });
+  var g0 = mine.tables[0].rows;
+  expect(g0.length === 2 && mine.tables.filter(function (t) { return t.name === "steps"; })[0].rows.length ===
+    an.files[anNames[0]].game.steps.length + an.files[anNames[1]].game.steps.length, "analysis: 2 games, every step a row");
+  // a game: its map and its energy drawn
+  await ap.click("#games tbody tr");
+  await sleep(500);
+  var drawn = await ap.evaluate(function () {
+    function ink(id) {
+      var c = document.getElementById(id);
+      if (!c || !c.width) {
+        return 0;
+      }
+      var d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, n = 0;
+      for (var i = 3; i < d.length; i += 4) {
+        n += d[i] > 0 ? 1 : 0;
+      }
+      return n;
+    }
+    return {card: !document.getElementById("game-card").hidden, route: ink("route"), energy: ink("energy")};
+  });
+  expect(drawn.card && drawn.route > 1000 && drawn.energy > 1000, "analysis: a game's map and energy drawn " + JSON.stringify(drawn));
+  // the downloads
+  async function fetchDownload(button) {
+    var dl = await Promise.all([ap.waitForEvent("download", {timeout: 30000}), ap.click(button)]);
+    var p = path.join(dir, dl[0].suggestedFilename());
+    await dl[0].saveAs(p);
+    return p;
+  }
+  var xlsx = await fetchDownload("#get-xlsx");
+  var xz = await ap.evaluate(function (b64) {
+    var s = atob(b64), a = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) { a[i] = s.charCodeAt(i); }
+    return window.FG.zipfile.read(a.buffer).then(function (en) {
+      var out = {};
+      en.forEach(function (e) { out[e.name] = new TextDecoder().decode(e.bytes); });
+      return out;
+    });
+  }, fs.readFileSync(xlsx).toString("base64"));
+  var sheetsN = Object.keys(xz).filter(function (n) { return /^xl\/worksheets\/sheet\d+\.xml$/.test(n); }).length;
+  var gamesSheet = xz["xl/worksheets/sheet3.xml"] || "";
+  expect(/\.xlsx$/.test(xlsx) && xz["xl/workbook.xml"] && sheetsN === mine.tables.length + 2 &&
+    (gamesSheet.match(/<row /g) || []).length === 3, "analysis: the workbook, a sheet for each table, the about and the dictionary (" +
+    sheetsN + " sheets)");
+  var csvz = await fetchDownload("#get-csv");
+  var cz = await ap.evaluate(function (b64) {
+    var s = atob(b64), a = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) { a[i] = s.charCodeAt(i); }
+    return window.FG.zipfile.read(a.buffer).then(function (en) {
+      var out = {};
+      en.forEach(function (e) { out[e.name] = new TextDecoder().decode(e.bytes); });
+      return out;
+    });
+  }, fs.readFileSync(csvz).toString("base64"));
+  expect(cz["games.csv"] === globalThis.FG.tables.csv(mine.tables[0]) && cz["dictionary.csv"] && cz["README.txt"] &&
+    cz["games_labels.sps"] && /VARIABLE LABELS/.test(cz["games_labels.sps"]),
+    "analysis: the CSV zip, its games.csv as node makes it, the dictionary and the SPSS labels");
+  expect(globalThis.FG.tables.TABLES.every(function (t) {
+    return t.columns.every(function (c) { return c[0] && c[1]; });
+  }), "analysis: every column described");
+  var mainText = fs.readFileSync(path.join(ROOT, "js", "main.js"), "utf8");
+  expect(await ap.evaluate(function () { return window.FG.analysis.VERSION; }) === /FG\.VERSION = "([^"]+)"/.exec(mainText)[1],
+    "analysis: the page's version is the game's");
+  // Lock forgets the files and asks for the password again
+  await ap.click("#lock-again");
+  await sleep(1200);
+  expect(await ap.evaluate(function () {
+    return document.getElementById("app").hidden && !document.getElementById("lock").hidden && !window.FG.analysis.state.built;
+  }), "analysis: Lock forgets the files");
+  expect(aerr.length === 0, "analysis: no errors " + JSON.stringify(aerr));
+  report.push("analysis: 2 games, " + mine.tables.map(function (t) { return t.name + " " + t.rows.length; }).join(", "));
+  await actx.close();
 
   }
   await browser.close();

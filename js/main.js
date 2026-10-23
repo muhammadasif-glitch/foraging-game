@@ -1,5 +1,6 @@
-/* The session: the first page (the view and the maze), the games, the end
- * of each game, and the files sent to DataPipe.
+/* The session: the characters to choose from (game.player "choose", a
+ * page before the first page), the first page (the view and the maze), the
+ * games, the end of each game, and the files sent to DataPipe.
  *
  * Link options: ?condition=NAME or auto, ?view=2d, 3d or 3d_behind and ?maze=NAME to
  * choose for the player at first (they can still change it), ?test=1 marks
@@ -26,9 +27,9 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "2.5.1";
+  FG.VERSION = "2.6.0";
   var FORMAT = "foraging-game";
-  var FORMAT_VERSION = 8;
+  var FORMAT_VERSION = 9;
   var TRIAL_TYPE = "foraging-game";
   // keys sooner than this after the first page or the end of a game appear
   // are taken as left over from the screen before
@@ -69,7 +70,7 @@
   }
 
   function only(id) {
-    ["menu", "end", "message", "editor"].forEach(function (o) { $(o).hidden = o !== id; });
+    ["who", "menu", "end", "message", "editor"].forEach(function (o) { $(o).hidden = o !== id; });
   }
 
   function message(title, body) {
@@ -213,7 +214,29 @@
     // the 3D view drawn by the graphics card, unless the link says ?gl=0 (or
     // there is none)
     var views = {"2d": FG.view2d.create($("c2d")),
-      "3d": FG.view3d.create($("c3d"), {gl: {"0": "off", "1": "always"}[p.get("gl")] || "auto"})};
+      "3d": FG.view3d.create($("c3d"), {gl: {"0": "off", "1": "always"}[p.get("gl")] || "auto",
+        level: /^[0-5]$/.test(p.get("level") || "") ? Number(p.get("level")) : null})};
+    // the character: chosen on the characters page (game.player "choose"),
+    // or set; one of js/characters.js only where the 3D view is drawn with
+    // WebGL (else the mouse, and why: fallback)
+    var CH = FG.characters;
+    var asked = (link && link.player) || all.game.player;
+    var webgl = !!(CH && views["3d"].renderInfo && /^webgl/.test(views["3d"].renderInfo().renderer) &&
+      CH.available());
+    var canChoose = asked === "choose" && webgl && all.menu.characters.length > 0;
+    var character = asked === "choose" ? {name: "mouse", how: canChoose ? "chosen" : "no choice", fallback:
+      canChoose ? null : "no WebGL"} : {name: asked, how: "settings", fallback: null};
+    if (CH && CH.is(character.name) && !webgl) {
+      character = {name: "mouse", how: "settings", fallback: "no WebGL: " + character.name + " needs it"};
+    }
+    if (CH && CH.is(character.name)) {
+      CH.load(character.name).then(function () {
+        if (!$("menu").hidden) {
+          drawMenu();
+        }
+      }, function () {});
+    }
+    var choices = [];             // the characters pages since the last game's file
     var current = null;           // the view on the screen
     var scene = null;             // what it shows
     var playing = false, failed = false, games = 0;
@@ -249,7 +272,8 @@
 
     /* The maze behind the first page: every room in light, no food. */
     function preview(name, entry) {
-      var v = viewOf(entry), mouse = all.game.player === "mouse" && FG.mouse;
+      var v = viewOf(entry), mouse = character.name === "mouse" && FG.mouse;
+      var fig = CH && CH.is(character.name) ? CH.INFO[character.name] : null;
       var M = Wd.build(name), all2 = {};
       M.list.forEach(function (r) { all2[r.i + "," + r.j] = true; });
       var start = FG.rules.maze(name).rooms()[0];
@@ -259,10 +283,12 @@
       scene = {maze: M, x: c[0], y: c[1], angle: facing * Math.PI / 2, facing: facing,
         lit: Wd.lit(M, all2, all2), food: [], here: null,
         mouse: mouse ? {phase: 0, move: 0, t: 0, eat: false, turn: 0} : null,
-        eye: mouse ? FG.mouse.EYE : 0.5, gallery: v === "3d" ? previewGallery(M, start) : null};
-      if (mouse && v === "3d" && cameraOf(entry) === "behind") {
+        figure: fig ? {name: character.name, phase: 0, move: 0, t: 1, eat: false, turn: 0} : null,
+        eye: mouse ? FG.mouse.EYE : fig ? fig.eye : 0.5, gallery: v === "3d" ? previewGallery(M, start) : null};
+      if ((mouse || fig) && v === "3d" && cameraOf(entry) === "behind") {
         scene.camera = "behind";
-        scene.cam = FG.mouse.camera(c[0], c[1], scene.angle, FG.mouse.cameraBack(M, c[0], c[1], scene.angle));
+        scene.cam = FG.mouse.camera(c[0], c[1], scene.angle,
+          FG.mouse.cameraBack(M, c[0], c[1], scene.angle, fig ? fig.camera.back : null), fig ? fig.camera : null);
       }
       useView(v).draw(scene);
     }
@@ -380,6 +406,9 @@
       $("viewLabel").classList.toggle("active", choice.row === 0);
       $("mazeLabel").classList.toggle("active", choice.row === 1);
       $("play").disabled = !ready;
+      $("whoLine").hidden = !canChoose;
+      var info = CH && CH.INFO[character.name];
+      $("whoName").textContent = info ? info.label : character.name;
       preview(all.menu.mazes[choice.maze], all.menu.views[choice.view]);
     }
 
@@ -418,6 +447,12 @@
             if (edit && (e.key === "n" || e.key === "N")) {
               return toEditor && toEditor() ? "editor" : "ignored: not ready";
             }
+            if ((e.key === "c" || e.key === "C") && canChoose) {
+              toEditor = null;
+              REC.listen(null);
+              resolve({characters: true});
+              return "characters";
+            }
             var n = /^[1-9]$/.test(e.key) ? Number(e.key) - 1 : undefined;
             var rows = [all.menu.views.length, all.menu.mazes.length];
             var what = null;
@@ -445,6 +480,7 @@
               rec.chosen_at = entry.t;
               rec.view = all.menu.views[choice.view];
               rec.maze = all.menu.mazes[choice.maze];
+              rec.character = character.name;
               resolve(rec);
               return "play";
             } else {
@@ -465,6 +501,7 @@
     function playGame(menuRec, trial) {
       var n = trial ? 0 : games + 1;
       var settings = FG.config.gameSettings(all, session.condition.name, menuRec.maze, link);
+      settings.player = character.name;
       var layoutSeed = FG.random.derive(session.seed, n);
       var seed = FG.random.derive(session.seed, 1000 + n);
       var gallerySeed = FG.random.derive(session.seed, 2000 + n);
@@ -476,23 +513,32 @@
       $("gameKeys").hidden = false;
       playing = true;
 
-      function gameFile(rec, kind) {
+      var who = {name: character.name, how: character.how, fallback: character.fallback, choices: choices};
+      choices = [];
+      /* The file of the game: copied (copy true) for sending, or as it is
+       * for keeping in this browser at once (written out there whole). */
+      function gameFile(rec, kind, copy) {
         var f = header(kind);
+        f.character = who;
         f.menu = menuRec;
         f.game = rec;
         var got = REC.since(mark);
         f.keys = got.keys;
         f.attention = got.attention;
         f.sound_log = FG.sound ? FG.sound.log.slice(soundMark) : [];
-        return JSON.parse(JSON.stringify(f));
+        return copy === false ? f : JSON.parse(JSON.stringify(f));
       }
 
+      /* Keeps the game so far in this browser, after every step: without a
+       * copy of it first (it is written out at once, and only the top of the
+       * game is changed here, on a copy of its top), so that it holds up the
+       * keys of the player as little as can be. */
       function keepGame(rec) {
-        var f = gameFile(rec, "partial game");
+        var f = gameFile(Object.assign({}, rec), "partial game", false);
         if (!f.game.ended) {
           f.game.ended = FG.game.ended(f.game, "page closed", REC.now());
         } else {
-          f.game.ended.page_closed_at = REC.now();
+          f.game.ended = Object.assign({}, f.game.ended, {page_closed_at: REC.now()});
         }
         if (!f.game.result) {
           f.game.result = FG.game.modelResult(f.game);
@@ -501,6 +547,7 @@
           FG.game.wayFields(f.game);
         }
         var short = header("partial game");
+        short.character = who;
         short.menu = menuRec;
         short.game = FG.game.shortForm(f.game);
         FG.datapipe.keepSlot("game", fileName(n + ".partial"), f,
@@ -666,8 +713,167 @@
 
     function loop() {
       return menu().then(function (r) {
-        return r.editor ? editor() : playGame(r);
+        return r.editor ? editor() : r.characters ? who() : modelReady().then(function () { return playGame(r); });
       }).then(loop);
+    }
+
+    /* The model of the character, in before the game starts ("loading"
+     * shown while it takes a while); the mouse instead, and why, when it
+     * cannot be loaded. */
+    function modelReady() {
+      if (!CH || !CH.is(character.name) || CH.loaded(character.name)) {
+        return Promise.resolve();
+      }
+      var name = character.name, slow = root.setTimeout(function () {
+        message(text("loading_title") || "One moment",
+          escape((text("loading_body") || "The {name} is coming in.").replace("{name}", CH.INFO[name].label.toLowerCase())));
+      }, 150);
+      return CH.load(name).then(function () {
+        root.clearTimeout(slow);
+      }, function (err) {
+        root.clearTimeout(slow);
+        character = {name: "mouse", how: character.how, fallback: "could not load the " + name + ": " + err.message};
+      });
+    }
+
+    // ---------------------------------------------------------- the characters
+    /* The characters page (game.player "choose"): each character in 3D,
+     * the one chosen walking; arrows or a click choose, Enter or the button
+     * goes on. Resolves when chosen; the choice is kept for the next game's
+     * file (character.choices). */
+    function who() {
+      return new Promise(function (resolve) {
+        var list = all.menu.characters, k = Math.max(0, list.indexOf(character.name));
+        $("hud").hidden = true;
+        $("gameKeys").hidden = true;
+        only("who");
+        REC.setPhase("characters");
+        var rec = {shown_at: null, chosen_at: null, character: null, actions: []};
+        $("whoTitle").textContent = text("who_title");
+        $("whoIntro").textContent = text("who_intro");
+        $("whoKeys").innerHTML = text("who_keys");
+        $("whoCards").innerHTML = list.map(function (n, i) {
+          return '<div class="card who-card" data-k="' + i + '"><div class="who-pic"><img alt="" src="' +
+            escape(CH.INFO[n].picture) + '"><canvas hidden></canvas></div><div class="card-size">' +
+            escape(CH.INFO[n].label) + '</div><div class="card-meta"><kbd>' + (i + 1) + '</kbd></div></div>';
+        }).join("");
+        var cards = Array.prototype.slice.call($("whoCards").children);
+        var walk = 0, last = null, open = true;
+        function mark() {
+          cards.forEach(function (c, i) { c.classList.toggle("on", i === k); });
+          // the chosen one's model, to show it walking (and for the game)
+          if (CH.is(list[k])) {
+            CH.load(list[k]).catch(function () {});
+          }
+        }
+        function done(t) {
+          open = false;
+          REC.listen(null);
+          rec.chosen_at = t;
+          rec.character = list[k];
+          character = {name: list[k], how: "chosen", fallback: null};
+          choices.push(rec);
+          $("who").hidden = true;
+          resolve(rec);
+        }
+        function pick(i, how, t) {
+          k = i;
+          rec.actions.push({t: t, how: how, character: list[k]});
+          mark();
+        }
+        cards.forEach(function (c, i) {
+          c.addEventListener("click", function () {
+            if (!open) {
+              return;
+            }
+            var t = REC.now();
+            if (i === k && rec.shown_at !== null && t - rec.shown_at > MENU_GUARD_MS) {
+              rec.actions.push({t: t, how: "click again", character: list[k]});
+              done(t);
+            } else {
+              pick(i, "click", t);
+            }
+          });
+        });
+        $("whoGo").onclick = function () {
+          if (open && rec.shown_at !== null) {
+            var t = REC.now();
+            rec.actions.push({t: t, how: "button", character: list[k]});
+            done(t);
+          }
+        };
+        mark();
+        // the pictures: the chosen character walks (once its model is in),
+        // the others stand
+        function draw(ts) {
+          if (!open) {
+            return;
+          }
+          var dt = last === null ? 0 : Math.min(0.1, (ts - last) / 1000);
+          last = ts;
+          var dpr = Math.min(2, root.devicePixelRatio || 1);
+          cards.forEach(function (c, i) {
+            var img = c.querySelector("img"), cv = c.querySelector("canvas");
+            var model = i === k && CH.is(list[i]) ? CH.loaded(list[i]) : null;
+            img.hidden = !!model;
+            cv.hidden = !model;
+            if (!model) {
+              return;
+            }
+            // a walk at a fifth of its top speed, its steps as long as its clips'
+            var move = 0.2, v = move * CH.INFO[list[i]].speed;
+            walk += dt * v / model.stride(v) * 2 * Math.PI;
+            var w = Math.max(40, Math.round(img.clientWidth * dpr || cv.clientWidth * dpr || 240));
+            var h = Math.round(w * 1.25);
+            if (cv.width !== w || cv.height !== h) {
+              cv.width = w;
+              cv.height = h;
+            }
+            var t = ts / 1000;
+            var pic = CH.portrait(list[i], {phase: walk, move: move, t: t, turn: 0}, -0.55 + 0.45 * Math.sin(t * 0.4),
+              w, h);
+            var g = cv.getContext("2d");
+            g.clearRect(0, 0, w, h);
+            if (pic) {
+              g.drawImage(pic, 0, 0);
+            }
+          });
+          root.requestAnimationFrame(draw);
+        }
+        root.requestAnimationFrame(draw);
+        REC.shown().then(function (at) {
+          rec.shown_at = at;
+          REC.listen(function (e, entry) {
+            if (e.type !== "keydown") {
+              return undefined;
+            }
+            if (e.repeat) {
+              return "ignored: repeat";
+            }
+            if (entry.t - at < MENU_GUARD_MS) {
+              return "ignored: too soon";
+            }
+            if ((e.key === "m" || e.key === "M") && FG.sound) {
+              return FG.sound.toggle("M") ? "sound on" : "sound off";
+            }
+            var n = /^[1-9]$/.test(e.key) ? Number(e.key) - 1 : undefined;
+            if (n !== undefined && n < list.length) {
+              pick(n, "key", entry.t);
+              return "character";
+            }
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+              pick((k + (e.key === "ArrowLeft" ? -1 : 1) + list.length) % list.length, "key", entry.t);
+              return "character";
+            }
+            if (e.key === "Enter") {
+              rec.actions.push({t: entry.t, how: "Enter", character: list[k]});
+              done(entry.t);
+              return "chosen";
+            }
+            return "ignored: key";
+          });
+        });
+      });
     }
 
     // ---------------------------------------------------------- the page
@@ -763,7 +969,7 @@
     }
     buildMenu();
     sizeViews();
-    var start = loop();
+    var start = (canChoose ? who() : Promise.resolve(null)).then(loop);
     return Promise.all([REC.browser(), chooseCondition(all, p.get("condition")),
       FG.art ? FG.art.load() : Promise.resolve(0)]).then(function (both) {
       session.browser = both[0];

@@ -1,5 +1,65 @@
 # Changes
 
+## 2.6.0
+
+- Characters: the player can be a man, a woman, a dog, the mouse, a robot or
+  a knight (`js/characters.js`). With `game.player: "choose"` (now the
+  default) a page before the first page shows them, the one chosen walking
+  in 3D, and the player chooses; C on the first page comes back to it.
+  `game.player` set to one of them makes every player that one.
+- Each is a 3D model under an open licence (CC BY 4.0; `characters/CREDITS.md`)
+  drawn with three.js r147 (`js/three`, MIT) into the 3D view's own
+  picture, with its camera and depth, in the light of its room; in 2D the
+  same model seen from above. A model, its clips and its sounds are 1 file,
+  `characters/<name>.js`, loaded when the character is chosen (also with
+  the game opened as a file), made by `check/make_characters.py` from what
+  `check/media/get_characters.py` downloads.
+- Each stands, walks and runs with clips that loop: the man and the woman
+  as people of the CMU motion capture database did, the robot running as
+  they do, the knight with its own walk and run, the dog with a trot and a
+  gallop made for its skeleton (`check/dog_gait.py`). The clips are blended
+  by speed and turned as fast as the ground goes by, so the feet keep to the
+  floor, and each step sounds as a foot lands; walking backwards plays them
+  backwards, turning on the spot takes small steps.
+- Each eats: standing in a food room, a person brings the food to the mouth
+  with the right hand, bites and chews; the dog puts its head down to the
+  floor and bites.
+- The team's data page (`analysis.html`, opened with the team password):
+  game files, a folder of them or a zip, become tables for the research
+  (`js/tables.js`): games, steps, food levels, visits to food rooms,
+  navigation (every move from room to room), the track, keys, turns, looks,
+  likes, clicks, music and the page's events, 1 row for each observation,
+  every column described. Each game shown with its route and its energy;
+  downloads as an Excel workbook or as CSV files with SPSS labels. Nothing
+  is sent; the files are read in the browser.
+- Each runs at a person's speed (5 to 6 metres a second; the mouse's speed
+  in 3D is 14): 35% to 42% of the mouse's speed, in both views.
+  `game.same_speed: true` gives all the mouse's speed.
+- Recorded sounds (CC0, Freesound): shoes, bare feet, chain mail, a robot's
+  steps; voices for a food room found, a wall and a full bar; bites. Each
+  plays a little differently every time; the dog's claws, its sniffing and
+  the robot's whirr are still made by the browser.
+- Each has its own eyes (the height of the 3D view), camera behind it and
+  prints in 2D. The body that bumps into walls, turning, the rules and the
+  steps are the same for all.
+- Characters need WebGL; where the 3D view is drawn by ray casting the
+  player is the mouse, no page is shown, and the file says why (also when a
+  character's file cannot be loaded).
+- The 3D view's canvas keeps the screen's pixels at every level: below
+  level 0 the picture is drawn into a buffer and spread over the canvas. A
+  canvas made smaller or bigger is empty until drawn again, which could show
+  as a flash when the level changed. `?level=` keeps a level (for the
+  checks).
+- Keeping the game in the browser after every step (for a page closed
+  during a game) no longer copies the whole game first: it takes about
+  half as long, so it holds up the player's keys less in a long game.
+- File format 9: `character` (who, how chosen, why not, every characters
+  page with its times and actions); `menu.character`; `controls` has
+  `speed_factor`, `eye` and `step_tiles` (a character's at its top speed);
+  `render.fixed_level`.
+- Nothing changes in the rules, the steps, the food or the energy: the
+  games replay in the model as before.
+
 ## 2.5.1
 
 - The graphics card draws the 3D view (WebGL, `js/gl3d.js`) at the

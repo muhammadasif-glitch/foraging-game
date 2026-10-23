@@ -131,6 +131,12 @@
     "  gl_FragColor = vec4(mix(u_top, u_low, t), 1.0);\n" +
     "}\n";
 
+  // a picture drawn at a lower level, spread over the whole canvas
+  var BLIT_VS = "attribute vec2 a_pos;\nvarying vec2 v_uv;\n" +
+    "void main() { v_uv = a_pos * 0.5 + 0.5; gl_Position = vec4(a_pos, 0.0, 1.0); }\n";
+  var BLIT_FS = HEAD + "uniform sampler2D u_tex;\nvarying vec2 v_uv;\n" +
+    "void main() { gl_FragColor = vec4(texture2D(u_tex, v_uv).rgb, 1.0); }\n";
+
   function compile(gl, vs, fs) {
     function shader(type, src) {
       var s = gl.createShader(type);
@@ -279,6 +285,8 @@
     });
     canvas.addEventListener("webglcontextrestored", function () {
       self.lost = false;
+      self.target = null;
+      self.painter = null;
       self.textures = new Map();
       self.mazeOf = null;
       self.decalKey = null;
@@ -293,6 +301,8 @@
     this.world = compile(gl, WORLD_VS, WORLD_FS);
     this.decal = compile(gl, DECAL_VS, DECAL_FS);
     this.sky = compile(gl, SKY_VS, SKY_FS);
+    this.blit = compile(gl, BLIT_VS, BLIT_FS);
+    this.target = null;
     // asked once: a question to the graphics card waits for all its work
     this.aniso = gl.getExtension("EXT_texture_filter_anisotropic") ||
       gl.getExtension("WEBKIT_EXT_texture_filter_anisotropic");
@@ -315,6 +325,8 @@
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    // the characters of js/characters.js (three.js), made when one is first drawn
+    this.painter = null;
     this.skyBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.skyBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
@@ -330,6 +342,8 @@
   GLView.prototype.rawTexture = function (data, w, h, mip, repeatT) {
     var gl = this.gl, t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
     if (mip) {
@@ -383,6 +397,8 @@
     }
     var t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     try {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
@@ -537,6 +553,12 @@
     this.dpr = dpr;
     this.over.width = this.W;
     this.over.height = this.H;
+    // the canvas has the screen's pixels whatever the level: a canvas made
+    // smaller or bigger is empty until drawn again, which shows as a flash
+    if (this.canvas.width !== this.W || this.canvas.height !== this.H) {
+      this.canvas.width = this.W;
+      this.canvas.height = this.H;
+    }
     // the rays: 1 a column, at most COLUMNS_MOST
     this.rw = Math.max(200, Math.min(COLUMNS_MOST, this.W));
     this.rh = Math.max(120, Math.round(this.rw * this.H / this.W));
@@ -545,13 +567,14 @@
     this.setScale(this.scale, this.changes.length ? "window size" : "start");
   };
 
-  /* The picture at level k of LEVELS of the screen's pixels. */
+  /* The picture at level k of LEVELS of the screen's pixels: below level 0
+   * drawn into a buffer of its own (target) and spread over the canvas. */
   GLView.prototype.setScale = function (k, why) {
     this.scale = k;
-    this.canvas.width = Math.max(1, Math.round(this.W * LEVELS[k]));
-    this.canvas.height = Math.max(1, Math.round(this.H * LEVELS[k]));
+    this.bw = Math.max(1, Math.round(this.W * LEVELS[k]));
+    this.bh = Math.max(1, Math.round(this.H * LEVELS[k]));
     this.level = k;
-    this.changes.push({t: now(), level: k, scale: LEVELS[k], width: this.canvas.width, height: this.canvas.height,
+    this.changes.push({t: now(), level: k, scale: LEVELS[k], width: this.bw, height: this.bh,
       why: why, frame_ms: this.frameMs === undefined ? null : Math.round(this.frameMs * 10) / 10});
     this.slowFrames = 0;
     this.fastSince = null;
@@ -584,6 +607,10 @@
 
   GLView.prototype.frameDone = function (gap) {
     var t = performance.now();
+    if (this.fixed !== undefined) {
+      this.frames.push(gap);
+      return;
+    }
     // longer: the tab was hidden
     if (gap > HIDDEN_MS) {
       return;
@@ -625,8 +652,9 @@
       return c.length ? Math.round(c[Math.floor(f * (c.length - 1))] * 100) / 100 : null;
     };
     return {renderer: this.kind, gpu: this.gpu === undefined ? null : this.gpu, webgl: null, levels: LEVELS.slice(),
+      fixed_level: this.fixed === undefined ? null : this.fixed,
       screen: {width: this.W, height: this.H, pixel_ratio: this.dpr},
-      at_start: this.atMark || null, level: this.scale, width: this.canvas.width, height: this.canvas.height,
+      at_start: this.atMark || null, level: this.scale, width: this.bw, height: this.bh,
       changes: this.changes.slice(from || 0),
       draw_ms: {median: q(this.costs, 0.5), p90: q(this.costs, 0.9), drawings: this.costs.length,
         ray_casting: null, over: null},
@@ -636,7 +664,7 @@
   GLView.prototype.mark = function () {
     this.costs = [];
     this.frames = [];
-    this.atMark = {level: this.scale, width: this.canvas.width, height: this.canvas.height};
+    this.atMark = {level: this.scale, width: this.bw, height: this.bh};
     return this.changes.length;
   };
 
@@ -771,7 +799,9 @@
 
   /* The picture on the graphics card. */
   GLView.prototype.render = function (scene, M, places, gal, px, py, dirX, dirY, eye, hor, back) {
-    var gl = this.gl, bw = this.canvas.width, bh = this.canvas.height;
+    var gl = this.gl, bw = this.bw, bh = this.bh;
+    var fbo = bw < this.canvas.width || bh < this.canvas.height ? this.buffer(bw, bh) : null;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     this.deferred = false;
     this.frame = (this.frame || 0) + 1;
     if (this.mazeOf !== M) {
@@ -837,6 +867,18 @@
     var sz = this.mazeType === gl.UNSIGNED_INT ? 4 : 2;
     gl.drawElements(gl.TRIANGLES, this.mazeCount - this.groundCount, this.mazeType, this.groundCount * sz);
 
+    // the character, seen from behind it
+    if (scene.figure && scene.camera === "behind" && scene.cam) {
+      this.drawFigure(scene, M, cam, fbo, bw, bh);
+      // three.js leaves its own state: the maze's again
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, bw, bh);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.lightTex);
+    }
+
     // the paintings, their frames and plaques, on the walls
     var D = this.decal;
     gl.useProgram(D.program);
@@ -900,12 +942,84 @@
     }
     gl.depthMask(true);
     gl.disable(gl.BLEND);
+    if (fbo) {
+      this.spread();
+    }
     this.tidyTextures(this.frame);
     if (this.deferred) {
       // a picture waits for the next frame: the walls made anew then
       this.decalKey = null;
       this.redraw = true;
     }
+  };
+
+  /* The character of the scene where the player stands, in the light of
+   * its tile and the fog; fading out when the camera is very near it. Into
+   * framebuffer fbo (null: the canvas) of w x h pixels. */
+  GLView.prototype.drawFigure = function (scene, M, cam, fbo, w, h) {
+    var F = FG.characters, fig = scene.figure, model = F ? F.loaded(fig.name) : null;
+    if (!model) {
+      return;
+    }
+    if (!this.painter) {
+      try {
+        this.painter = F.painter(this.gl);
+      } catch (err) {
+        this.painter = false;
+      }
+    }
+    if (!this.painter) {
+      return;
+    }
+    var at = Math.floor(scene.y) * M.W + Math.floor(scene.x);
+    var L = Math.max(0, Math.min(1, lightOf(scene, at)));
+    var far = F.INFO[fig.name].camera.back;
+    var alpha = Math.max(0.3, Math.min(1, (scene.cam.back - 0.1 * far) / (0.22 * far)));
+    this.painter.draw(model, fig, scene.x, scene.y, scene.angle, cam, fbo, w, h,
+      {light: L, fog: rgb(C.FOG), fogFar: C.FOG_FAR, alpha: alpha});
+  };
+
+  /* The buffer a picture below level 0 is drawn into: w x h, with depth. */
+  GLView.prototype.buffer = function (w, h) {
+    var gl = this.gl, t = this.target;
+    if (t && t.w === w && t.h === h) {
+      return t.fbo;
+    }
+    if (t) {
+      gl.deleteFramebuffer(t.fbo);
+      gl.deleteTexture(t.tex);
+      gl.deleteRenderbuffer(t.depth);
+    }
+    t = this.target = {w: w, h: h, fbo: gl.createFramebuffer(), tex: gl.createTexture(), depth: gl.createRenderbuffer()};
+    gl.bindTexture(gl.TEXTURE_2D, t.tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, t.depth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, this.gl2 ? gl.DEPTH_COMPONENT24 : gl.DEPTH_COMPONENT16, w, h);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.tex, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, t.depth);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return t.fbo;
+  };
+
+  /* The picture in the buffer, spread over the whole canvas. */
+  GLView.prototype.spread = function () {
+    var gl = this.gl, B = this.blit;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.useProgram(B.program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.target.tex);
+    gl.uniform1i(B.u.u_tex, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.skyBuf);
+    this.attribs(B, [["a_pos", 2]], 2);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
 
   GLView.prototype.cameraUniforms = function (P, c) {
@@ -1147,7 +1261,7 @@
    * processor, unless any is true (the link ?gl=1, for the checks). Why there
    * is none: FG.gl3d.refused, "none" or "software". WebGL is tried on a
    * canvas of its own first, so that a failure leaves canvas free. */
-  function create(canvas, any) {
+  function create(canvas, any, level) {
     var opts = {antialias: true, alpha: false, depth: true, premultipliedAlpha: true, preserveDrawingBuffer: false,
       powerPreference: "high-performance", failIfMajorPerformanceCaveat: !any};
     var probe = document.createElement("canvas");
@@ -1196,6 +1310,11 @@
     }
     var gl2 = typeof root.WebGL2RenderingContext !== "undefined" && gl instanceof root.WebGL2RenderingContext;
     var v = new GLView(canvas, gl, gl2);
+    // a level the picture keeps (the link ?level=, for the checks)
+    if (level !== undefined && level !== null && level >= 0 && level < LEVELS.length) {
+      v.fixed = level;
+      v.scale = level;
+    }
     v.spriteHits = [];
     var draw = v.draw;
     v.draw = function (scene, again) {

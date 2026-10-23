@@ -29,8 +29,11 @@
     // What the first page offers, in this order.
     menu: {
       views: ["2d", "3d", "3d_behind"], // 2d: the maze from above; 3d: from inside, through the
-                                  // player's eyes; 3d_behind: 3D with the camera behind the mouse
-                                  // (game.player mouse). A study can list only 1 of them.
+                                  // player's eyes; 3d_behind: 3D with the camera behind the mouse or
+                                  // the character (not with game.player arrow). A study can list only 1.
+      // the characters to choose from (game.player choose), in this order;
+      // the mouse is marked at first
+      characters: ["man", "woman", "dog", "mouse", "robot", "knight"],
       // the mazes of the model; environments made with its
       // tools/make_environment.py come in through check/export_mazes.py
       mazes: ["grid_4x4", "grid_6x6", "grid_two_4x4", "ring_5x5", "holes_6x6", "corridors_7x7"]
@@ -49,10 +52,16 @@
                                   // (0: not recorded)
       sound: true,                // music and sounds when the session starts; the player
                                   // switches them with M or the button in the corner
-      player: "mouse",            // mouse: the player is a little mouse, with its patter of quick
-                                  // steps and paw prints; arrow: a disc with an arrow, as before 2.4.0
-      voice: true,                // with the mouse: its squeaks (a food room found, a wall, full)
-                                  // and sniffs (a new room)
+      player: "choose",           // choose: a page before the first page shows the characters of
+                                  // menu.characters in 3D and the player chooses one (where the 3D view is
+                                  // drawn with WebGL; else the mouse); or always 1 of them: man, woman,
+                                  // dog, mouse, robot, knight (js/characters.js; mouse: js/mouse.js);
+                                  // arrow: a disc with an arrow, as before 2.4.0
+      same_speed: false,          // false: each character runs at its own speed, a person's (js/characters.js:
+                                  // 5 to 7 metres a second, the mouse's 14); true: all at the speed of the
+                                  // mouse
+      voice: true,                // the voice of the mouse or the character (a food room found, a wall,
+                                  // full) and the sniffs of the animals (a new room)
       paintings: true,            // 3D: famous paintings on the walls (js/paintings.js), a different one on
                                   // every wall, hung anew every game; false: the game's own landscapes, 1 for
                                   // each room colour (as before 2.5.0)
@@ -119,7 +128,13 @@
         "<kbd>Enter</kbd> play &middot; <kbd>M</kbd> sound",
       view_2d: "From above",
       view_3d: "From inside",
-      view_3d_behind: "Behind the mouse",
+      view_3d_behind: "From behind",
+      who_title: "Who are you?",
+      who_intro: "Choose who walks through the rooms. The rules are the same for everyone.",
+      who_keys: "<kbd>&larr;</kbd> <kbd>&rarr;</kbd> or a click choose &middot; <kbd>Enter</kbd> next &middot; " +
+        "<kbd>M</kbd> sound",
+      loading_title: "One moment",
+      loading_body: "The {name} is coming in.",
       finished: "The game is over",
       starved: "You ran out of energy",
       eaten: "food eaten",

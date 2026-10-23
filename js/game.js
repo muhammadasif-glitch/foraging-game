@@ -77,6 +77,9 @@
   // steps, so that the picture never shakes), the most paw prints in 2D, the
   // least time between 2 squeaks, and how long it nibbles
   var MOUSE_STEP = {"2d": 0.7, "3d": 0.6}, MOUSE_BOB = 0.0018, MOUSE_SWAY = 0.01;
+  // a character of js/characters.js: the rise and sway of the view through its
+  // eyes, and how long its prints stay in 2D
+  var FIG_BOB = 0.006, FIG_SWAY = 0.006, PRINT_MS = 1600;
   var MAX_PRINTS = 60, SQUEAK_MS = 1200, EAT_MS = 900;
   var GROW_MS = 700, BITE_MS = 320;
   var LIGHT_MS = 450, HERE_MS = 400;         // new rooms coming into light, the food coming into view
@@ -158,7 +161,19 @@
   function play(g) {
     var s = g.settings;
     var three = g.view === "3d";
-    var C = CONTROLS[g.view];
+    // a character of js/characters.js (not the mouse, not the arrow): its
+    // own speed (a person's, unless game.same_speed), eyes, steps and sounds
+    var CH = FG.characters;
+    var FIG = CH && CH.is(s.player) ? CH.INFO[s.player] : null;
+    var C = Object.assign({}, CONTROLS[g.view]);
+    // its top speed (metres a second) as a share of the game's in 3D (a
+    // tile is CH.TILE metres); the same share in 2D
+    var SPEED = FIG && !s.same_speed ? FIG.speed / (CH.TILE * CONTROLS["3d"].walk_tiles_per_s) : 1;
+    ["walk_tiles_per_s", "back_tiles_per_s", "speed_up_tiles_per_s2", "slow_down_tiles_per_s2"].forEach(function (k) {
+      if (C[k] !== undefined) {
+        C[k] *= SPEED;
+      }
+    });
     var maze = R.maze(g.layout.maze);
     var M = Wd.build(g.layout.maze);
     var sp = FG.config.speeds(s.food);
@@ -176,12 +191,23 @@
     var stomach = new R.Stomach(s.stomach);
     var edges = [s.food.empty_below, s.food.full_above];
     var SND = FG.sound;
-    var MOUSE = s.player === "mouse" && !!FG.mouse, VOICE = MOUSE && s.voice;
-    // the 3D camera: through the player's eyes, or behind the mouse
-    var BEHIND = three && MOUSE && g.camera === "behind";
+    var MOUSE = s.player === "mouse" && !!FG.mouse, VOICE = (MOUSE || FIG) && s.voice;
+    // the 3D camera: through the player's eyes, or behind the mouse or the
+    // character (a camera of its own height)
+    var BEHIND = three && (MOUSE || !!FIG) && g.camera === "behind";
     var CAMERA = three ? (BEHIND ? "behind" : "eyes") : null;
+    var CAM = FIG ? FIG.camera : null;
+    var STEP = MOUSE_STEP;
+    // tiles a metre for a character's steps: in 3D a tile is CH.TILE metres;
+    // in 2D its top speed is as far as the view's top speed
+    var PER_METRE = FIG ? (three ? 1 / CH.TILE : C.walk_tiles_per_s / FIG.speed) : null;
     if (SND && SND.space) {
-      SND.space(three && MOUSE ? "room" : null);
+      SND.space(three && (MOUSE || FIG) ? "room" : null);
+    }
+    // the character's own recorded sounds (js/characters.js), or none
+    if (SND && SND.use) {
+      var model = FIG ? CH.loaded(s.player) : null;
+      SND.use(FIG ? s.player : null, model ? model.sounds : null);
     }
     var RAD = C.body_radius_tiles;
     var ART = FG.art, GRAM = FG.gramophone;
@@ -201,8 +227,10 @@
     var scene = {maze: M, x: start[0], y: start[1], angle: facing0 * QUARTER, facing: facing0, heading: 0,
       lit: null, light: new Float32Array(M.W * M.H), food: [], here: null, crumbs: [], bob: 0, sway: 0, tilt: 0,
       back: 0,
-      eye: MOUSE ? FG.mouse.EYE : 0.5, camera: CAMERA, cam: null,
-      mouse: MOUSE ? {phase: 0, move: 0, t: 0, eat: false, turn: 0} : null, prints: [], now: 0};
+      eye: MOUSE ? FG.mouse.EYE : FIG ? FIG.eye : 0.5, camera: CAMERA, cam: null,
+      mouse: MOUSE ? {phase: 0, move: 0, t: 0, eat: false, turn: 0} : null,
+      figure: FIG ? {name: s.player, phase: 0, move: 0, t: 0, eat: false, turn: 0, back: false} : null, prints: [],
+      now: 0};
     var eaten = 0;
     var steps = [], turns = [], back = [];
     var over = false;
@@ -215,8 +243,8 @@
     var gait = 0, lastEat = -1e9, lastSqueak = -1e9;
     var camBack = null;           // how far the camera is behind the mouse (BEHIND)
     if (BEHIND) {
-      camBack = FG.mouse.cameraBack(M, scene.x, scene.y, scene.angle);
-      scene.cam = FG.mouse.camera(scene.x, scene.y, scene.angle, camBack);
+      camBack = FG.mouse.cameraBack(M, scene.x, scene.y, scene.angle, CAM && CAM.back);
+      scene.cam = FG.mouse.camera(scene.x, scene.y, scene.angle, camBack, CAM);
     }
     var moveStart = null;         // the walk since the player last stood still: {t, press, key, code, held, angle}
     var away = null;              // the player out of the floor of its room: {left_at, side, furthest}
@@ -278,7 +306,15 @@
     var record = {
       number: g.number, view: g.view, camera: CAMERA, maze: g.layout.maze, seed: g.seed, layout_seed: g.layout_seed,
       layout: layoutNames(g.layout), settings: s, speeds: sp, food_kinds: copy(kinds),
-      controls: (function () { var c = copy(C); c.idle_stay_ms = s.idle_stay_ms; return c; })(),
+      controls: (function () {
+        var c = copy(C);
+        c.idle_stay_ms = s.idle_stay_ms;
+        c.speed_factor = SPEED;
+        c.eye = three ? scene.eye : null;
+        // a character's steps grow with its speed: at full speed
+        c.step_tiles = MOUSE ? STEP[g.view] : FIG ? CH.stepTiles(s.player, 1, PER_METRE) : null;
+        return c;
+      })(),
       started: new Date().toISOString(), started_at: REC.now(), ended: null, steps: steps, turns: turns,
       walks_back: back, draws: draws, sound: {on_at_start: SND ? SND.on : null, toggles: soundToggles},
       track: TRACK_MS ? track : null, maze_def: mazeDef(g.layout.maze), path: null, known_rooms: null,
@@ -1051,24 +1087,36 @@
           return;
         }
         lastSqueak = now;
-        SND.squeak(kind);
+        if (FIG && SND.voice) {
+          SND.voice(FIG.sound.voice, kind);
+        } else {
+          SND.squeak(kind);
+        }
       }
 
-      /* A step of the mouse: the patter of its feet (harder on the stone of a
-       * corridor or door than on the floor of a room) and, in 2D, its print. */
+      /* A step of the mouse or a character: the sound of its feet (harder on
+       * the stone of a corridor or door than on the floor of a room) and, in
+       * 2D, its print. */
       function mouseStep(n) {
         var kd = M.kind[Math.floor(scene.y) * M.W + Math.floor(scene.x)];
         var hard = kd === Wd.CORRIDOR || kd === Wd.DOOR;
         if (SND) {
-          SND.patter(false, hard);
+          if (FIG && SND.footstep) {
+            SND.footstep(FIG.sound.steps, hard, Math.min(1, Math.hypot(vx, vy) / C.walk_tiles_per_s));
+          } else {
+            SND.patter(false, hard);
+          }
           if (three) {
             SND.space(hard ? "corridor" : "room");
           }
         }
         if (!three) {
           var a = scene.heading, side = n % 2 ? 1 : -1;
-          scene.prints.push({x: scene.x - Math.sin(a) * side * 0.2 - Math.cos(a) * 0.3,
-            y: scene.y + Math.cos(a) * side * 0.2 - Math.sin(a) * 0.3, a: a, t0: performance.now()});
+          // (a character's feet about 0.1 m from its middle, as drawn in 2D)
+          var wide = FIG ? 0.1 * Math.min(1, FIG.height / 1.2) * FIG.zoom2d / CH.TILE : 0.2, aback = FIG ? 0.05 : 0.3;
+          scene.prints.push({x: scene.x - Math.sin(a) * side * wide - Math.cos(a) * aback,
+            y: scene.y + Math.cos(a) * side * wide - Math.sin(a) * aback, a: a, t0: performance.now(),
+            kind: FIG ? FIG.print : null});
           if (scene.prints.length > MAX_PRINTS) {
             scene.prints.shift();
           }
@@ -1076,6 +1124,18 @@
       }
 
       /* Squeaks for what a step brought: a food room found, a full bar. */
+      /* Eating: the mouse nibbles, a person crunches, a dog chomps. */
+      function eatSound(amount) {
+        var how = FIG ? FIG.sound.eat : MOUSE ? "nibble" : "crunch";
+        if (SND.eat) {
+          SND.eat(how, amount);
+        } else if (SND[how]) {
+          SND[how](amount);
+        } else {
+          SND.crunch(amount);
+        }
+      }
+
       function voiceFor(row) {
         if (row.found) {
           voice("found");
@@ -1308,7 +1368,7 @@
         if (st.paid > 0) {
           lastEat = performance.now();
           if (SND) {
-            SND[MOUSE ? "nibble" : "crunch"](st.paid);
+            eatSound(st.paid);
           }
         }
         voiceFor(st.row);
@@ -1390,17 +1450,17 @@
             crumbs(st.food, 5);
             lastEat = performance.now();
             if (SND) {
-              SND[MOUSE ? "nibble" : "crunch"](st.paid);
+              eatSound(st.paid);
             }
           }
         } else {
           setHere(null, false);
         }
-        if (!three && SND && !MOUSE) {
+        if (!three && SND && !MOUSE && !FIG) {
           SND.step(true);
         }
-        if (MOUSE && SND && firstVisit && !st.row.found) {
-          SND.sniff();
+        if ((MOUSE || (FIG && FIG.sound.sniff)) && SND && firstVisit && !st.row.found) {
+          SND.sniff(FIG ? s.player : "mouse");
         }
         voiceFor(st.row);
       }
@@ -1488,19 +1548,25 @@
               scene.facing = quarterOf(scene.heading);
             }
           }
-          if (MOUSE) {
-            // the gait: a step every MOUSE_STEP tiles walked, as a pair of
-            // feet lands (js/mouse.js draws them furthest apart at sin = +/-1)
+          if (MOUSE || FIG) {
+            // the gait: a step every STEP tiles walked, as a foot (or a pair
+            // of feet) lands (drawn furthest apart at sin = +/-1)
             var n0 = Math.floor(gait / Math.PI - 0.5);
-            gait += moved * Math.PI / MOUSE_STEP[g.view];
+            // a character's steps are as long as its clips' at this speed
+            var stepNow = FIG ? CH.stepTiles(s.player, speed / C.walk_tiles_per_s, PER_METRE) : STEP[g.view];
+            gait += moved * Math.PI / stepNow;
             var n1 = Math.floor(gait / Math.PI - 0.5);
             if (n1 !== n0) {
               mouseStep(n1);
             }
             var mv = Math.min(1, speed / C.walk_tiles_per_s);
-            if (three && !BEHIND) {
+            if (three && !BEHIND && MOUSE) {
               scene.bob = Math.sin(gait) * MOUSE_BOB * mv;
               scene.sway = Math.cos(gait) * MOUSE_SWAY * mv;
+            } else if (three && !BEHIND) {
+              // the view rises and falls with the steps, more for the heavy ones
+              scene.bob = -Math.abs(Math.cos(gait)) * FIG_BOB * (FIG.height / 1.8 + 0.3) * mv;
+              scene.sway = Math.cos(gait) * FIG_SWAY * mv;
             }
           } else if (three) {
             var phase = bobPhase + moved * 2 * Math.PI / BOB_TILES;
@@ -1520,6 +1586,23 @@
             scene.sway = 0;
           }
           dirty = true;
+        }
+        if (FIG) {
+          var fg = scene.figure, nowF = performance.now();
+          fg.phase = gait;
+          fg.move += (Math.min(1, speed / C.walk_tiles_per_s) - fg.move) * Math.min(1, dt * 10);
+          // walking backwards (3D): the clips run backwards
+          fg.back = three && speed > 0.05 && vx * Math.cos(scene.angle) + vy * Math.sin(scene.angle) < 0;
+          fg.t = nowF / 1000;
+          fg.eat = nowF - lastEat < EAT_MS && speed < 0.2;
+          fg.turn += (omega - fg.turn) * Math.min(1, dt * 8);
+          scene.now = nowF;
+          while (scene.prints.length && nowF - scene.prints[0].t0 > PRINT_MS) {
+            scene.prints.shift();
+          }
+          if (!three || BEHIND) {
+            dirty = true;          // the character breathes and looks around all the time
+          }
         }
         if (MOUSE) {
           var m = scene.mouse, now = performance.now();
@@ -1650,13 +1733,13 @@
       /* The camera behind the mouse: pulled in at once where a wall comes
        * behind it, out again slowly. */
       function updateCamera(dt) {
-        var want = FG.mouse.cameraBack(M, scene.x, scene.y, scene.angle);
+        var want = FG.mouse.cameraBack(M, scene.x, scene.y, scene.angle, CAM && CAM.back);
         var b = camBack === null || want < camBack ? want : camBack + (want - camBack) * Math.min(1, dt * 3);
         if (camBack === null || Math.abs(b - camBack) > 1e-4) {
           dirty = true;
         }
         camBack = b;
-        scene.cam = FG.mouse.camera(scene.x, scene.y, scene.angle, b);
+        scene.cam = FG.mouse.camera(scene.x, scene.y, scene.angle, b, CAM);
       }
 
       /* How far the view can step back from the player, looking the way it

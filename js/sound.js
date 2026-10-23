@@ -8,6 +8,14 @@
  * different every time. In 3D the mouse's sounds have a short echo of the
  * room or corridor it is in (space).
  *
+ * The characters of js/characters.js have their own: recorded steps (shoes,
+ * bare feet, armour, a robot's), voices for the same 3 moments (found,
+ * oof, full) and eating, from the character's file (use; recordings under
+ * CC0 from Freesound, characters/CREDITS.md), each played a little
+ * differently every time; and, made here, the claws of a dog, sniffing, a
+ * robot's whirr while eating, and the moments a character has no recording
+ * for.
+ *
  * While the gramophone of the music room plays (js/gramophone.js), the quiet
  * music rests (duck).
  *
@@ -393,16 +401,334 @@
     });
   }
 
-  /* 3 quick sniffs, as the mouse comes into a room it does not know. */
-  function sniff() {
+  /* Quick sniffs, as the mouse (or who: the dog) comes into a room it does
+   * not know. */
+  function sniff(who) {
     if (!ready()) {
       return;
     }
     var at = ctx.currentTime + 0.02;
+    if (who === "dog") {
+      for (var k = 0; k < 4; k++) {
+        tap(at + k * 0.11, 0.08, 0.12 * (1 - k * 0.1), 2600 + Math.random() * 900, 0.8, 0);
+        tap(at + k * 0.11, 0.06, 0.06, 900, 0.7, 0);
+      }
+      return;
+    }
     for (var i = 0; i < 3; i++) {
       tap(at + i * 0.085, 0.06, 0.075 - i * 0.012, 5200 + Math.random() * 1400, 0.9, 0);
       tap(at + i * 0.085, 0.05, 0.03, 1800, 0.7, 0);
     }
+  }
+
+  // ------------------------------------------------------------ the characters
+  /* A tone on the characters' sounds (with their echo): frequency from f0 to
+   * f1, type, loudness vol, from at for len s; filter: [type, frequency, Q]
+   * or null. */
+  function tone(at, len, f0, f1, vol, type, filter, attack) {
+    var o = ctx.createOscillator(), gn = ctx.createGain(), out = gn;
+    o.type = type || "sine";
+    o.frequency.setValueAtTime(f0, at);
+    o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), at + len);
+    gn.gain.setValueAtTime(0.0001, at);
+    gn.gain.linearRampToValueAtTime(vol, at + (attack || 0.008));
+    gn.gain.exponentialRampToValueAtTime(0.0001, at + len);
+    if (filter) {
+      var f = ctx.createBiquadFilter();
+      f.type = filter[0];
+      f.frequency.value = filter[1];
+      f.Q.value = filter[2] || 1;
+      o.connect(f);
+      f.connect(gn);
+    } else {
+      o.connect(gn);
+    }
+    out.connect(mouseBus);
+    o.start(at);
+    o.stop(at + len + 0.05);
+  }
+
+  /* A voice: a buzz at f0 to f1 through 2 resonances of a vowel (the mouth),
+   * with a little vibrato. */
+  var VOWELS = {ah: [800, 1200], uh: [620, 1100], oh: [480, 860], mm: [280, 1200]};
+  function vocal(at, len, f0, f1, vol, vowel) {
+    var o = ctx.createOscillator(), gn = ctx.createGain(), vib = ctx.createOscillator(), vd = ctx.createGain();
+    o.type = "sawtooth";
+    o.frequency.setValueAtTime(f0, at);
+    o.frequency.exponentialRampToValueAtTime(f1, at + len);
+    vib.frequency.value = 5.5;
+    vd.gain.value = f0 * 0.02;
+    vib.connect(vd);
+    vd.connect(o.frequency);
+    var fm = VOWELS[vowel] || VOWELS.ah;
+    gn.gain.setValueAtTime(0.0001, at);
+    gn.gain.linearRampToValueAtTime(vol, at + 0.03);
+    gn.gain.setValueAtTime(vol, at + len * 0.6);
+    gn.gain.exponentialRampToValueAtTime(0.0001, at + len);
+    fm.forEach(function (fq, k) {
+      var f = ctx.createBiquadFilter();
+      f.type = vowel === "mm" && k === 0 ? "lowpass" : "bandpass";
+      f.frequency.value = fq;
+      f.Q.value = vowel === "mm" ? 0.9 : 5;
+      var lv = ctx.createGain();
+      lv.gain.value = k ? 0.45 : 1;
+      o.connect(f);
+      f.connect(lv);
+      lv.connect(gn);
+    });
+    gn.connect(mouseBus);
+    [o, vib].forEach(function (x) {
+      x.start(at);
+      x.stop(at + len + 0.05);
+    });
+  }
+
+  /* The jingle and clank of armour (or of a robot's metal). */
+  function clank(at, vol, metal) {
+    tone(at, 0.14, metal ? 640 : 1180, metal ? 600 : 1150, vol * 0.5, "sine");
+    tone(at, 0.1, metal ? 950 : 1730, metal ? 900 : 1700, vol * 0.3, "sine");
+    if (!metal) {
+      for (var i = 0; i < 4; i++) {
+        tap(at + 0.01 + Math.random() * 0.06, 0.02, vol * 0.35, 6000 + Math.random() * 3000, 4, (Math.random() - 0.5) * 0.4);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ recordings
+  // the recorded sounds of the character played (js/characters.js): kind
+  // (steps, found, oof, full, eat) -> base64 mp3s, decoded when first
+  // wanted (into AudioBuffers); until then the sounds made here play
+  var own = {name: null, files: {}, buffers: {}, last: {}};
+  var OWN_PITCH = {knight: 0.86};
+  var STEP_VOLUME = {shoes: 0.42, bare: 1.1, armour: 0.4, robot: 0.3};
+
+  /* The recordings of character name (its file's sounds), or none. */
+  function use(name, sounds) {
+    own = {name: name, files: sounds || {}, buffers: {}, last: {}};
+  }
+
+  /* The recordings of kind, decoded; null while they are not (yet). */
+  function recorded(kind) {
+    var b = own.buffers[kind];
+    if (b) {
+      return b.length ? b : null;
+    }
+    var files = own.files[kind];
+    if (!files || !files.length || !ctx) {
+      return null;
+    }
+    var list = own.buffers[kind] = [], mine = own;
+    files.forEach(function (b64) {
+      var s = root.atob(b64), bytes = new Uint8Array(s.length);
+      for (var i = 0; i < s.length; i++) {
+        bytes[i] = s.charCodeAt(i);
+      }
+      try {
+        ctx.decodeAudioData(bytes.buffer, function (buf) {
+          if (own === mine) {
+            list.push(buf);
+          }
+        }, function () {});
+      } catch (err) {
+        // (not decoded: the sound made here plays instead)
+      }
+    });
+    return null;
+  }
+
+  /* 1 of the recordings of kind, not the one played last; null if none. */
+  function pick(kind) {
+    var list = recorded(kind);
+    if (!list) {
+      return null;
+    }
+    var i = Math.floor(Math.random() * list.length);
+    if (list.length > 1 && i === own.last[kind]) {
+      i = (i + 1) % list.length;
+    }
+    own.last[kind] = i;
+    return list[i];
+  }
+
+  /* Plays buf at time at: vol, rate (pitch and speed), filter [type, hz, q]. */
+  function play(buf, at, vol, rate, filter, pan) {
+    var src = ctx.createBufferSource(), gn = ctx.createGain(), last = gn;
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    gn.gain.value = vol;
+    src.connect(gn);
+    if (filter) {
+      var f = ctx.createBiquadFilter();
+      f.type = filter[0];
+      f.frequency.value = filter[1];
+      if (filter[0] === "highshelf" || filter[0] === "lowshelf") {
+        f.gain.value = filter[2];
+      } else {
+        f.Q.value = filter[2];
+      }
+      gn.connect(f);
+      last = f;
+    }
+    if (pan && ctx.createStereoPanner) {
+      var p = ctx.createStereoPanner();
+      p.pan.value = pan;
+      last.connect(p);
+      last = p;
+    }
+    last.connect(mouseBus);
+    src.start(at);
+  }
+
+  /* 1 step of a character of js/characters.js: kind (INFO sound.steps),
+   * hard (on stone), mv (0 slow to 1 running). */
+  function footstep(kind, hard, mv) {
+    if (!ready()) {
+      return;
+    }
+    if (kind === "patter") {
+      patter(false, hard);
+      return;
+    }
+    var buf = STEP_VOLUME[kind] ? pick("steps") : null;
+    if (buf) {
+      steps += 1;
+      var when = ctx.currentTime + 0.002 + Math.random() * 0.006;
+      var vol = STEP_VOLUME[kind] * (0.65 + 0.4 * Math.min(1, mv)) * (0.85 + Math.random() * 0.3);
+      // bare feet: the soft part of a step; on stone the steps ring brighter
+      var filter = kind === "bare" ? ["lowpass", 620, 0.7] : hard ? ["highshelf", 2400, 4] : null;
+      play(buf, when, vol, 0.93 + Math.random() * 0.14, filter, (steps % 2 ? 1 : -1) * 0.12);
+      return;
+    }
+    var at = ctx.currentTime + 0.003 + Math.random() * 0.006;
+    steps += 1;
+    var side = steps % 2 ? 1 : -1, w = 0.9 + Math.random() * 0.2, run = mv > 0.6;
+    var p = side * 0.15, b = hard ? 1.25 : 1;
+    if (kind === "shoes" || kind === "light_shoes") {
+      var light = kind === "light_shoes";
+      var v = (light ? 0.13 : 0.16) * (0.85 + Math.random() * 0.3) * (run ? 1.2 : 1);
+      // the heel, then the toe (together when running)
+      tap(at, 0.03, v, (light ? 2600 : 1600) * w * b, 1.3, p);
+      tap(at, 0.06, v * 0.9, (light ? 230 : 140) * w, 0.8, p, "lowpass");
+      if (light) {
+        tap(at, 0.012, v * 0.6, 5200 * w, 4, p);
+      }
+      if (!run) {
+        tap(at + 0.05 + Math.random() * 0.02, 0.025, v * 0.55, (light ? 3400 : 2100) * w * b, 1.5, p);
+      }
+    } else if (kind === "armour") {
+      var va = 0.2 * (0.85 + Math.random() * 0.3);
+      tap(at, 0.09, va * 1.4, 95 * w, 0.8, p, "lowpass");
+      tap(at, 0.04, va * 0.6, 1300 * w * b, 1.2, p);
+      clank(at + 0.012, va * (run ? 1 : 0.7), false);
+    } else if (kind === "robot") {
+      var vr = 0.16 * (0.9 + Math.random() * 0.2);
+      tap(at, 0.07, vr * 1.2, 120 * w, 0.8, p, "lowpass");
+      clank(at, vr, true);
+      // the servo of the knee
+      tone(at - 0.05, 0.12, 330 * w, 430 * w, vr * 0.12, "sawtooth", ["lowpass", 1400, 1]);
+    } else if (kind === "claws") {
+      var vd = 0.11 * (0.8 + Math.random() * 0.4);
+      tap(at, 0.04, vd, 260 * w, 0.8, p, "lowpass");
+      [0, 0.014 + Math.random() * 0.01].forEach(function (late, n) {
+        tap(at + late, 0.008, vd * (hard ? 0.9 : 0.55) * (n ? 0.7 : 1), 6200 * w, 5, (n ? -p : p));
+      });
+    } else {
+      // soft paws: hardly a sound, a tiny tick on stone
+      var vc = 0.05 * (0.8 + Math.random() * 0.4);
+      tap(at, 0.05, vc, 320 * w, 0.7, p, "lowpass");
+      if (hard) {
+        tap(at + 0.01, 0.006, vc * 0.5, 7000 * w, 5, p);
+      }
+    }
+  }
+
+  /* The voice of a character (INFO sound.voice) for "found" (a food room
+   * found), "oof" (into a wall), "full" (the energy bar full); a little
+   * different every time. */
+  function voice(who, kind) {
+    if (!ready()) {
+      return;
+    }
+    if (who === "mouse") {
+      squeak(kind);
+      return;
+    }
+    var said = own.name ? pick(kind) : null;
+    if (said) {
+      play(said, ctx.currentTime + 0.01, kind === "full" ? 0.42 : 0.5,
+        (OWN_PITCH[own.name] || 1) * (0.97 + Math.random() * 0.06), null, 0);
+      if (kind === "oof" && who === "knight") {
+        clank(ctx.currentTime, 0.18, false);
+      }
+      return;
+    }
+    var at = ctx.currentTime + 0.01, j = 0.93 + Math.random() * 0.14;
+    var pitch = {man: 125, woman: 215, knight: 98}[who];
+    if (pitch) {
+      var f = pitch * j, v = who === "knight" ? 0.08 : 0.07;
+      if (kind === "found") {
+        vocal(at, 0.24, f * 1.1, f * 1.6, v, "ah");
+      } else if (kind === "oof") {
+        tap(at, 0.06, 0.05, 900, 0.7, 0);
+        vocal(at + 0.01, 0.17, f * 1.25, f * 0.8, v, "uh");
+        if (who === "knight") {
+          clank(at, 0.18, false);
+        }
+      } else {
+        vocal(at, 0.16, f, f * 0.96, v * 0.9, "mm");
+        vocal(at + 0.2, 0.22, f * 0.95, f * 1.3, v * 0.9, "mm");
+      }
+    } else if (who === "robot") {
+      if (kind === "found") {
+        tone(at, 0.08, 880 * j, 880 * j, 0.06, "square", ["lowpass", 3000, 1]);
+        tone(at + 0.11, 0.12, 1320 * j, 1320 * j, 0.06, "square", ["lowpass", 3000, 1]);
+      } else if (kind === "oof") {
+        tone(at, 0.22, 330 * j, 110 * j, 0.07, "sawtooth", ["lowpass", 1800, 2]);
+        clank(at, 0.15, true);
+      } else {
+        [660, 880, 1320].forEach(function (fq, k) {
+          tone(at + k * 0.09, 0.09, fq * j, fq * j, 0.05, "square", ["lowpass", 3200, 1]);
+        });
+      }
+    } else if (who === "dog") {
+      var bark = function (t0, f0, vol) {
+        tone(t0, 0.13, f0, f0 * 0.62, vol, "sawtooth", ["bandpass", 900, 2.5], 0.004);
+        tap(t0, 0.09, vol * 1.3, 1300, 1.2, 0);
+      };
+      if (kind === "found") {
+        bark(at, 420 * j, 0.11);
+        bark(at + 0.2, 400 * j, 0.1);
+      } else if (kind === "oof") {
+        tone(at, 0.14, 1400 * j, 760 * j, 0.06, "triangle", ["bandpass", 1300, 2]);
+      } else {
+        bark(at, 520 * j, 0.06);
+        for (var k = 0; k < 4; k++) {
+          tap(at + 0.25 + k * 0.17, 0.09, 0.05, 1600 + (k % 2) * 500, 0.8, 0);
+        }
+      }
+    }
+  }
+
+  /* A dog eating: big chomps. */
+  function chomp(amount) {
+    if (!ready()) {
+      return;
+    }
+    var at = ctx.currentTime + 0.01, n = 3 + Math.min(3, Math.round(amount || 1));
+    for (var i = 0; i < n; i++) {
+      tap(at + i * 0.13, 0.07, 0.2, 1000 + Math.random() * 500, 1.2, 0);
+      tap(at + i * 0.13, 0.06, 0.15, 160, 0.8, 0, "lowpass");
+    }
+  }
+
+  /* A robot taking in food: a whirr and a click. */
+  function whirr(amount) {
+    if (!ready()) {
+      return;
+    }
+    var at = ctx.currentTime + 0.01, len = 0.3 + Math.min(0.4, 0.08 * (amount || 1));
+    tone(at, len, 180, 240, 0.06, "sawtooth", ["lowpass", 900, 2]);
+    tap(at + len, 0.015, 0.12, 3500, 3, 0);
   }
 
   /* The mouse nibbling: small, quick bites. */
@@ -424,6 +750,25 @@
     for (var i = 0; i < n; i++) {
       noise(at + i * 0.045 + (i % 2) * 0.012, 0.04, 0.32, 2400 + (i % 3) * 900, 3);
     }
+  }
+
+  /* Eating: how (crunch, chomp, whirr, nibble: made here) or the
+   * character's recorded bites, a few, a moment apart. */
+  function eat(how, amount) {
+    if (!ready()) {
+      return;
+    }
+    if (own.name && recorded("eat")) {
+      var n = 2 + Math.min(2, Math.round(amount || 1)), at = ctx.currentTime + 0.01;
+      var rate = own.name === "dog" ? 0.85 : 1;
+      for (var i = 0; i < n; i++) {
+        play(pick("eat"), at, 0.32 * (0.8 + Math.random() * 0.3), rate * (0.94 + Math.random() * 0.12), null,
+          (i % 2 ? 0.08 : -0.08));
+        at += 0.26 + Math.random() * 0.12;
+      }
+      return;
+    }
+    (({crunch: crunch, chomp: chomp, whirr: whirr, nibble: nibble})[how] || crunch)(amount);
   }
 
   function bump() {
@@ -467,6 +812,7 @@
     unlock: unlock, set: set, start: start, toggle: toggle, listen: listen, duck: duck,
     step: step, crunch: crunch, bump: bump, grown: grown, end: end,
     patter: patter, squeak: squeak, sniff: sniff, nibble: nibble, space: space,
+    footstep: footstep, voice: voice, chomp: chomp, whirr: whirr, eat: eat, use: use,
     get on() { return on; },
     get playing() { return ready(); },
     get log() { return log.slice(); }

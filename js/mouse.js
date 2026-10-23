@@ -243,20 +243,21 @@
   var BACK = 1.6, CAM_EYE = 0.55, HORIZON = 0.47, CLEAR = 0.15, SIDE = 0.24, LOW = 0.8, NEAR_EYE = 0.36;
 
   /* How far behind the mouse at (x, y), facing angle, the camera can be:
-   * BACK, or less where a wall comes first or would be closer than SIDE to
-   * the camera (a door frame right beside it fills the view). M: the tiles
-   * (js/world.js). */
-  function cameraBack(M, x, y, angle) {
+   * BACK (or most, for another character), or less where a wall comes first
+   * or would be closer than SIDE to the camera (a door frame right beside it
+   * fills the view). M: the tiles (js/world.js). */
+  function cameraBack(M, x, y, angle, most) {
+    var far = most || BACK;
     var dx = -Math.cos(angle), dy = -Math.sin(angle);
     var last = 0;
-    for (var d = 0.02; d <= BACK; d += 0.02) {
+    for (var d = 0.02; d <= far; d += 0.02) {
       if (!open(M, x + dx * d, y + dy * d, d < CLEAR ? 0 : SIDE)) {
-        return Math.max(0, Math.min(BACK, last - CLEAR));
+        return Math.max(0, Math.min(far, last - CLEAR));
       }
       last = d;
     }
     // room for the camera to stand, a little past it
-    return open(M, x + dx * (BACK + CLEAR), y + dy * (BACK + CLEAR), 0) ? BACK : BACK - CLEAR;
+    return open(M, x + dx * (far + CLEAR), y + dy * (far + CLEAR), 0) ? far : far - CLEAR;
   }
 
   function wallAt(M, tx, ty) {
@@ -287,11 +288,13 @@
   }
 
   /* The camera at distance back behind the mouse: {x, y, eye, horizon,
-   * back}. */
-  function camera(x, y, angle, back) {
-    var u = Math.max(0, Math.min(1, back / LOW));
+   * back}. prof: the heights of the camera behind another character (js/
+   * characters.js: {eye, near, horizon}), as CAM_EYE, NEAR_EYE, HORIZON. */
+  function camera(x, y, angle, back, prof) {
+    var u = Math.max(0, Math.min(1, back / (prof ? prof.back * LOW / BACK : LOW)));
+    var high = prof ? prof.eye : CAM_EYE, low = prof ? prof.near : NEAR_EYE, hz = prof ? prof.horizon : HORIZON;
     return {x: x - Math.cos(angle) * back, y: y - Math.sin(angle) * back, back: back,
-      eye: NEAR_EYE + (CAM_EYE - NEAR_EYE) * u, horizon: 0.5 + (HORIZON - 0.5) * u};
+      eye: low + (high - low) * u, horizon: 0.5 + (hz - 0.5) * u};
   }
 
   /* How much of a part of the mouse d tiles from the camera shows: parts

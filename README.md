@@ -3,7 +3,8 @@
 The foraging task of [active-inference-foraging](https://github.com/muhammadasif-glitch/active-inference-foraging)
 (version 3), played by people in the browser, in 2D (the maze seen from
 above) or in 3D (from inside, through the player's eyes or from behind it).
-The player is a little mouse. A player walks through a maze of rooms
+The player chooses who to be (a man, a woman, a dog, a mouse, a robot or a
+knight), then walks through a maze of rooms
 one step at a time, finds food rooms that can be in other places in every
 game, and keeps up an energy bar. Every key press is recorded, with its time,
 and sent to [DataPipe](https://pipe.jspsych.org), which saves the files into
@@ -42,8 +43,17 @@ use `?send=0` then (see below).
 
 ## Playing
 
-**The first page** offers the view (2D from above, 3D from inside, 3D behind
-the mouse) and the
+**Who are you?** (`game.player: "choose"`). Before the first page a page
+shows the characters of `menu.characters`, the one chosen walking in 3D; the
+arrows, the keys 1 to 6 or a click choose, Enter (or a second click, or Next)
+goes on. C on the first page comes back to it before another game. The page
+is only shown where the 3D view is drawn by the graphics card (WebGL, see
+Sharpness): elsewhere the player is the mouse, and the file says why. Set
+`game.player` to one of them (`man`, `woman`, `dog`, `mouse`, `robot`,
+`knight`) and every player is that one, with no page.
+
+**The first page** offers the view (2D from above, 3D from inside, 3D from
+behind) and the
 mazes of `settings.js` with their size (4 x 4, 6 x 6, 2 blocks of 4 x 4 joined
 by a bridge, and the environments made with the model, see below). The up and
 down arrows go between the 2 rows, the left and right arrows choose, the keys
@@ -195,7 +205,10 @@ and the mouse drawn over it. Only when the screen frames come more than 34
 ms apart while the player moves (a weak graphics card on a large screen)
 does the picture go down a level (84%, 71%, 59%, 45% and 32% of the screen's
 pixels across), and up again after 12 s of frames under 20 ms apart (a level
-it had to leave is not tried again for 60 s).
+it had to leave is not tried again for 60 s). Below level 0 the picture is
+drawn into a buffer of its own and spread over the canvas, which keeps the
+screen's pixels: a canvas made smaller or bigger is empty until it is drawn
+again, which showed as a flash.
 
 A browser without WebGL, or whose WebGL is drawn by the processor (a
 computer without a graphics card the browser may use: slower there than the
@@ -234,10 +247,64 @@ the steps keep time. 3D has 2 cameras, each a view of the first page:
   it fade out, so the mouse never fills the view: its head and ears stay in
   sight at the bottom.
 
+The other characters have the same 2 cameras: through their eyes (at their
+own height, the view rising and swaying with their steps, more for the heavy
+ones), and behind them at their own distance and height (see The
+characters), coming down to just over the head near a wall, where the
+character fades a little.
+
 Both cameras show the same maze, food and signs, with the same keys,
 speeds and rules; the file records which one was used (`camera`). With
 `game.player: "arrow"` the player is the disc with an arrow of the versions
 before 2.4.0, seen through a person's eyes in 3D (no `3d_behind`).
+
+**The characters** (js/characters.js). Each is a 3D model drawn by
+three.js (`js/three`) into the picture of the 3D view, with its camera and
+depth, so walls in front of it hide it, in the light of its room. A model,
+its clips and its sounds are in 1 file, `characters/<name>.js`, loaded when
+the character is chosen (it also loads with the game opened as a file);
+`check/make_characters.py` makes these files from what
+`check/media/get_characters.py` downloads (credits: `characters/CREDITS.md`).
+
+Each moves with 3 clips that loop: standing, walking and running. The man
+and the woman stand, walk and run as people of the CMU motion capture
+database did, and the robot walks and runs as they do; the knight has its
+own walk and run; the dog's trot and gallop are made for its skeleton
+(`check/dog_gait.py`). The clips are blended by the speed and turned as fast
+as the ground goes by, so the feet keep to the floor: the steps grow longer
+and quicker together, and their sound comes as each foot lands. Walking
+backwards plays them backwards; turning on the spot takes small steps.
+
+A fourth clip comes in while the character eats standing still in a food
+room (from the first bite until a moment after the last, or until it
+walks): the man, the woman, the knight and the robot bring the food to the
+mouth with the right hand, bite with the head bent to meet it and chew
+with the food held before the chest; the dog puts its head down to the
+floor and bites, its tail wagging.
+
+Each runs at a person's speed (a dog's for the dog): a wall is 3.2 m high, so
+the mouse's speed in 3D (4.5 tiles a second) would be 14 metres a second,
+faster than anyone runs. `game.same_speed: true` gives every character the
+mouse's speed instead (its legs then go faster than a person's).
+
+| | eyes (3D, part of the height of a wall) | top speed | speed (part of the mouse's) | the camera behind it (tiles back, its height) | steps | voice |
+|---|---|---|---|---|---|---|
+| man | 0.52 | 5.5 m/s | 38% | 1.6, 0.78 | shoes | "hm" and a satisfied sigh |
+| woman | 0.48 | 5.3 m/s | 37% | 1.55, 0.74 | bare feet | 2 kinds of "hmm" |
+| dog | 0.19 | 6 m/s | 42% | 1.0, 0.42 | paws with the click of claws (made by the browser) | barks, a whine, panting |
+| mouse | 0.25 | 14.4 m/s | 100% | 1.6, 0.55 | its patter (below) | its squeaks |
+| robot | 0.42 | 5 m/s | 35% | 1.5, 0.70 | heavy metal steps | beeps, a glitch |
+| knight | 0.53 | 5 m/s | 35% | 1.65, 0.80 | boots in chain mail | the man's voice, deeper |
+
+The steps, voices and bites are recordings (CC0, Freesound), each played a
+little differently every time; a step on the stone of a corridor rings
+brighter than on the floor of a room. The speed is also a part of the speed
+of the game in 2D. In 2D each is seen from above (the same model) with
+prints of its own (shoes, bare feet, boots, paws, the treads of the robot).
+The dog sniffs in a room it has not been in. Everything else is the same for
+all: the body that bumps into walls, turning, the rules and the steps, so
+games stay comparable; the file records the character, how it came to be,
+and its speed, eyes and step (`character`, `controls`).
 
 **Sound.** Quiet music, footsteps, eating, a bump at a wall, a chime when
 food has grown back and a short tune at the end, all made by the browser (no
@@ -267,8 +334,10 @@ Everything a study changes is in `settings.js`, with a comment on every key:
 - `datapipe.experiment_id`: the DataPipe experiment; `if_no_condition`: what
   to do when DataPipe cannot hand out a condition (`random` or `stop`).
 - `menu`: the views (`2d`, `3d`, `3d_behind`) and the mazes the first page
-  offers, in order. A study that wants every player in the same view lists
-  only that one.
+  offers, in order, and the characters the characters page offers
+  (`characters`, with `game.player: "choose"`). A study that wants every
+  player in the same view lists only that one (and sets `game.player` to 1
+  character for every player as that one).
 - `game`: what every game has: steps, start room (`random`, any room such as
   `s52`, or `environment`), `start_area` (null: random starts anywhere; 4: only
   in rows and columns 0 to 3), the food rooms (place `random`, a room such as
@@ -279,8 +348,9 @@ Everything a study changes is in `settings.js`, with a comment on every key:
   this many ms with no key held), `count_steps` (`moves`: only moves use up
   the steps; `all`: every step, as in the model), `track_ms` (the player's
   place and view recorded every this many ms; 0: not at all), whether a
-  session starts with sound, the player (`player`: `mouse` or `arrow`),
-  whether the mouse squeaks (`voice`), and the paintings, their Like plaques
+  session starts with sound, the player (`player`: `choose`, a character, or
+  `arrow`), whether every character walks at the same speed (`same_speed`),
+  whether the mouse or the character has a voice (`voice`), and the paintings, their Like plaques
   and the music room (`paintings`, `likes`, `music_room`).
 - `conditions`: the versions of the game. A condition changes any key of
   `game`; under `food_rooms` it changes rooms or adds new ones.
@@ -346,6 +416,42 @@ game opened from a file), `audio/music/`, `js/music.js` and both
 comes near it: the 512 pixel copies of the room the player is in and the
 rooms next to it, and the 1600 pixel copies of the room the player is in.
 
+### Characters
+
+The characters' models come from Sketchfab (CC0 or CC BY only), their
+sounds from Freesound (CC0), the motion capture from the CMU database. On a
+computer with internet (Python only, in `check/media/`):
+
+```
+python get_characters.py search     # candidates, and a page to pick from (a Freesound key for the sounds)
+python get_characters.py download   # the picked models (a Sketchfab token), sounds, three.js, motion capture
+python get_characters.py more       # more models, kinds of steps and the motion capture again
+python get_characters.py mocap      # only the motion capture (no token, no key)
+```
+
+The keys and the token are asked when needed and never kept. Then the
+characters for the game (numpy, Pillow and ffmpeg; the pictures need
+Playwright):
+
+```
+python check/make_characters.py <the characters folder> [name ...]
+node check/character_pictures.js [name ...]
+```
+
+`make_characters.py` keeps what the game draws of each model (its textures
+at most 1024 pixels), moves the man, the woman and the robot with the
+motion capture (each bone turned as the person's turned from rest, the
+hips moved as theirs, scaled to the model's legs; loops cut from a foot
+landing to the same foot landing), makes the dog's trot, gallop and eating
+(`check/dog_gait.py`: when each paw lands, its way through the air, the
+legs reaching it by turning at their joints, the back, head and tail),
+makes eating for the others from their standing clip (the right arm
+reaching the mouth by turning at the shoulder and the elbow about the
+elbow's own axis, the fingers closed round the food, the back and the head
+bending to the bite), cuts and levels the sounds, and writes
+`characters/<name>.js` with `characters/CREDITS.md`. `character_pictures.js` draws the pictures of the
+characters page (`img/characters/`).
+
 ### Links
 
 | Link | What it does |
@@ -359,6 +465,7 @@ rooms next to it, and the 1600 pixel copies of the room the player is in.
 | `?edit=1` | adds the maze editor to the first page (see below); its files are tests (`TEST_`) |
 | `?gl=0` | the 3D view drawn by the ray casting instead of the graphics card (as a browser without WebGL has it) |
 | `?gl=1` | the 3D view drawn with WebGL also where the processor draws it (for the checks, whose browser has no graphics card) |
+| `?level=3` | the 3D view drawn with WebGL keeps level 3 (0 to 5) all the time (for the checks; recorded as `render.fixed_level`) |
 
 ## The maze editor
 
@@ -478,14 +585,15 @@ Every file has at its top:
 | Key | |
 |---|---|
 | `trial_type` | `foraging-game` (for DataPipe's validation) |
-| `format`, `format_version`, `file` | `foraging-game`, 8, and `game` or `partial game` |
+| `format`, `format_version`, `file` | `foraging-game`, 9, and `game` or `partial game` |
 | `game_version` | the version of this code |
 | `player`, `player_code` | the player code (8 hex digits), and whether it was `new` or `kept in this browser` |
 | `session_id`, `session_started`, `test` | a random id of the page's visit, when it opened (UTC), test or not |
 | `condition` | `{name, how, datapipe, error}`: the condition, and how it was chosen (`link`, `datapipe`, `random`, `no conditions`) |
 | `link` | the options of the link |
 | `browser` | `user_agent`, `languages`, `screen`, `window`, `pixel_ratio`, `time_zone`, `utc_offset_minutes`, `cores`, `touch_points`, `clock_step_ms` (the smallest step of the browser's clock), `frame_ms` and `refresh_hz` (screen frames) |
-| `menu` | the first page before this game: `shown_at`, `chosen_at`, `view` (`2d`, `3d` or `3d_behind`), `maze`, and `actions` (every change of choice, with times) |
+| `character` | who the player was in this game: `{name, how, fallback, choices}`: `name` (`man`, `woman`, `dog`, `mouse`, `robot`, `knight` or `arrow`), `how` (`chosen` on the characters page, `settings`, or `no choice`: no page, as without WebGL), `fallback` (why the mouse instead of the character asked for, such as `no WebGL` or `could not load the man: ...`; null), `choices` (every characters page since the game before: `{shown_at, chosen_at, character, actions}`, an action `{t, how (key, click, click again, button, Enter), character}`) |
+| `menu` | the first page before this game: `shown_at`, `chosen_at`, `view` (`2d`, `3d` or `3d_behind`), `maze`, `character`, and `actions` (every change of choice, with times) |
 | `game` | the game (below) |
 | `keys`, `attention` | every key press and release, and the tab or window losing and getting back focus, from the end of the game before (the end page, the first page, the game) |
 | `sound_log` | every switch of the sound in the same time: `{t, phase, on, by}`, by `M` or `button` |
@@ -506,14 +614,14 @@ adds up to about one frame (`frame_ms`).
 | `seed`, `draws` | the seed of the game's own random numbers for refills (not numpy's) and every draw, 1 per step, used or not: the draws reproduce the game |
 | `layout_seed` | the seed the layout was picked with |
 | `settings`, `speeds` | all the settings of this game, and the eating and refill speeds used |
-| `controls` | how the player moves: walking speeds and their speeding up and slowing down (tiles a second; a room is 4 tiles, a corridor 3), the size of the body, how long a stay takes, and in 3D how fast turning goes and speeds up |
+| `controls` | how the player moves: walking speeds and their speeding up and slowing down (tiles a second; a room is 4 tiles, a corridor 3; for the character), the size of the body, how long a stay takes, and in 3D how fast turning goes and speeds up; `speed_factor` (the character's part of the game's speed), `eye` (3D: the eyes, part of the height of a wall), `step_tiles` (the length of a step of the mouse, or of the character at its top speed: its steps grow with its speed; null for the arrow) |
 | `food_kinds` | the food each food room shows: `cheese` or `bread` |
 | `sound` | `on_at_start`, and `toggles`: every switch during the game, `{t, step, on, by}` |
 | `path`, `known_rooms` | the room of every step from step 0, and the rooms the player knew at the end (what the end page draws) |
 | `walks_back` | every time the player went out into a door or corridor and back into the same room: `{left_at, back_at, step (steps taken before), room, toward, move, furthest (the share of the way to the next room's floor reached)}` |
 | `maze_def` | the maze as the game had it: `rooms` (colour numbers, -1 for no room) and, for a maze of the team, `team`: its drawing (`shape`), `start`, `food` (cheese and bread rooms), `moves`, `saved_by`, `saved_at` |
 | `started`, `started_at`, `ended` | `ended`: `{how, step, moves, idle_stays, space_stays, at}`: how is `finished`, `starved` or `page closed` (then `at` is when the page closed); `step` the steps of the world (moves and stays), `moves` the moves, `idle_stays` and `space_stays` the stays standing still and by Space |
-| `track` | the place and the view of the player every `track_ms` (100) during the game: `{every_ms, fields, rows}`, a row `[t, x, y, angle, step, look, look_d, look_share, music, tilt, back]` taken at the first screen frame from each mark on (so about 100 ms apart, more while the tab is hidden): `x`, `y` in tiles from the top left of the maze (a room is 4 tiles, a corridor 3, `x` to the right, `y` down), `angle` the way the player looks in degrees (0 east, 90 south; null in 2D), `step` the steps taken by then; `look` the place of the painting in the middle of the view (3D, see `gallery`; null when none is, and in 2D), `look_d` how far away it is (tiles), `look_share` how much of the width of the screen it covers (0 to 1); `music` how loud the gramophone is where the player is (0 to 1; null when it does not play); `tilt` how far the view looks up (the horizon that far below the middle of the screen, as a share of its height: 0 to 0.42; null in 2D), `back` how far the view stepped back from the player (tiles, 0 to 1; 0 behind the mouse; null in 2D). Null when `track_ms` is 0. Not in the short form |
+| `track` | the place and the view of the player every `track_ms` (100) during the game: `{every_ms, fields, rows}`, a row `[t, x, y, angle, step, look, look_d, look_share, music, tilt, back]` taken at the first screen frame from each mark on (so about 100 ms apart, more while the tab is hidden): `x`, `y` in tiles from the top left of the maze (a room is 4 tiles, a corridor 3, `x` to the right, `y` down), `angle` the way the player looks in degrees (0 east, 90 south; null in 2D), `step` the steps taken by then; `look` the place of the painting in the middle of the view (3D, see `gallery`; null when none is, and in 2D), `look_d` how far away it is (tiles), `look_share` how much of the width of the screen it covers (0 to 1); `music` how loud the gramophone is where the player is (0 to 1; null when it does not play); `tilt` how far the view looks up (the horizon that far below the middle of the screen, as a share of its height: 0 to 0.42; null in 2D), `back` how far the view stepped back from the player (tiles, 0 to 1; 0 with the camera behind; null in 2D). Null when `track_ms` is 0. Not in the short form |
 | `steps` | 1 row per step, step 0 being the start (below) |
 | `turns` | 3D: every turn, `{t, step (steps taken before it), key, from, to, from_angle, to_angle, ms, held_ms}`: `from` and `to` are the doors faced (`RIGHT`, `DOWN`, `LEFT`, `UP`), the angles in degrees (0 east, 90 south), `held_ms` how long the key was held. A turn still going on when a step is taken ends there (`split`), and the rest is a turn of its own (`continued`, with no key press of its own) |
 | `gallery_seed` | the seed the paintings were hung and the music room and its records picked with |
@@ -522,7 +630,7 @@ adds up to about one frame (`frame_ms`).
 | `likes` | 3D: every like and un-like: `{t, step (steps taken before it), place, painting, room, side, liked, by, d}`: `liked` true for a like, false when it was taken back, `by` `L` (the painting in the middle of the view) or `click` (its plaque), `d` how far away the painting was (tiles). Null in 2D |
 | `clicks` | every click on the view during the game: `{t, step, x, y (CSS pixels on the view), on (plaque, gramophone or null), place, outcome (like, unlike, music on, music off, ignored: not at the gramophone, nothing)}` |
 | `music` | the music room: `{room, pieces (the records in the order they come), plays}`, a play `{piece, started_at, step, by (P or click), stopped_at, stopped_by (P, click, ended, game over, or failed: why), played_s (seconds of it played)}`. Null with `game.music_room` false |
-| `render` | 3D: the sharpness: `{renderer, gpu, webgl, levels, screen {width, height, pixel_ratio}, at_start {level, width, height}, level, width, height (at the end), changes, draw_ms, frame_ms}`; `renderer` is `webgl2` or `webgl` (the graphics card drew the view) or `canvas` (the ray casting), `gpu` the graphics card as the browser names it (null when it does not say, and for `canvas`), `webgl` why the ray casting drew (`none`: the browser has no WebGL, `software`: only WebGL drawn by the processor, `off`: the link `?gl=0`; null for WebGL); a change `{t, level, scale, width, height, why (slow, fast, window size, start), draw_ms (canvas) or frame_ms (WebGL)}`; `draw_ms` the median and 90th percentile time the page took for a drawing, how many drawings, and (canvas) the ray casting's and the rest's share at the end; `frame_ms` (WebGL) the median and 90th percentile time from a drawing to the next screen frame (long when the graphics card is slow), and how many. Null in 2D |
+| `render` | 3D: the sharpness: `{renderer, gpu, webgl, levels, fixed_level, screen {width, height, pixel_ratio}, at_start {level, width, height}, level, width, height (at the end, the picture's pixels), changes, draw_ms, frame_ms}`; `fixed_level` the level the link kept (`?level=`; null); `renderer` is `webgl2` or `webgl` (the graphics card drew the view) or `canvas` (the ray casting), `gpu` the graphics card as the browser names it (null when it does not say, and for `canvas`), `webgl` why the ray casting drew (`none`: the browser has no WebGL, `software`: only WebGL drawn by the processor, `off`: the link `?gl=0`; null for WebGL); a change `{t, level, scale, width, height, why (slow, fast, window size, start), draw_ms (canvas) or frame_ms (WebGL)}`; `draw_ms` the median and 90th percentile time the page took for a drawing, how many drawings, and (canvas) the ray casting's and the rest's share at the end; `frame_ms` (WebGL) the median and 90th percentile time from a drawing to the next screen frame (long when the graphics card is slow), and how many. Null in 2D |
 | `result` | the game as a model run: `settings` (world, run, satiety) and `rows` as in `forage.v3.record`, for `forage.lab.measures.of_run`; laid over the defaults of `forage.v3.settings` they are valid settings of a model run |
 
 A row of `steps` (step 0 is the start: no key, move or times, nothing paid,
@@ -581,6 +689,53 @@ the agents' runs. Set `measures["energy"]` to the game's stomach
 ends at the first 0, while the game went on. To replay a game through the
 model's world, give `FoodWorld` the recorded `draws` (see `data_check.py`).
 
+## The team's data page
+
+`analysis.html` (on the site: `.../foraging-game/analysis.html`) turns game
+files into tables for the research: 1 row for each observation, 1 table for
+each kind of observation, ready for Excel, SPSS, R or Python. It is not
+linked from the game.
+
+- **The password** is the team password, the one the team saves mazes with:
+  the page opens when it unlocks the team's key (`js/team_key.js`), so it
+  needs saving set up once in the maze editor. The password is not kept;
+  Lock, or closing the page, locks it again. The site is public, so the
+  password keeps others off the page, not from the data: the data are the
+  game files, and only the team has them (the study's Drive folder).
+- **The files:** download the games from the Drive folder (a folder of them,
+  or the zip Drive makes of it) and drop them on the page, or choose them.
+  They are read in the browser; nothing is sent anywhere. Files that are not
+  games are listed and left out; test games (`TEST_`) are left out unless
+  ticked (or unless all the games are tests).
+- **What it shows:** the games, sortable, and for each its facts, its route on
+  the maze (as on the end page), its energy and the food rooms' levels step
+  by step, its visits to food rooms and its steps.
+- **Downloads:** an Excel workbook (a sheet for each table, an `about` sheet
+  and a `dictionary` sheet that says what every column holds), and a zip of
+  CSV files for SPSS, R or Python (a CSV for each table, `dictionary.csv`,
+  a `README.txt`, and for SPSS a `<table>_labels.sps` that gives the
+  variables their labels after the CSV is opened).
+
+The tables (`js/tables.js`; every column is described on the page and in the
+dictionary):
+
+| Table | 1 row |
+|---|---|
+| `games` | a game: who, the condition, maze, view and character, how it ended, the food eaten and lost, energy, decisions, exploring (rooms entered, the step by which half and all of them were, revisits, straight returns), each food room (its room, when found, visits, stays, food eaten), paintings, likes, music, the browser |
+| `steps` | a step of the world, step 0 the start: the move and how it came, rooms, times, decision time, food paid, energy, what was shown, events, and the true level of each food room |
+| `food` | a step and a food room: its level, what happened to it, whether the player was in it and knew it |
+| `visits` | a visit to a food room, from the step that entered it to the last step in it: stays, seconds, the level before and the level left, food eaten, energy before and after, whether the bar was full, the travel since the last visit and since the last visit to the same room |
+| `navigation` | a move from room to room: the rooms, the direction, a new room or a room been in before (how often), straight back, rooms entered and known so far, the shortest way from the start and to the nearest food room, decision and walking times |
+| `track` | every 100 ms: the place (tiles), the view, the painting looked at, the record playing |
+| `keys`, `turns` | a key pressed or let go, a turn in 3D |
+| `looks`, `likes`, `clicks`, `music` | a painting seen (with its painter and title), a like, a click on the view, a record played |
+| `page` | the window losing or getting back the keyboard, the sound switched |
+
+Every table begins with `file`, `player`, `session` and `game`, so tables
+join on them. Times are seconds from the start of the game; yes and no are 1
+and 0; an empty cell has no value. The tables come from the files alone, so
+the files of older versions (from format 9) read the same way.
+
 ## The rules
 
 The same as the model (active-inference-foraging, `src/forage/v3/world.py`,
@@ -616,7 +771,7 @@ python check/rules_check.py          # the rules against the model, 2,000 random
 python check/export_mazes.py --check # js/mazes.js is the model's mazes
 python check/layout_check.py         # the maze drawn as in the model's films (needs node)
 python check/map_check.py            # what the player is shown against the model's agent (a few minutes)
-node check/play_check.js out/        # games in Chromium, 2D and 3D (needs Playwright; about 55 minutes;
+node check/play_check.js out/        # games in Chromium, 2D and 3D (needs Playwright; about 80 minutes;
                                      # --only hold,closed for some scenarios, --files out/ to check saved files again)
 python check/data_check.py out/      # the recorded games replayed through the model
 python check/draw_route.py GAME.json # the way a player went, as on the end page (needs matplotlib)
@@ -648,7 +803,16 @@ with DataPipe stood in for (with its validation of the required fields):
   and a taken name refused, then a player's game in the saved maze;
 - no condition from DataPipe, and DataPipe down with the file sent on the next visit;
 - a tab closed in the middle of a game, then the partial game sent;
-- the page opened from a file;
+- the page opened from a file, with a character (its model, clips and sounds);
+- the team's data page: locked, a wrong password refused and the right one not
+  kept; 2 short games opened as a file and as a zip, a file that is no game
+  left out; every table as node makes it from the same files; a game's map
+  and energy drawn; the workbook (a sheet for each table) and the CSV zip
+  (with the dictionary and the SPSS labels); Lock forgetting the files;
+- the characters: each chosen on its page, in 3D behind it, through its eyes
+  and in 2D, its model in, its speed and steps, its eating coming in and
+  going again; the knight with the 3D view below level 0 (`?level=3`: drawn
+  into a buffer, the canvas keeping its size); without WebGL the mouse, and why;
 - the mouse in all 3 views, with the camera behind it checked at every place
   of the track (never in a wall, never with a wall between it and the mouse),
   and the arrow player of the versions before 2.4.0 in 2D and 3D;

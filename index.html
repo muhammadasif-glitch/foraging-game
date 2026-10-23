@@ -39,10 +39,21 @@
   <div id="gameHint" hidden></div>
   <div id="nowPlaying" hidden></div>
 
+  <div id="who" class="overlay" hidden>
+    <div class="panel who">
+      <h1 id="whoTitle"></h1>
+      <p class="sub" id="whoIntro"></p>
+      <div class="who-grid" id="whoCards"></div>
+      <p class="keys" id="whoKeys"></p>
+      <button class="primary" id="whoGo" tabindex="-1">Next &nbsp;<kbd>Enter</kbd></button>
+    </div>
+  </div>
+
   <div id="menu" class="overlay" hidden>
     <div class="panel">
       <h1 id="title">Food Rooms</h1>
       <p class="sub" id="intro"></p>
+      <p class="who-line" id="whoLine" hidden>You are: <b id="whoName"></b> &middot; <kbd>C</kbd> change</p>
       <div class="row-label" id="viewLabel">View</div>
       <div class="grid two" id="views"></div>
       <div class="row-label" id="mazeLabel">Maze</div>
@@ -158,6 +169,9 @@
   <script src="js/sound.js"></script>
   <script src="js/route.js"></script>
   <script src="js/mouse.js"></script>
+  <script src="js/three/three.min.js"></script>
+  <script src="js/three/GLTFLoader.js"></script>
+  <script src="js/characters.js"></script>
   <script src="js/view2d.js"></script>
   <script src="js/view3d.js"></script>
   <script src="js/gl3d.js"></script>

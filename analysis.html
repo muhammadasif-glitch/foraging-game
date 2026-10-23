@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Foraging game: the team's data</title>
+  <link rel="stylesheet" href="css/analysis.css">
+</head>
+<body>
+  <div id="lock" class="lock">
+    <form id="lock-form" class="card lock-card" autocomplete="off">
+      <div class="stamp">Team only</div>
+      <svg class="maze-mark" width="58" height="58" viewBox="0 0 58 58" aria-hidden="true">
+        <rect x="3" y="3" width="52" height="52" rx="3" fill="none" stroke="#23201b" stroke-width="2.5"/>
+        <path d="M3 21h17M38 3v18M21 38h34M21 21v17M38 38v17" fill="none" stroke="#23201b" stroke-width="2.5"/>
+        <path d="M43 9l8 7h-8z" fill="#e1a52c" stroke="#a5622d" stroke-width="1.2"/>
+        <circle cx="12" cy="46" r="3.4" fill="#b5472b"/>
+      </svg>
+      <h1>The team's data</h1>
+      <p class="lead">The games of the foraging game as tables, for the research team.</p>
+      <label for="password">Team password</label>
+      <input id="password" type="password" spellcheck="false" autocapitalize="off" required>
+      <button id="open" type="submit" class="primary">Open</button>
+      <p id="lock-note" class="note" style="margin-top: 16px">The password is the one the team saves mazes with.
+        Game files opened here stay on this computer: nothing is sent.</p>
+    </form>
+  </div>
+
+  <div id="app" class="page" hidden>
+    <header class="top">
+      <div>
+        <p class="kicker">Foraging game &middot; the team's data</p>
+        <h1>Games, step by step</h1>
+        <p class="sub">Open the game files saved by DataPipe. Each game becomes rows of tables, 1 row for each
+          observation, ready for Excel, SPSS, R or Python.</p>
+      </div>
+      <button id="lock-again" class="quiet" type="button">Lock</button>
+    </header>
+
+    <section class="card">
+      <h2><span class="num">1</span>Open the game files</h2>
+      <div id="drop" class="drop" tabindex="0">
+        <p><strong>Drop game files here:</strong> the <code>.json</code> files of the games, a folder of them, or the
+          zip a storage gives for a folder.</p>
+        <div class="buttons">
+          <label class="button">Choose files<input id="pick-files" type="file" multiple
+            accept=".json,.zip,application/json,application/zip" hidden></label>
+          <label class="button">Choose a folder<input id="pick-folder" type="file" multiple webkitdirectory hidden></label>
+        </div>
+        <div id="progress" class="progress" hidden><span></span></div>
+      </div>
+      <p id="opened" class="note" style="margin-top: 12px"></p>
+    </section>
+
+    <div id="results" hidden>
+      <div id="stats" class="stats"></div>
+
+      <section class="card">
+        <h2><span class="num">2</span>Download the tables</h2>
+        <label class="check"><input id="with-tests" type="checkbox"> Include test games (files marked TEST_)</label>
+        <div class="buttons">
+          <button id="get-xlsx" class="primary" type="button">Excel workbook (.xlsx)</button>
+          <button id="get-csv" type="button">CSV files for SPSS, R or Python (.zip)</button>
+        </div>
+        <p class="note">The workbook has a sheet for each table and a sheet that says what every column holds. The zip
+          has a CSV file for each table, the same dictionary, and for SPSS a file of variable labels for each table.</p>
+        <div id="table-list" class="table-list"></div>
+      </section>
+
+      <section class="card">
+        <h2><span class="num">3</span>The games</h2>
+        <p class="note">Click a game to see it below. Click a heading to sort.</p>
+        <div class="scroll"><table id="games" class="ledger"></table></div>
+      </section>
+
+      <section id="game-card" class="card" hidden></section>
+
+      <section class="card">
+        <h2><span class="num">4</span>What the columns hold</h2>
+        <div id="dictionary"></div>
+      </section>
+    </div>
+    <footer id="footer"></footer>
+  </div>
+
+  <script src="js/mazes.js"></script>
+  <script src="js/rules.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/food.js"></script>
+  <script src="js/route.js"></script>
+  <script src="js/paintings.js"></script>
+  <script src="js/team_save.js"></script>
+  <script src="js/zipfile.js"></script>
+  <script src="js/tables.js"></script>
+  <script src="js/analysis.js"></script>
+</body>
+</html>

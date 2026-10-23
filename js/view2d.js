@@ -8,6 +8,7 @@
   var Wd = FG.world, F = FG.food;
 
   var BG = "#0c1016";
+  var PRINT_MS = 1600;                 // how long a character's print stays (as the mouse's)
 
   function rgb(c, f) {
     return "rgb(" + Math.round(c[0] * f) + "," + Math.round(c[1] * f) + "," + Math.round(c[2] * f) + ")";
@@ -166,6 +167,9 @@
     }
 
     var a = scene.heading !== undefined ? scene.heading : (scene.facing || 0) * Math.PI / 2;
+    if (scene.figure && FG.characters && drawFigure(g, scene, a, T)) {
+      return;
+    }
     if (scene.mouse && FG.mouse) {
       (scene.prints || []).forEach(function (p) {
         FG.mouse.print2d(g, p.x * T, p.y * T, p.a, T, 1 - (scene.now - p.t0) / FG.mouse.PRINT_MS);
@@ -202,6 +206,29 @@
 
   /* The gramophone in the middle of the music room, its notes rising while
    * it plays; returns where it is (CSS pixels), for clicks. */
+  /* A character of js/characters.js seen from above, drawn zoom2d times
+   * its size, with its prints; false where it cannot be drawn (no WebGL). */
+  function drawFigure(g, scene, a, T) {
+    var F = FG.characters, fig = scene.figure, info = F.INFO[fig.name];
+    var metres = info.reach * 1.15, half = metres * info.zoom2d / F.TILE;
+    var px = Math.max(48, Math.min(640, Math.round(2 * half * T)));
+    var pic = F.topView(fig.name, fig, a, px, metres);
+    if (!pic) {
+      return false;
+    }
+    (scene.prints || []).forEach(function (p) {
+      F.print2d(g, p.x * T, p.y * T, p.a, T, 1 - (scene.now - p.t0) / PRINT_MS, p.kind);
+    });
+    var x = scene.x * T, y = scene.y * T, r = half * T;
+    // its shadow on the floor, a little to the side of the light
+    g.fillStyle = "rgba(0,0,0,0.22)";
+    g.beginPath();
+    g.ellipse(x + r * 0.06, y + r * 0.09, r * 0.42, r * 0.3, a, 0, 2 * Math.PI);
+    g.fill();
+    g.drawImage(pic, x - r, y - r, 2 * r, 2 * r);
+    return true;
+  }
+
   function drawGramophone(g, scene, M, T) {
     var mu = scene.music, rm = M.list[M.index[Wd.key(mu.room)]];
     var L = lightOf(scene, (rm.r0 + 1) * M.W + rm.c0 + 1);

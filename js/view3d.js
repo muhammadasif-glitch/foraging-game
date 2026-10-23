@@ -163,7 +163,7 @@
   View.prototype.renderInfo = function (from) {
     var c = this.costs.slice().sort(function (a, b) { return a - b; });
     var q = function (f) { return c.length ? Math.round(c[Math.floor(f * (c.length - 1))] * 100) / 100 : null; };
-    return {renderer: "canvas", gpu: null, webgl: this.webgl || null, levels: LEVELS.slice(),
+    return {renderer: "canvas", gpu: null, webgl: this.webgl || null, levels: LEVELS.slice(), fixed_level: null,
       screen: {width: this.W, height: this.H, pixel_ratio: this.dpr},
       at_start: this.atMark || null, level: this.level, width: this.rw, height: this.rh,
       changes: this.changes.slice(from || 0),
@@ -895,7 +895,7 @@
   function create(canvas, opts) {
     var how = opts && opts.gl || "auto";
     if (how !== "off" && FG.gl3d) {
-      var g = FG.gl3d.create(canvas, how === "always");
+      var g = FG.gl3d.create(canvas, how === "always", opts && opts.level);
       if (g) {
         return g;
       }
