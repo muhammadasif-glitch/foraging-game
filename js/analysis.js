@@ -21,7 +21,7 @@
   "use strict";
   var FG = root.FG = root.FG || {};
 
-  var VERSION = "2.7.0";
+  var VERSION = "2.7.1";
   var EXCEL_ROWS = 1000000;           // rows of a sheet before a table goes on in the next
   var $ = function (id) { return document.getElementById(id); };
 

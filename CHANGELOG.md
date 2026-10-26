@@ -1,5 +1,17 @@
 # Changes
 
+## 2.7.1
+
+- The paintings no longer flash dark or bright for a moment when the player
+  walks into a room. A picture coming in to the graphics card while the
+  paintings were drawn took the place of the light of the tiles, so the
+  paintings of that frame were lit by the picture. Pictures now come in
+  without touching the light.
+- A painting whose sharp copy has to wait for a frame of its own shows its
+  small copy meanwhile, no longer a blurred one from the small pictures of
+  all paintings; and that texture of all the small pictures is asked for
+  again when it had to wait.
+
 ## 2.7.0
 
 - All characters go at the mouse's speed (`game.same_speed: true`, now the

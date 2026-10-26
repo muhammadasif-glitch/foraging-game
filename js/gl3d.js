@@ -396,6 +396,11 @@
       g.drawImage(c, 0, 0, src.width, src.height);
     }
     var t = gl.createTexture();
+    // made on unit 0, the one every picture is drawn from: a picture comes
+    // in while the paintings are drawn, and on the unit in use then (2, the
+    // light of the tiles) it took the light's place, so the paintings of
+    // that frame were lit by the picture: they flashed dark or bright
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
@@ -456,8 +461,12 @@
         this.textures.delete(this.atlasCanvas);
       }
       this.atlasCanvas = c;
-      this.atlasTex = this.texture(c, Infinity);
+      this.atlasTex = null;
       this.atlasOf = at;
+    }
+    if (!this.atlasTex) {
+      // a big picture: it may have to wait for a frame of its own, so asked again
+      this.atlasTex = this.texture(this.atlasCanvas, Infinity);
     }
     return this.atlasTex;
   };
@@ -1105,7 +1114,9 @@
       var full = [[0, 0], [1, 0], [1, 1], [0, 1]];
       var framed = A.image(pic, 1e9);
       if (framed && !self.texture(framed, self.frame)) {
-        framed = null;
+        // the sharp copy waits for a frame of its own: the small one till then
+        var small = A.image(pic, 0);
+        framed = small && small !== framed && self.texture(small, self.frame) ? small : null;
       }
       if (framed) {
         rect(group(framed), D.fx0, D.fx1, D.fv0, D.fv1, full, [1, 1, 1], 1);
