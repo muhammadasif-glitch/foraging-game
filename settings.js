@@ -33,7 +33,7 @@
                                   // the character (not with game.player arrow). A study can list only 1.
       // the characters to choose from (game.player choose), in this order;
       // the mouse is marked at first
-      characters: ["man", "woman", "dog", "mouse", "robot", "knight"],
+      characters: ["girl", "boy", "woman", "man", "dog", "mouse", "robot"],
       // the mazes of the model; environments made with its
       // tools/make_environment.py come in through check/export_mazes.py
       mazes: ["grid_4x4", "grid_6x6", "grid_two_4x4", "ring_5x5", "holes_6x6", "corridors_7x7"]
@@ -55,7 +55,7 @@
       player: "choose",           // choose: a page before the first page shows the characters of
                                   // menu.characters in 3D and the player chooses one (where the 3D view is
                                   // drawn with WebGL; else the mouse); or always 1 of them: man, woman,
-                                  // dog, mouse, robot, knight (js/characters.js; mouse: js/mouse.js);
+                                  // girl, boy, woman, man, dog, mouse, robot (js/characters.js; mouse: js/mouse.js);
                                   // arrow: a disc with an arrow, as before 2.4.0
       same_speed: true,           // true: all at the speed of the mouse; false: each character runs at its
                                   // own speed, a person's (js/characters.js: 5 to 6 metres a second, the
@@ -65,19 +65,23 @@
       paintings: true,            // 3D: famous paintings on the walls (js/paintings.js), a different one on
                                   // every wall, hung anew every game; false: the game's own landscapes, 1 for
                                   // each room colour (as before 2.5.0)
-      likes: true,                // 3D, with paintings: a Like plaque beside every painting; L (the painting in
-                                  // the middle of the view) or a click on the plaque likes it, again un-likes it
+      ratings: true,              // 3D, with paintings: a plate of 5 stars left of every painting; the keys 1 to
+                                  // 5 (the painting in the middle of the view) or a click on a star rate it; the
+                                  // same rating again takes it back
+      painting_info: true,        // 3D, with paintings: an info button right of every painting; I (the painting
+                                  // in the middle of the view) or a click on it opens the painting's card
+                                  // (js/painting_info.js); the game pauses until any key or Close
       music_room: true,           // 1 room of every game (never the start or a food room) has a gramophone:
                                   // near it, P or a click plays a famous piece (js/music.js), again stops it
-                                  // (liking and the music cost nothing and do not hold up the stays)
+                                  // (rating and the music cost nothing and do not hold up the stays)
       start_rooms: "random",      // random, a room such as "s00", or "environment": 1 of the start rooms
                                   // of the maze's environment file
       start_area: null,           // null: random start rooms anywhere; 4: only in rows and columns 0 to 3
       food_rooms: {               // room: "random" (never the start room, never 2 in 1 room), a room such
                                   // as "s33", or "environment": the room the maze's environment file gives;
-                                  // food: what the room shows, cheese or bread
-        patch: {room: "random", worth: 8.0, start_level: 1.0, food: "cheese"},
-        small: {room: "random", worth: 1.0, start_level: 1.0, food: "bread"}
+                                  // food: what the room shows: pizza, apples (or cheese, bread)
+        patch: {room: "random", worth: 8.0, start_level: 1.0, food: "pizza"},
+        small: {room: "random", worth: 1.0, start_level: 1.0, food: "apples"}
       },
       food: {
         rule: "linear",           // linear or exponential
@@ -123,9 +127,12 @@
       keys_2d: "<kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&rarr;</kbd> <kbd>&darr;</kbd> walk (hold) &middot; " +
         "<kbd>Space</kbd> stay &middot; <kbd>M</kbd> sound",
       keys_3d: "<kbd>&uarr;</kbd> walk &middot; <kbd>&darr;</kbd> back &middot; <kbd>&larr;</kbd> <kbd>&rarr;</kbd> turn &middot; " +
-        "<kbd>Space</kbd> stay &middot; <kbd>L</kbd> like &middot; <kbd>M</kbd> sound",
-      menu_keys: "<kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd> choose &middot; " +
-        "<kbd>Enter</kbd> play &middot; <kbd>M</kbd> sound",
+        "<kbd>Space</kbd> stay &middot; <kbd>M</kbd> sound",
+      keys_rate: "<kbd>1</kbd>&ndash;<kbd>5</kbd> rate",
+      keys_info: "<kbd>I</kbd> info",
+      keys_exit: "<kbd>Esc</kbd> exit",
+      menu_keys: "<kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd> or a click choose &middot; " +
+        "<kbd>Enter</kbd> or a click on Play &middot; <kbd>M</kbd> sound",
       view_2d: "From above",
       view_3d: "From inside",
       view_3d_behind: "From behind",
@@ -139,8 +146,8 @@
       starved: "You ran out of energy",
       eaten: "food eaten",
       full_sign: "full: eat again after you walk out",
-      like: "Like",               // the plaque beside a painting, and once liked
-      liked: "Liked",
+      bye_title: "Thank you",       // Exit on the first page
+      bye_body: "Thank you for playing. You can close this page now.",
       music_play: "<kbd>P</kbd> play the gramophone",
       music_stop: "<kbd>P</kbd> stop the music",
       again: "Press <kbd>Enter</kbd> to go back to the menu.",

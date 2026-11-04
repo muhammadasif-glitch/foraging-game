@@ -1,4 +1,5 @@
-/* The paintings on the walls of the 3D view, and their Like plaques.
+/* The paintings on the walls of the 3D view, with a rating plate (5 stars)
+ * and an info button under it, both left of the frame.
  *
  * The paintings are the famous public-domain paintings of js/paintings.js
  * (see img/paintings/CREDITS.md). Every game hangs them anew: each wall of
@@ -10,7 +11,7 @@
  * A painting keeps its own shape (never stretched or cut): in its gilded
  * frame it is fitted into at most FRAME_MAX_W x FRAME_MAX_H tiles, 80% of
  * the height of the wall between the moulding and the skirting board, with
- * the Like plaque beside the frame (layout). The view draws paintings far away from ATLAS, 1 image with a
+ * the rating plate and the info button under it on its left (layout). The view draws paintings far away from ATLAS, 1 image with a
  * small picture of every painting; near ones sharp from their own image:
  * the 512 pixel copy, and the 1600 pixel one for the room the player is in
  * (want, image), each put into its frame once it has come in. Picture
@@ -27,21 +28,29 @@
   var FRAME_MAX_W = 1.5, FRAME_MAX_H = 0.8, BORDER = 0.045, V_MID = 0.48;
   // the game's own small landscapes (game.paintings false) as before
   var LANDSCAPE_MAX_W = 1.24, LANDSCAPE_MAX_H = 0.59;
-  // the Like plaque: its size, how far right of the frame; its middle at
-  // the eyes of a person (half way up the wall)
-  var PLAQUE_W = 0.2, PLAQUE_H = 0.088, PLAQUE_GAP = 0.06, PLAQUE_MID = 0.5;
+  // the rating plate: its size, how far left of the frame; its middle a
+  // little above the eyes of a person (half way up the wall); its 5 stars
+  // side by side across the plate but for STAR_PAD at each end. The info
+  // button: a round button INFO_D across, INFO_GAP under the middle of the
+  // plate.
+  var PLAQUE_W = 0.3, PLAQUE_H = 0.076, PLAQUE_GAP = 0.05, PLAQUE_MID = 0.46, STAR_PAD = 0.012;
+  var INFO_D = 0.085, INFO_GAP = 0.03, STARS = 5;
+  // the plate and the button are drawn this many times sharper than 1 pixel
+  // of their canvas for each 1/1200 of a tile
+  var PLATE_PX = 720, INFO_PX = 256;
   var GENERATED = 48, GEN_W = 156, GEN_H = 116;
   // images kept that are not wanted any more, at most
   var KEEP = {large: 8, small: 24};
   var LOADING_AT_ONCE = 4;
-  var FRAME_RGB = [176, 136, 62], PLAQUE_RGB = [236, 228, 206], LIKED_RGB = [46, 156, 90];
+  var FRAME_RGB = [176, 136, 62], PLAQUE_RGB = [176, 146, 86], LIKED_RGB = [214, 172, 72];
+  var INFO_RGB = [176, 142, 78];
 
   var list = [];            // FG.PAINTINGS
   var atlas = null;         // {data, w, h}: the pixels of FG.PAINTINGS_ATLAS
   var made = {};            // generated landscapes: {canvas, data}
   var layouts = {};
   var plaques = {};
-  var labels = {like: "Like", liked: "Liked"};
+  var infoPic = null;
   var images = {};          // "p:size" -> {img, framed (the picture in its frame), ready, failed, used}
   var wanted = [];          // [{p, size}], most wanted first
   var active = 0;
@@ -336,18 +345,30 @@
     if (!layouts[key]) {
       var a = aspect(p);
       // the picture as high as the frame allows, unless that is too wide
-      var maxW = p >= 0 ? FRAME_MAX_W : LANDSCAPE_MAX_W, maxH = p >= 0 ? FRAME_MAX_H : LANDSCAPE_MAX_H;
+      var sides = PLAQUE_W + PLAQUE_GAP;
+      var maxW = Math.min(p >= 0 ? FRAME_MAX_W : LANDSCAPE_MAX_W, 2 - sides - 0.04);
+      var maxH = p >= 0 ? FRAME_MAX_H : LANDSCAPE_MAX_H;
       var ph = maxH - 2 * BORDER, pw = ph * a;
       if (pw + 2 * BORDER > maxW) {
         pw = maxW - 2 * BORDER;
         ph = pw / a;
       }
       var fw = pw + 2 * BORDER, fh = ph + 2 * BORDER;
-      var x0 = (2 - (fw + PLAQUE_GAP + PLAQUE_W)) / 2;
+      var q0 = (2 - (fw + sides)) / 2, x0 = q0 + PLAQUE_W + PLAQUE_GAP, i0 = q0 + (PLAQUE_W - INFO_D) / 2;
+      var iTop = PLAQUE_MID + PLAQUE_H / 2 + INFO_GAP;
       var L = {fx0: x0, fx1: x0 + fw, fv0: V_MID - fh / 2, fv1: V_MID + fh / 2,
         px0: x0 + BORDER, px1: x0 + fw - BORDER, pv0: V_MID - ph / 2, pv1: V_MID + ph / 2,
-        qx0: x0 + fw + PLAQUE_GAP, qx1: x0 + fw + PLAQUE_GAP + PLAQUE_W,
-        qv0: PLAQUE_MID - PLAQUE_H / 2, qv1: PLAQUE_MID + PLAQUE_H / 2};
+        qx0: q0, qx1: q0 + PLAQUE_W, qv0: PLAQUE_MID - PLAQUE_H / 2, qv1: PLAQUE_MID + PLAQUE_H / 2,
+        ix0: i0, ix1: i0 + INFO_D, iv0: iTop, iv1: iTop + INFO_D, sx: []};
+      // all that hangs there: the frame, the plate and the button
+      L.ax0 = q0;
+      L.ax1 = x0 + fw;
+      L.av0 = Math.min(L.fv0, L.qv0);
+      L.av1 = Math.max(L.fv1, L.iv1);
+      // where star n (1 to 5) is across the plate: from sx[n - 1] to sx[n]
+      for (var n = 0; n <= STARS; n++) {
+        L.sx.push(q0 + STAR_PAD + n * (PLAQUE_W - 2 * STAR_PAD) / STARS);
+      }
       layouts[key] = L;
     }
     return layouts[key];
@@ -390,8 +411,15 @@
     return p + ":" + size;
   }
 
+  /* Where the image of painting p is (a Promise of its address): its file,
+   * or what the page gives for it (FG.paintingSource(id, size): an address,
+   * or a picture to draw (an ImageBitmap or a canvas), or a Promise of one;
+   * the demo build, which has the images on sheets of several). */
   function src(p, size) {
-    return "img/paintings/" + size + "/" + list[p].id + ".jpg";
+    if (FG.paintingSource) {
+      return Promise.resolve(FG.paintingSource(list[p].id, size));
+    }
+    return Promise.resolve("img/paintings/" + size + "/" + list[p].id + ".jpg");
   }
 
   /* The images to have ready, most wanted first: [{p, size}], size "small"
@@ -424,18 +452,22 @@
       size: size};
     images[k] = e;
     active += 1;
+    var given = null;           // a picture the page gave itself (an ImageBitmap or a canvas)
     var done = function (ok) {
       active -= 1;
       img.onload = img.onerror = null;
       if (images[k] === e) {
         if (ok) {
           try {
-            e.framed = framed(p, img);
+            e.framed = framed(p, given || img);
           } catch (err) {
             ok = false;
           }
           // the picture is kept in its frame: the image itself can go
           img.src = "";
+          if (given && given.close) {
+            given.close();
+          }
         }
         e.ready = ok;
         e.failed = !ok;
@@ -455,7 +487,17 @@
       }
     };
     img.onerror = function () { done(false); };
-    img.src = src(p, size);
+    src(p, size).then(function (url) {
+      if (images[k] !== e) {
+        return;
+      }
+      if (typeof url === "string") {
+        img.src = url;
+      } else {
+        given = url;
+        done(!!url);
+      }
+    }, function () { done(false); });
   }
 
   function trim() {
@@ -564,68 +606,157 @@
     g.clearRect(b, b, W - 2 * b, H - 2 * b);
   }
 
-  /* The Like plaque beside every painting: a small plate with a thumb up
-   * and "Like"; once liked, green, with "Liked". */
-  function plaque(liked) {
-    var k = liked ? "on" : "off";
+  /* Brushed brass, as the gilded frames: a gradient across (x0, y0) to
+   * (x1, y1), lighter when lit. */
+  function brass(g, x0, y0, x1, y1, lit) {
+    var gr = g.createLinearGradient(x0, y0, x1, y1);
+    var c = lit ? ["#7a5a1e", "#e7c66e", "#b88a33", "#f3d98c", "#8d6826"] :
+      ["#6a5129", "#c9a964", "#9a7a3f", "#d7bd7c", "#7a5f2f"];
+    [0, 0.28, 0.5, 0.74, 1].forEach(function (t, i) { gr.addColorStop(t, c[i]); });
+    return gr;
+  }
+
+  /* A plate with rounded corners filling a W x H canvas: brass with a
+   * bevel, and its fine brushing. */
+  function plate(g, W, H, lit) {
+    var r = H * 0.16, b = Math.max(2, H * 0.06);
+    var path = function (i) {
+      g.beginPath();
+      g.moveTo(r + i, i);
+      g.arcTo(W - i, i, W - i, H - i, r);
+      g.arcTo(W - i, H - i, i, H - i, r);
+      g.arcTo(i, H - i, i, i, r);
+      g.arcTo(i, i, W - i, i, r);
+      g.closePath();
+    };
+    path(0);
+    g.fillStyle = "#3d2c10";
+    g.fill();
+    path(b * 0.45);
+    g.fillStyle = brass(g, 0, 0, W, H, lit);
+    g.fill();
+    // the bevel: light from above, shade below
+    path(b);
+    var bev = g.createLinearGradient(0, 0, 0, H);
+    bev.addColorStop(0, "rgba(255,246,214,0.55)");
+    bev.addColorStop(0.5, "rgba(255,246,214,0)");
+    bev.addColorStop(1, "rgba(40,26,6,0.35)");
+    g.strokeStyle = bev;
+    g.lineWidth = b * 0.9;
+    g.stroke();
+    // brushed: fine lines across
+    g.save();
+    path(b);
+    g.clip();
+    for (var y = 0; y < H; y += 2) {
+      g.fillStyle = "rgba(255,255,255," + (0.035 + 0.03 * Math.sin(y * 1.7)).toFixed(3) + ")";
+      g.fillRect(0, y, W, 1);
+    }
+    g.restore();
+  }
+
+  /* A star with 5 points, its middle at (cx, cy), r to its points. */
+  function starPath(g, cx, cy, r) {
+    g.beginPath();
+    for (var i = 0; i < 10; i++) {
+      var a = -Math.PI / 2 + i * Math.PI / 5, d = i % 2 ? r * 0.44 : r;
+      g[i ? "lineTo" : "moveTo"](cx + d * Math.cos(a), cy + d * Math.sin(a));
+    }
+    g.closePath();
+  }
+
+  /* The rating plate left of every painting: a brass plate with 5 stars
+   * engraved in it; the first stars (rating of them) inlaid in gold,
+   * shining. */
+  function plaque(rating) {
+    var k = Math.max(0, Math.min(STARS, rating | 0));
     if (!plaques[k]) {
       var c = document.createElement("canvas");
-      c.width = 264;
-      c.height = Math.round(264 * PLAQUE_H / PLAQUE_W);
-      var g = c.getContext("2d"), W = c.width, H = c.height, r = H * 0.18;
-      g.fillStyle = liked ? "#2e9c5a" : "#ece4ce";
-      g.strokeStyle = liked ? "#1c6a3b" : "#8f7a52";
-      g.lineWidth = 5;
-      g.beginPath();
-      g.moveTo(r, 3);
-      g.arcTo(W - 3, 3, W - 3, H - 3, r);
-      g.arcTo(W - 3, H - 3, 3, H - 3, r);
-      g.arcTo(3, H - 3, 3, 3, r);
-      g.arcTo(3, 3, W - 3, 3, r);
-      g.closePath();
-      g.fill();
-      g.stroke();
-      thumb(g, H * 0.58, H * 0.5, H * 0.56, liked ? "#ffffff" : "#5a4a2c");
-      g.fillStyle = liked ? "#ffffff" : "#3b301c";
-      g.font = "bold " + Math.round(H * 0.44) + "px ui-sans-serif, system-ui, sans-serif";
-      g.textBaseline = "middle";
-      g.textAlign = "center";
-      g.fillText(liked ? labels.liked : labels.like, (H * 1.05 + W - H * 0.2) / 2, H * 0.53, W - H * 1.3);
+      c.width = PLATE_PX;
+      c.height = Math.round(PLATE_PX * PLAQUE_H / PLAQUE_W);
+      var g = c.getContext("2d"), W = c.width, H = c.height;
+      plate(g, W, H, k > 0);
+      var pad = W * STAR_PAD / PLAQUE_W, cell = (W - 2 * pad) / STARS, rr = Math.min(cell, H) * 0.36;
+      g.lineJoin = "round";
+      for (var n = 0; n < STARS; n++) {
+        var cx = pad + cell * (n + 0.5), cy = H * 0.52;
+        if (n < k) {
+          // inlaid gold, lit from above
+          starPath(g, cx, cy + H * 0.015, rr);
+          g.fillStyle = "rgba(40,24,0,0.45)";
+          g.fill();
+          starPath(g, cx, cy, rr);
+          var fill = g.createLinearGradient(0, cy - rr, 0, cy + rr);
+          fill.addColorStop(0, "#fff3b8");
+          fill.addColorStop(0.45, "#ffcf3a");
+          fill.addColorStop(1, "#d48a06");
+          g.fillStyle = fill;
+          g.fill();
+          g.lineWidth = H * 0.03;
+          g.strokeStyle = "#7a4a00";
+          g.stroke();
+        } else {
+          // engraved: a dark cut with a bright lower edge
+          starPath(g, cx, cy + H * 0.012, rr);
+          g.lineWidth = H * 0.05;
+          g.strokeStyle = "rgba(255,240,200,0.55)";
+          g.stroke();
+          starPath(g, cx, cy, rr);
+          g.strokeStyle = "rgba(52,34,8,0.85)";
+          g.stroke();
+          g.fillStyle = "rgba(52,34,8,0.12)";
+          g.fill();
+        }
+      }
       plaques[k] = c;
     }
     return plaques[k];
   }
 
-  /* A thumb up, s high, its middle at (cx, cy). */
-  function thumb(g, cx, cy, s, ink) {
-    var u = s / 10;
-    g.save();
-    g.translate(cx - 5 * u, cy - 5 * u);
-    g.fillStyle = ink;
-    // the cuff
-    g.fillRect(0, 4.4 * u, 2.2 * u, 5.4 * u);
-    // the hand, its fingers folded, and the thumb up
-    g.beginPath();
-    g.moveTo(2.9 * u, 4.6 * u);
-    g.lineTo(4.6 * u, 0.9 * u);
-    g.quadraticCurveTo(5.4 * u, -0.2 * u, 6.1 * u, 0.6 * u);
-    g.quadraticCurveTo(6.6 * u, 1.4 * u, 6.0 * u, 3.4 * u);
-    g.lineTo(9.0 * u, 3.4 * u);
-    g.quadraticCurveTo(10 * u, 3.6 * u, 9.8 * u, 4.6 * u);
-    g.lineTo(9.0 * u, 9.0 * u);
-    g.quadraticCurveTo(8.8 * u, 9.8 * u, 7.9 * u, 9.8 * u);
-    g.lineTo(2.9 * u, 9.8 * u);
-    g.closePath();
-    g.fill();
-    g.restore();
+  /* The info button under the rating plate: a round brass button with an
+   * engraved "i", as on a museum label. */
+  function infoButton() {
+    if (!infoPic) {
+      var c = document.createElement("canvas");
+      c.width = c.height = INFO_PX;
+      var g = c.getContext("2d"), R = INFO_PX / 2;
+      g.beginPath();
+      g.arc(R, R, R - 1, 0, 2 * Math.PI);
+      g.fillStyle = "#3d2c10";
+      g.fill();
+      g.beginPath();
+      g.arc(R, R, R * 0.93, 0, 2 * Math.PI);
+      g.fillStyle = brass(g, 0, 0, INFO_PX, INFO_PX, false);
+      g.fill();
+      g.lineWidth = R * 0.07;
+      var bev = g.createLinearGradient(0, 0, 0, INFO_PX);
+      bev.addColorStop(0, "rgba(255,246,214,0.6)");
+      bev.addColorStop(1, "rgba(40,26,6,0.4)");
+      g.strokeStyle = bev;
+      g.beginPath();
+      g.arc(R, R, R * 0.86, 0, 2 * Math.PI);
+      g.stroke();
+      // the "i": a bright lower edge, then the cut
+      g.font = "bold " + Math.round(R * 1.25) + "px Georgia, \"Times New Roman\", serif";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillStyle = "rgba(255,240,200,0.6)";
+      g.fillText("i", R, R * 1.06 + R * 0.04);
+      g.fillStyle = "#3a2608";
+      g.fillText("i", R, R * 1.06);
+      infoPic = c;
+    }
+    return infoPic;
   }
 
-  function setLabels(like, liked) {
-    if (like && liked && (like !== labels.like || liked !== labels.liked)) {
-      labels = {like: like, liked: liked};
-      plaques = {};
-      changes += 1;
+  /* Which star (1 to 5) is at ax across the wall tiles of layout D, or 0. */
+  function starAt(D, ax) {
+    for (var n = 1; n <= STARS; n++) {
+      if (ax >= D.sx[n - 1] && ax < D.sx[n]) {
+        return n;
+      }
     }
+    return 0;
   }
 
   // ------------------------------------------------------------ loading
@@ -664,10 +795,10 @@
   FG.art = {
     load: load, source: source, count: count, info: info, hang: hang, layout: layout, aspect: aspect,
     pixels: pixels, colour: colour, want: want, image: image, onLoad: onLoad, loaded: loaded,
-    plaque: plaque, setLabels: setLabels, landscape: landscape,
+    src: src, plaque: plaque, infoButton: infoButton, starAt: starAt, STARS: STARS, landscape: landscape,
     atlas: function () { return atlas; },
     changes: function () { return changes; },
-    FRAME_RGB: FRAME_RGB, PLAQUE_RGB: PLAQUE_RGB, LIKED_RGB: LIKED_RGB
+    FRAME_RGB: FRAME_RGB, PLAQUE_RGB: PLAQUE_RGB, LIKED_RGB: LIKED_RGB, INFO_RGB: INFO_RGB
   };
   list = FG.PAINTINGS || [];
 })(typeof window !== "undefined" ? window : globalThis);

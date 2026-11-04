@@ -3,8 +3,8 @@
 The foraging task of [active-inference-foraging](https://github.com/muhammadasif-glitch/active-inference-foraging)
 (version 3), played by people in the browser, in 2D (the maze seen from
 above) or in 3D (from inside, through the player's eyes or from behind it).
-The player chooses who to be (a man, a woman, a dog, a mouse, a robot or a
-knight), then walks through a maze of rooms
+The player chooses who to be (a girl, a boy, a woman, a man, a dog, a mouse
+or a robot), then walks through a maze of rooms
 one step at a time, finds food rooms that can be in other places in every
 game, and keeps up an energy bar. Every key press is recorded, with its time,
 and sent to [DataPipe](https://pipe.jspsych.org), which saves the files into
@@ -45,19 +45,20 @@ use `?send=0` then (see below).
 
 **Who are you?** (`game.player: "choose"`). Before the first page a page
 shows the characters of `menu.characters`, the one chosen walking in 3D; the
-arrows, the keys 1 to 6 or a click choose, Enter (or a second click, or Next)
+arrows, the keys 1 to 7 or a click choose, Enter (or a second click, or Next)
 goes on. C on the first page comes back to it before another game. The page
 is only shown where the 3D view is drawn by the graphics card (WebGL, see
 Sharpness): elsewhere the player is the mouse, and the file says why. Set
-`game.player` to one of them (`man`, `woman`, `dog`, `mouse`, `robot`,
-`knight`) and every player is that one, with no page.
+`game.player` to one of them (`girl`, `boy`, `woman`, `man`, `dog`, `mouse`,
+`robot`) and every player is that one, with no page.
 
 **The first page** offers the view (2D from above, 3D from inside, 3D from
 behind) and the
 mazes of `settings.js` with their size (4 x 4, 6 x 6, 2 blocks of 4 x 4 joined
 by a bridge, and the environments made with the model, see below). The up and
 down arrows go between the 2 rows, the left and right arrows choose, the keys
-1 to 9 choose a maze, Enter plays. There is no consent page and no
+1 to 9 choose a maze, Enter plays; or the mouse: a click chooses a view or a
+maze, a click on the one chosen or on Play plays. Exit ends the visit. There is no consent page and no
 instructions: one line says what to do, and the keys are shown during the
 game. The player code is made by the game and kept in the browser.
 
@@ -96,6 +97,10 @@ stay at once, then every second while it is held. A stay never holds the
 player up. Holding keys, turning and walking into walls cost nothing and are
 not steps; time itself costs nothing.
 
+**Exit.** Escape or the Exit button (top right) ends the game at once and
+goes back to the first page; the game is saved and sent as any other, ended
+`exited`.
+
 **Moves and stays.** Only a move uses up 1 of the game's 120 steps
 (`count_steps: "moves"`): a stay costs energy (`stay_cost`, a move
 `move_cost`), eats in a food room and lets the world go on (food grows back),
@@ -129,21 +134,29 @@ room it is in (through a door); it knows whether such a room holds food and
 what it is worth, and sees how full a food room is only while it is in it.
 So the game shows in light the rooms the player has been in and, from the
 first step on, the rooms next to them; everything else is dark. A food room
-among them shows a sign with its food and worth (a cheese and "food 8"),
+among them shows a sign with its food and worth (a pizza and "food 8"),
 never its level; the room the player is in shows the food itself. At step 0
 only the start room is shown: the agent's first move is made before it has
 mapped any other room. Rooms the player learns of come into light while the
 player walks into the room next to them, instead of all at once on arrival.
 
-**The food.** The room worth 8 holds a cheese wheel, the room worth 1 a loaf
-of bread, each in 10 pieces: at a level of 0.73 there are 7 whole wedges (or
-slices) and an eighth that is 0.3 of one. Staying eats from the room, as in
+**The food.** The room worth 8 holds a pizza on a round board, the room
+worth 1 a bowl of apples, 3D models of Kenney's Food Kit (CC0,
+`js/food_models.js`, drawn by `js/food3d.js`; where the browser has no
+WebGL, the game's own drawings of before 2.8.0). Each is in 10 pieces: at a
+level of 0.73 there are 7 whole slices and an eighth that is 0.3 of one
+(each slice is 1 of Kenney's, narrowed from 45 to 36 degrees); the apples
+are eaten from the top of the heap, and a part of an apple is a half apple
+as large as the part. The foods of before 2.8.0 can still be chosen: a
+cheese wheel of 10 wedges on a plate and a loaf of bread cut as long as its
+level. Staying eats from the room, as in
 the model: a piece goes down, crumbs fall and it crunches. A room that has
 grown back since the player left it is seen growing back on entering. In 3D
 the food stands in the middle of its room and the player stops in front of
 it; in 2D it is seen from above. Which room shows which food is set in
-`settings.js` (`food_rooms.<name>.food`: `cheese` or `bread`; without it the
-room worth the most shows cheese and the others bread).
+`settings.js` (`food_rooms.<name>.food`: `pizza`, `apples`, `cheese` or
+`bread`; without it the room worth the most shows pizza and the others
+apples).
 
 **The walls** of the 3D view are plaster in the colour of the room, with a
 painting in a gilded frame on each side of the room; corridors are grey.
@@ -158,13 +171,25 @@ across. With `game.paintings: false` the game paints its own landscapes
 instead, the same one for the same room colour, as before 2.5.0 (and as
 small as then).
 
-**Liking a painting** (3D, `game.likes`). Beside every frame hangs a small
-plaque with a thumb up and "Like". L likes the painting in the middle of the
-view (up to 6 tiles away), a click on a plaque likes its painting; the plaque
-turns green and says "Liked", and L or a click again takes the like back.
-Liking costs nothing, is not a step and does not hold up the stays: a player
-who stands before a painting stands still, so a stay comes every second as
-ever, also while L is pressed. Every like is recorded (`likes`).
+**Rating a painting** (3D, `game.ratings`). Left of every frame hangs a
+brass plate with 5 stars. The keys 1 to 5 rate the painting in the middle of
+the view (up to 6 tiles away), a click on a star rates the painting of that
+plate; the stars turn gold, and the same rating again takes it back (0
+stars). Rating costs nothing, is not a step and does not hold up the stays.
+Every rating is recorded (`ratings`), and `looks` gives each painting's stars
+at the end.
+
+**A painting's card** (3D, `game.painting_info`). Under the plate hangs an
+info button. I, or a click on it, opens the painting's card, laid out as a
+museum's wall label: the painter and the life dates, the title in italics
+with its date, the movement, the genre and the collection, and a few
+sentences from Wikipedia about the painting (or about its painter, when
+Wikipedia has nothing on the painting; the card says which), with the
+painting's stars, which can be clicked there too. The game pauses while the
+card is open: no stays, no walking, no looking counted. Any key, the close
+button or a click beside the card closes it, and the game goes on. Every card
+is recorded (`infos`). The texts are in `js/painting_info.js`
+(`check/media/get_painting_info.py`, then `check/media/make_painting_info.py`).
 
 **Looking at paintings** (3D) is recorded, as people look where they face:
 the painting in the middle of the view, up to 6 tiles away, is the one looked
@@ -175,14 +200,13 @@ how long it was looked at, in how many looks, how long it was on the screen
 at all, when it was first seen and first looked at, how near the player
 came, and whether it was liked at the end (`looks`).
 
-**Looking up** (3D). A player who stands before a painting (up to 3.5 tiles
-away) sees the view look up at it until the middle of the painting is in the
-middle of the screen, as a person raises the head. Through the eyes, when the
-painting is too near to be seen whole, the view also steps back (at most 1
-tile, never into a wall) until the painting and its plaque fit on the screen.
-Walking or turning brings the view back. Only the view moves: the player
-stays where it is, so the steps and the distances recorded are as without it.
-The track has both (`tilt`, `back`).
+**Before a painting** (3D). A player who stands before a painting (up to 3.5
+tiles away) sees the view look up at it and, through the eyes, glide to the
+place right in front of it and turn to face it, until the painting, its stars
+and its button fill the screen (never out of the room). Walking or turning
+brings the view back. Only the view moves: the player stays where it is, so
+the steps and the distances recorded are as without it. The track has it
+(`tilt`, `view_dx`, `view_dy`, `view_turn`).
 
 **The music room** (both views, `game.music_room`). 1 room of every game,
 never the start room or a food room, has a gramophone in its middle (the
@@ -199,7 +223,7 @@ the top while it plays, and notes rise from the horn. The music is loudest in
 the room and fades out on the way to the rooms around it (gone 9 tiles
 away); it stops at its end or at the end of the game. While it plays, the
 game's own quiet music rests. P when the sound is off turns the sound on (M
-mutes the gramophone too). Like the likes, the music costs nothing and is
+mutes the gramophone too). Like the ratings, the music costs nothing and is
 not a step. Every record played is recorded (`music`).
 
 **Sharpness** (3D). The graphics card draws the 3D view (WebGL,
@@ -273,23 +297,30 @@ the character is chosen (it also loads with the game opened as a file);
 `check/make_characters.py` makes these files from what
 `check/media/get_characters.py` downloads (credits: `characters/CREDITS.md`).
 
-Each moves with 3 clips that loop: standing, walking and running. The man
-and the woman stand, walk and run as people of the CMU motion capture
-database did, and the robot walks and runs as they do; the knight has its
-own walk and run; the dog's trot and gallop are made for its skeleton
-(`check/dog_gait.py`). The clips are blended by the speed and turned as fast
+The girl, the boy, the woman and the man (from 2.8.0) are avatars of
+Microsoft Rocketbox (MIT), made by `check/make_rocketbox.py` (in Blender,
+`check/rocketbox_blend.py`): they stand, walk and run with Rocketbox's own
+motion capture, every bone turned from its parent as in the clips, the
+hips' motion scaled to each body's hip height, so that the children's
+shorter legs reach the floor and step as far as they can. `check/body_check.py`
+checks every frame of every clip: no bone stretches, the feet never go under
+the floor and planted feet do not slide, the knees bend forwards and no
+further than a person's, as the elbows, the head stays above the shoulders,
+the clips loop without a jump, the hand comes to the mouth to eat.
+
+Each moves with 3 clips that loop: standing, walking and running. The robot
+walks and runs as people of the CMU motion capture database did; the dog's
+trot and gallop are made for its skeleton (`check/dog_gait.py`). The clips are blended by the speed and turned as fast
 as the ground goes by: the steps grow longer and quicker together, and their
 sound comes as each foot lands. Walking backwards plays the walk backwards
-(never the run); turning on the spot takes small steps. The man and the robot
-walk as CMU trial 07_01 does and run as 09_09 does; the woman walks as 91_31
-and runs as 16_46.
+(never the run); turning on the spot takes small steps. The robot walks as
+CMU trial 07_01 does and runs as 09_09 does.
 
 A fourth clip comes in while the character eats standing still in a food
 room (from the first bite until a moment after the last, or until it
 walks). Food is eaten on the step that enters the room, while the character
 is still walking in: if it stands still within 2 s, it takes a bite then (a
-longer one, 1.7 s), so that eating is seen. The man, the woman, the knight
-and the robot bring the food to the
+longer one, 1.7 s), so that eating is seen. The people and the robot bring the food to the
 mouth with the right hand, bite with the head bent to meet it and chew
 with the food held before the chest; the dog puts its head down to the
 floor and bites, its tail wagging.
@@ -297,8 +328,10 @@ floor and bites, its tail wagging.
 All go at the mouse's speed (`game.same_speed: true`, from 2.7.0): 4.5 tiles
 a second at the run in 3D, 7 in 2D, so a move takes as long whoever plays. A
 wall is 3.2 m high, so that is 14 metres a second, faster than anyone runs:
-a character's steps are longer and quicker than a person's, each by the
-square root of how much faster it goes (for the man 1.6 times each). Its walk
+a character's steps are longer and quicker than a person's: longer by how
+much faster it goes to the power 0.85, quicker by the power 0.15 (for the man
+2.1 times as long, 1.14 times as quick), so that it sprints at about 4 steps
+a second (from 2.8.0; before, each by the square root, 8 steps a second). Its walk
 (a short press, the first half second of a hold, and backwards) is as much
 of the top speed as its walk clip is of a person's run: about a quarter.
 `game.same_speed: false` gives each a person's speed (a dog's for the dog),
@@ -306,12 +339,13 @@ as in 2.6.0, and its steps a person's length.
 
 | | eyes (3D, part of the height of a wall) | a person's top speed (`same_speed: false`) | the camera behind it (tiles back, its height) | steps | voice |
 |---|---|---|---|---|---|
+| girl | 0.41 | 5 m/s | 1.45, 0.64 | shoes | the woman's, higher |
+| boy | 0.41 | 5 m/s | 1.45, 0.64 | shoes | the man's, higher |
+| woman | 0.50 | 5.3 m/s | 1.55, 0.75 | shoes | 2 kinds of "hmm" |
 | man | 0.52 | 5.5 m/s | 1.6, 0.78 | shoes | "hm" and a satisfied sigh |
-| woman | 0.48 | 5.3 m/s | 1.55, 0.74 | bare feet | 2 kinds of "hmm" |
 | dog | 0.19 | 6 m/s | 1.0, 0.42 | paws with the click of claws (made by the browser) | barks, a whine, panting |
 | mouse | 0.25 | 14.4 m/s (always) | 1.6, 0.55 | its patter (below) | its squeaks |
 | robot | 0.42 | 5 m/s | 1.5, 0.70 | heavy metal steps | beeps, a glitch |
-| knight | 0.53 | 5 m/s | 1.65, 0.80 | boots in chain mail | the man's voice, deeper |
 
 The steps, voices and bites are recordings (CC0, Freesound), each played a
 little differently every time; a step on the stone of a corridor rings
@@ -367,8 +401,8 @@ Everything a study changes is in `settings.js`, with a comment on every key:
   place and view recorded every this many ms; 0: not at all), whether a
   session starts with sound, the player (`player`: `choose`, a character, or
   `arrow`), whether every character walks at the same speed (`same_speed`),
-  whether the mouse or the character has a voice (`voice`), and the paintings, their Like plaques
-  and the music room (`paintings`, `likes`, `music_room`).
+  whether the mouse or the character has a voice (`voice`), and the paintings, their rating plates,
+  their cards and the music room (`paintings`, `ratings`, `painting_info`, `music_room`).
 - `conditions`: the versions of the game. A condition changes any key of
   `game`; under `food_rooms` it changes rooms or adds new ones.
 - `texts`: everything the player reads.
@@ -491,8 +525,8 @@ has a **+ New maze** card (or the key N), which opens the editor:
 
 1. **Draw**: rows and columns (2 to 12), then click squares. With the Rooms
    tool (key R) a click takes a room out or puts it back, and dragging does
-   the same over several squares. With Start, Cheese and Bread (keys S, C, B)
-   a click puts the start, the cheese room (worth 8) or the bread room
+   the same over several squares. With Start, Pizza and Apples (keys S, C, B)
+   a click puts the start, the pizza room (worth 8) or the apple room
    (worth 1) there; a click on it again takes it away. One left out is
    placed at random each game, as in the other mazes. Rooms side by side are
    joined by a door, and every room has its own colour (so its own
@@ -609,7 +643,7 @@ Every file has at its top:
 | `condition` | `{name, how, datapipe, error}`: the condition, and how it was chosen (`link`, `datapipe`, `random`, `no conditions`) |
 | `link` | the options of the link |
 | `browser` | `user_agent`, `languages`, `screen`, `window`, `pixel_ratio`, `time_zone`, `utc_offset_minutes`, `cores`, `touch_points`, `clock_step_ms` (the smallest step of the browser's clock), `frame_ms` and `refresh_hz` (screen frames) |
-| `character` | who the player was in this game: `{name, how, fallback, choices}`: `name` (`man`, `woman`, `dog`, `mouse`, `robot`, `knight` or `arrow`), `how` (`chosen` on the characters page, `settings`, or `no choice`: no page, as without WebGL), `fallback` (why the mouse instead of the character asked for, such as `no WebGL` or `could not load the man: ...`; null), `choices` (every characters page since the game before: `{shown_at, chosen_at, character, actions}`, an action `{t, how (key, click, click again, button, Enter), character}`) |
+| `character` | who the player was in this game: `{name, how, fallback, choices}`: `name` (`girl`, `boy`, `woman`, `man`, `dog`, `mouse`, `robot` or `arrow`; until 2.7.1 also `knight`, and `man` and `woman` were other models), `how` (`chosen` on the characters page, `settings`, or `no choice`: no page, as without WebGL), `fallback` (why the mouse instead of the character asked for, such as `no WebGL` or `could not load the man: ...`; null), `choices` (every characters page since the game before: `{shown_at, chosen_at, character, actions}`, an action `{t, how (key, click, click again, button, Enter), character}`) |
 | `menu` | the first page before this game: `shown_at`, `chosen_at`, `view` (`2d`, `3d` or `3d_behind`), `maze`, `character`, and `actions` (every change of choice, with times) |
 | `game` | the game (below) |
 | `keys`, `attention` | every key press and release, and the tab or window losing and getting back focus, from the end of the game before (the end page, the first page, the game) |
@@ -632,7 +666,7 @@ adds up to about one frame (`frame_ms`).
 | `layout_seed` | the seed the layout was picked with |
 | `settings`, `speeds` | all the settings of this game, and the eating and refill speeds used |
 | `controls` | how the player moves: the top speed (`walk_tiles_per_s`, the run), the walk of a short press and of the first `walk_first_ms` of a hold (`first_tiles_per_s`), backwards (3D), their speeding up and slowing down (tiles a second; a room is 4 tiles, a corridor 3; for the character), the size of the body, how long a stay takes, and in 3D how fast turning goes and speeds up; `speed_factor` (the character's part of the game's speed), `eye` (3D: the eyes, part of the height of a wall), `step_tiles` (the length of a step of the mouse, or of the character at its top speed: its steps grow with its speed; null for the arrow), `tap_tiles` (how far a short press walks), `food_radius_tiles` (how wide the food stands in the way) |
-| `food_kinds` | the food each food room shows: `cheese` or `bread` |
+| `food_kinds` | the food each food room shows: `pizza` or `apples` (`cheese` or `bread` before 2.8.0) |
 | `sound` | `on_at_start`, and `toggles`: every switch during the game, `{t, step, on, by}` |
 | `path`, `known_rooms` | the room of every step from step 0, and the rooms the player knew at the end (what the end page draws) |
 | `walks_back` | every time the player went out into a door or corridor and back into the same room: `{left_at, back_at, step (steps taken before), room, toward, move, furthest (the share of the way to the next room's floor reached)}` |
@@ -642,9 +676,12 @@ adds up to about one frame (`frame_ms`).
 | `steps` | 1 row per step, step 0 being the start (below) |
 | `turns` | 3D: every turn, `{t, step (steps taken before it), key, from, to, from_angle, to_angle, ms, held_ms}`: `from` and `to` are the doors faced (`RIGHT`, `DOWN`, `LEFT`, `UP`), the angles in degrees (0 east, 90 south), `held_ms` how long the key was held. A turn still going on when a step is taken ends there (`split`), and the rest is a turn of its own (`continued`, with no key press of its own) |
 | `gallery_seed` | the seed the paintings were hung and the music room and its records picked with |
-| `gallery` | 3D: the paintings on the walls: `{source (paintings, or landscapes with game.paintings false), likes (whether plaques hang), places}`, a place `{place, room, side, painting, artemis}`: its number (place k is side k % 4 of the room k / 4 in the order of `maze_def`, sides `east`, `south`, `west`, `north`), the room, the side of the room the wall is on, the painting (its id in `js/paintings.js`, or `landscape_<n>`) and its name in ArtEmis. Null in 2D |
-| `looks` | 3D: every painting seen during the game: `{place, painting, room, side, look_ms, looks, seen_ms, first_seen_at, first_look_at, nearest, liked, likes}`: how long it was in the middle of the view (up to 6 tiles away) in all, in how many looks, how long any of it was on the screen, when it was first on the screen and first looked at, how near (tiles) the player came while looking at it, whether it was liked at the end, and how often it was liked or un-liked. Times are frames of the screen added up (a frame counts at most 250 ms). Null in 2D |
+| `gallery` | 3D: the paintings on the walls: `{source (paintings, or landscapes with game.paintings false), ratings (whether rating plates hang), info (whether info buttons hang), places}` (before 2.8.0 `likes`: whether Like plaques hung), a place `{place, room, side, painting, artemis}`: its number (place k is side k % 4 of the room k / 4 in the order of `maze_def`, sides `east`, `south`, `west`, `north`), the room, the side of the room the wall is on, the painting (its id in `js/paintings.js`, or `landscape_<n>`) and its name in ArtEmis. Null in 2D |
+| `looks` | 3D: every painting seen during the game: `{place, painting, room, side, look_ms, looks, seen_ms, first_seen_at, first_look_at, nearest, stars, ratings, info_opens, info_ms}` (before 2.8.0 `liked, likes` in place of the last 4): how long it was in the middle of the view (up to 6 tiles away) in all, in how many looks, how long any of it was on the screen, when it was first on the screen and first looked at, how near (tiles) the player came while looking at it, whether it was liked at the end, its stars at the end, how often it was rated, and how often and how long its card was open. Times are frames of the screen added up (a frame counts at most 250 ms). Null in 2D |
 | `likes` | 3D: every like and un-like: `{t, step (steps taken before it), place, painting, room, side, liked, by, d}`: `liked` true for a like, false when it was taken back, `by` `L` (the painting in the middle of the view) or `click` (its plaque), `d` how far away the painting was (tiles). Null in 2D |
+| `ratings` | 3D (2.8.0): every rating: `{t, step, place, painting, room, side, stars, before, by, d}`: its stars after (0: the rating taken back) and before, `by` the key (`1` to `5`, the painting in the middle of the view), `click` (a star of its plate) or `card` (a star of its card), `d` how far away (tiles). Null in 2D |
+| `infos` | 3D (2.8.0): every card opened: `{opened_at, step, place, painting, room, side, by, d, closed_at, closed_by, ms}`: `by` `I` or `click`, `closed_by` `key`, `Escape`, `button`, `click outside`, `exit` or `game over`; the game was paused for `ms`. Null in 2D |
+| `exit_button` | every click on the Exit button: `{t, step, outcome}` |
 | `clicks` | every click on the view during the game: `{t, step, x, y (CSS pixels on the view), on (plaque, gramophone or null), place, outcome (like, unlike, music on, music off, ignored: not at the gramophone, nothing)}` |
 | `music` | the music room: `{room, pieces (the records in the order they come), plays}`, a play `{piece, started_at, step, by (P or click), stopped_at, stopped_by (P, click, ended, game over, or failed: why), played_s (seconds of it played)}`. Null with `game.music_room` false |
 | `render` | 3D: the sharpness: `{renderer, gpu, webgl, levels, fixed_level, screen {width, height, pixel_ratio}, at_start {level, width, height}, level, width, height (at the end, the picture's pixels), changes, draw_ms, frame_ms}`; `fixed_level` the level the link kept (`?level=`; null); `renderer` is `webgl2` or `webgl` (the graphics card drew the view) or `canvas` (the ray casting), `gpu` the graphics card as the browser names it (null when it does not say, and for `canvas`), `webgl` why the ray casting drew (`none`: the browser has no WebGL, `software`: only WebGL drawn by the processor, `off`: the link `?gl=0`; null for WebGL); a change `{t, level, scale, width, height, why (slow, fast, window size, start), draw_ms (canvas) or frame_ms (WebGL)}`; `draw_ms` the median and 90th percentile time the page took for a drawing, how many drawings, and (canvas) the ray casting's and the rest's share at the end; `frame_ms` (WebGL) the median and 90th percentile time from a drawing to the next screen frame (long when the graphics card is slow), and how many. Null in 2D |
@@ -688,8 +725,9 @@ not recorded 1 by 1), `with` (Shift, Ctrl, Alt, Meta, when held), `phase`
 (`menu`, `game 3`, `end 3`) and `outcome`: in a game `walk`, `back` (3D, the
 down arrow), `stay`, `turn`, `not allowed` (a move on a first step that must
 be a stay), `ignored: too soon`, `ignored: key`,
-`ignored: with Ctrl, Alt or Meta`, and for L and P `like`, `unlike`,
-`ignored: no painting in view`, `ignored: no likes`, `music on`, `music off`,
+`ignored: with Ctrl, Alt or Meta`, `exit` (Escape), and for 1 to 5, I and P `rated 1` to `rated 5`,
+`rating taken back`, `info open`, `ignored: no painting in view`, `ignored: no ratings`, `ignored: no info`,
+`music on`, `music off`; with a card open any key `info closed` (before 2.8.0 L: `like`, `unlike`),
 `ignored: not at the gramophone`, `ignored: no music room`; on the first page `view`, `maze`, `row`, `play`, `ignored: not
 ready`; at the end of a game `menu`; anywhere `sound on` or `sound off` (M),
 `ignored: too soon` or `ignored: key`, or null for a key nothing listens to (a
@@ -847,7 +885,7 @@ with DataPipe stood in for (with its validation of the required fields):
   Lock forgetting the files;
 - the characters: each chosen on its page, in 3D behind it, through its eyes
   and in 2D, its model in, all at the mouse's speed with a walk first and
-  only a walk backwards, its steps, its eating coming in and going again; the knight with the 3D view below level 0 (`?level=3`: drawn
+  only a walk backwards, its steps, its eating coming in and going again; the man with the 3D view below level 0 (`?level=3`: drawn
   into a buffer, the canvas keeping its size); without WebGL the mouse, and why;
 - the mouse in all 3 views, with the camera behind it checked at every place
   of the track (never in a wall, never with a wall between it and the mouse),
@@ -857,9 +895,9 @@ with DataPipe stood in for (with its validation of the required fields):
 - the music room in 2D and 3D: P at the gramophone, P a room away (nothing),
   the music fading on the way out, a click on the gramophone to stop it.
 
-In every game the bot presses L and P now and then and clicks the view.
+In every game the bot presses 1 to 5 and P now and then and clicks the view.
 Every file is checked: in 3D the paintings hung as the game's seed says
-(every wall another painting), the likes as the keys and clicks say, the
+(every wall another painting), the ratings and the cards as the keys and clicks say (no step while a card is open), the
 looking as long as the track says, the sharpness recorded; in both views the
 music room as the seed says (never the start or a food room), the records in
 their order, 1 at a time, and stopped by the end of the game.

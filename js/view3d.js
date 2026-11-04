@@ -34,7 +34,7 @@
   var FOG_FAR = 15;
   var DARK_WALL = [38, 44, 54], DARK_FLOOR = [24, 28, 35];
   var CORRIDOR_WALL = [150, 152, 158];
-  var FOOD_SIZE = {cheese: 0.5, bread: 0.4};
+  var FOOD_SIZE = {pizza: 0.5, apples: 0.45, cheese: 0.5, bread: 0.4};
   // with the camera behind the mouse, food this much nearer than the mouse
   // is drawn over it; at the same place the mouse is in front, at the food
   var MOUSE_AHEAD = 0.3;
@@ -246,8 +246,9 @@
    * here, crumbs, extras, bob, sway (tiles to the right), eye (the height of
    * the eyes, as part of the height of a wall; 0.5 if not given), horizon
    * (where the eyes look, as part of the screen from the top; 0.5); gallery
-   * {pics: the picture of each place (js/art.js), liked: 1 for each place
-   * liked, likes: whether plaques hang}; with the mouse: mouse (js/mouse.js),
+   * {pics: the picture of each place (js/art.js), stars: the rating of each
+   * place (0 to 5), ratings: whether rating plates hang, info: whether info
+   * buttons hang}; with the mouse: mouse (js/mouse.js),
    * and for the camera behind it camera "behind" and cam {x, y, eye,
    * horizon, back} (FG.mouse.camera). again: only the mouse is drawn anew,
    * over the picture drawn last. */
@@ -262,14 +263,16 @@
     var M = scene.maze, w = this.rw, h = this.rh;
     var p32 = this.p32, z = this.zbuf, T = this.tex, colPlace = this.colPlace;
     var places = this.ensurePlaces(M);
-    var gal = scene.gallery || null, likes = !!(gal && gal.likes);
-    var dirX = Math.cos(scene.angle), dirY = Math.sin(scene.angle);
+    var gal = scene.gallery || null, likes = !!(gal && gal.ratings), infos = !!(gal && gal.info);
+    var dirX = Math.cos(scene.angle + (scene.turn || 0)), dirY = Math.sin(scene.angle + (scene.turn || 0));
     var fov = Math.tan(33 * Math.PI / 180) * (w / h) / (4 / 3);
     var planeX = -dirY * fov, planeY = dirX * fov;
     var sway = scene.sway || 0, eye = scene.eye || 0.5;
     // through the eyes, stepped back to see a near painting whole (scene.back)
     var stepBack = scene.back || 0;
-    var px = scene.x - dirY * sway - dirX * stepBack, py = scene.y + dirX * sway - dirY * stepBack;
+    // before a painting, the view glides in front of it and turns to it (scene.dx, dy, turn)
+    var px = scene.x + (scene.dx || 0) - dirY * sway - dirX * stepBack;
+    var py = scene.y + (scene.dy || 0) + dirX * sway - dirY * stepBack;
     var half = h * ((scene.horizon || 0.5) + (scene.tilt || 0)) + (scene.bob || 0) * h;
     var cam = scene.camera === "behind" ? scene.cam : null;
     if (cam) {
@@ -329,7 +332,7 @@
     var b0, b1, b2;
     var seenCols = {};
     var mid = w >> 1, look = null;
-    var FR = A.FRAME_RGB, PQ = A.PLAQUE_RGB, LK = A.LIKED_RGB;
+    var FR = A.FRAME_RGB, PQ = A.PLAQUE_RGB, LK = A.LIKED_RGB, IB = A.INFO_RGB;
     for (x = 0; x < w; x++) {
       var camX = 2 * x / w - 1;
       var rdx = dirX + planeX * camX, rdy = dirY + planeY * camX;
@@ -392,7 +395,8 @@
         var ax = su * 2, D = A.layout(pic);
         colPlace[x] = k;
         inFrame = ax >= D.fx0 && ax < D.fx1;
-        inPlaque = likes && ax >= D.qx0 && ax < D.qx1;
+        var inInfo = infos && ax >= D.ix0 && ax < D.ix1;
+        inPlaque = (likes && ax >= D.qx0 && ax < D.qx1) || inInfo;
         drawFrame = inFrame && !sharp[k];
         drawPlaque = inPlaque && !sharp[k];
         if (inFrame) {
@@ -416,8 +420,8 @@
           }
         }
         if (drawPlaque) {
-          yq0 = wallTop + D.qv0 * lineH; yq1 = wallTop + D.qv1 * lineH;
-          liked = !!(gal.liked && gal.liked[k]);
+          yq0 = wallTop + (inInfo ? D.iv0 : D.qv0) * lineH; yq1 = wallTop + (inInfo ? D.iv1 : D.qv1) * lineH;
+          liked = inInfo ? 2 : (gal.stars && gal.stars[k] ? 1 : 0);
         }
         if (x === mid && inFrame) {
           var hx = px + perp * rdx, hy = py + perp * rdy;
@@ -447,7 +451,7 @@
           p32[o] = ((f0 + (dk0 + (c0 - dk0) * L) * ps) << RS) | ((f1 + (dk1 + (c1 - dk1) * L) * ps) << GS) |
             ((f2 + (dk2 + (c2 - dk2) * L) * ps) << BS) | AL;
         } else if (drawPlaque && y >= yq0 && y < yq1) {
-          var pq = liked ? LK : PQ;
+          var pq = liked === 2 ? IB : liked ? LK : PQ;
           p32[o] = ((f0 + (dk0 + (pq[0] - dk0) * L) * ps) << RS) | ((f1 + (dk1 + (pq[1] - dk1) * L) * ps) << GS) |
             ((f2 + (dk2 + (pq[2] - dk2) * L) * ps) << BS) | AL;
         } else {
@@ -640,12 +644,32 @@
     return kept[k];
   }
 
+  /* The stars of a rating plate drawn sharp, where they are on the screen,
+   * from its columns ([x, across, distance], sw apart). */
+  function starHits(cols, D, H, half, eye, k, hits) {
+    var boxes = {};
+    cols.forEach(function (col, i) {
+      var n = A.starAt(D, col[1]);
+      if (!n) {
+        return;
+      }
+      var lh = H / col[2], x1 = i + 1 < cols.length ? cols[i + 1][0] : col[0] + 1;
+      var b = boxes[n] || (boxes[n] = {kind: "star", star: n, place: k, x0: Infinity, x1: -Infinity, y0: Infinity,
+        y1: -Infinity, d: col[2]});
+      b.x0 = Math.min(b.x0, col[0]);
+      b.x1 = Math.max(b.x1, x1);
+      b.y0 = Math.min(b.y0, half - (1 - eye - D.qv0) * lh);
+      b.y1 = Math.max(b.y1, half - (1 - eye - D.qv1) * lh);
+    });
+    Object.keys(boxes).forEach(function (n) { hits.push(boxes[n]); });
+  }
+
   View.prototype.paintings = function (g, hits) {
     var c = this.camera, W = this.W, H = this.H, rw = this.rw, rh = this.rh, colPlace = this.colPlace;
     var half = c.half * H / rh, eye = c.eye;
     var level = LEVELS[this.level];
     var sw = level >= 0.84 ? 1 : level >= 0.59 ? 2 : 3;
-    var gal = c.gallery, likes = !!(gal && gal.likes);
+    var gal = c.gallery, likes = !!(gal && gal.ratings), infos = !!(gal && gal.info);
     this.near.forEach(function (n) {
       var place = c.places.list[n.k], D = A.layout(n.pic);
       var pic = A.image(n.pic, n.px);
@@ -654,8 +678,8 @@
       }
       pic = sourceFor(pic, n.px * (D.fv1 - D.fv0) / (D.pv1 - D.pv0));
       var cw = pic.width, ch = pic.height;
-      var liked = !!(gal && gal.liked && gal.liked[n.k]);
-      var plaque = likes ? A.plaque(liked) : null;
+      var plaque = likes ? A.plaque(gal.stars ? gal.stars[n.k] : 0) : null;
+      var button = infos ? A.infoButton() : null;
       var first = -1, last = -1, xb;
       for (xb = 0; xb < rw; xb++) {
         if (colPlace[xb] === n.k) {
@@ -669,7 +693,7 @@
         return;
       }
       // the columns of the screen on the frame and on the plaque: [x, across, distance]
-      var frameCols = [], plaqueCols = [];
+      var frameCols = [], plaqueCols = [], infoCols = [];
       for (xb = first; xb <= last; xb++) {
         if (colPlace[xb] !== n.k) {
           continue;
@@ -688,6 +712,8 @@
             frameCols.push([xd, ax, t]);
           } else if (plaque && ax >= D.qx0 && ax < D.qx1) {
             plaqueCols.push([xd, ax, t]);
+          } else if (button && ax >= D.ix0 && ax < D.ix1) {
+            infoCols.push([xd, ax, t]);
           }
         }
       }
@@ -743,6 +769,7 @@
       };
       spans(frameCols, D.fx0, D.fx1, D.fv0, D.fv1, pic);
       var q = plaque ? spans(plaqueCols, D.qx0, D.qx1, D.qv0, D.qv1, plaque) : null;
+      var ib = button ? spans(infoCols, D.ix0, D.ix1, D.iv0, D.iv1, button) : null;
       if (xmin === Infinity) {
         return;
       }
@@ -768,10 +795,13 @@
       }
       g.restore();
       if (q && hits) {
-        hits.push({kind: "plaque", place: n.k, x0: q.x0, y0: q.y0, x1: q.x1, y1: q.y1, d: q.t});
+        starHits(plaqueCols, D, H, half, eye, n.k, hits);
+      }
+      if (ib && hits) {
+        hits.push({kind: "info", place: n.k, x0: ib.x0, y0: ib.y0, x1: ib.x1, y1: ib.y1, d: ib.t});
       }
     });
-    if (hits && likes) {
+    if (hits && (likes || infos)) {
       // the plaques too far to be drawn sharp can be clicked too, from their
       // place in the ray casting's picture
       this.farPlaques(hits);
@@ -802,17 +832,19 @@
       if (place.flip) {
         su = 1 - su;
       }
-      var ax = su * 2;
-      if (ax < D.qx0 || ax >= D.qx1) {
+      var ax = su * 2, n = c.gallery.ratings ? A.starAt(D, ax) : 0;
+      var isInfo = c.gallery.info && ax >= D.ix0 && ax < D.ix1;
+      if (!n && !isInfo) {
         continue;
       }
       var lineH = rh / t, wallTop = c.half - (1 - c.eye) * lineH;
-      var b = boxes[k] || (boxes[k] = {kind: "plaque", place: k, x0: Infinity, x1: -Infinity, y0: Infinity,
-        y1: -Infinity, d: t});
+      var id = k + ":" + (isInfo ? "i" : n);
+      var b = boxes[id] || (boxes[id] = {kind: isInfo ? "info" : "star", star: isInfo ? null : n, place: k,
+        x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity, d: t});
       b.x0 = Math.min(b.x0, x * sx);
       b.x1 = Math.max(b.x1, (x + 1) * sx);
-      b.y0 = Math.min(b.y0, (wallTop + D.qv0 * lineH) * sy);
-      b.y1 = Math.max(b.y1, (wallTop + D.qv1 * lineH) * sy);
+      b.y0 = Math.min(b.y0, (wallTop + (isInfo ? D.iv0 : D.qv0) * lineH) * sy);
+      b.y1 = Math.max(b.y1, (wallTop + (isInfo ? D.iv1 : D.qv1) * lineH) * sy);
     }
     Object.keys(boxes).forEach(function (k) { hits.push(boxes[k]); });
   };
@@ -886,7 +918,8 @@
         best = h;
       }
     });
-    return best ? {kind: best.kind, place: best.place === undefined ? null : best.place, d: best.d} : null;
+    return best ? {kind: best.kind, place: best.place === undefined ? null : best.place, d: best.d,
+      star: best.star || null} : null;
   };
 
   /* The 3D view on canvas: drawn by the graphics card (js/gl3d.js) where

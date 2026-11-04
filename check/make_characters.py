@@ -199,6 +199,26 @@ def bones_of(kind, sk):
             b[side + "Foot"] = (n("[ _]%s[ _]Foot" % s), n("[ _]%s[ _]Toe0" % s))
             b[side + "ToeBase"] = (n("[ _]%s[ _]Toe0" % s), None)
         hips = n("[ _]Pelvis")
+    elif kind == "rocketbox":
+        # Microsoft Rocketbox: a 3ds Max Biped, its names kept by Blender
+        n = lambda part: f("^Bip01 " + part + "$")
+        spine = [x for x in ("Spine", "Spine1", "Spine2") if any(nm == "Bip01 " + x for nm in sk.names)]
+        b["Hips"] = (n("Pelvis"), n(spine[0]))
+        b["LowerBack"] = (n(spine[0]), n(spine[1]))
+        b["Spine"] = (n(spine[1]), n(spine[-1]) if len(spine) > 2 else n("Neck"))
+        b["Spine1"] = (n(spine[-1]), n("Neck"))
+        b["Neck"] = (n("Neck"), n("Head"))
+        b["Head"] = (n("Head"), None)
+        for side, s in (("Left", "L"), ("Right", "R")):
+            b[side + "Shoulder"] = (n(s + " Clavicle"), n(s + " UpperArm"))
+            b[side + "Arm"] = (n(s + " UpperArm"), n(s + " Forearm"))
+            b[side + "ForeArm"] = (n(s + " Forearm"), n(s + " Hand"))
+            b[side + "Hand"] = (n(s + " Hand"), n(s + " Finger2"))
+            b[side + "UpLeg"] = (n(s + " Thigh"), n(s + " Calf"))
+            b[side + "Leg"] = (n(s + " Calf"), n(s + " Foot"))
+            b[side + "Foot"] = (n(s + " Foot"), n(s + " Toe0"))
+            b[side + "ToeBase"] = (n(s + " Toe0"), None)
+        hips = n("Pelvis")
     elif kind == "dog":
         # the hind paws as its left and right feet (the clips start as the
         # hind left lands)

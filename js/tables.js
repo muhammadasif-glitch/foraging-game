@@ -15,7 +15,9 @@
  *   keys        1 row a key pressed or let go
  *   turns       1 row a turn (3D)
  *   looks       1 row a painting seen (3D)
- *   likes       1 row a like or un-like (3D)
+ *   likes       1 row a like or un-like (3D, files before 2.8.0)
+ *   ratings     1 row a painting rated, or its rating taken back (3D, 2.8.0)
+ *   infos       1 row a painting's info card opened (3D, 2.8.0)
  *   clicks      1 row a click on the view
  *   music       1 row a record played
  *   page        1 row the window losing or getting back the keyboard, or
@@ -28,6 +30,10 @@
 (function (root) {
   "use strict";
   var FG = root.FG = root.FG || {};
+
+  function mean(xs) {
+    return xs.reduce(function (a, x) { return a + x; }, 0) / xs.length;
+  }
 
   var ID = [
     ["file", "the game file"],
@@ -53,7 +59,7 @@
       ["maze", "the maze"],
       ["view", "2d (from above) or 3d (from inside)"],
       ["camera", "3D: eyes (through the player's eyes) or behind (from behind the player); empty in 2D"],
-      ["character", "who the player was: man, woman, dog, mouse, robot, knight or arrow"],
+      ["character", "who the player was: girl, boy, woman, man, dog, mouse, robot or arrow (2.7.1 and before also knight; their man and woman were other models)"],
       ["character_how", "chosen on the characters page, settings, or no choice"],
       ["same_speed", "1: every character had the mouse's speed (game.same_speed)"],
       ["start_room", "the room the player started in (s<row><column>, s00 top left)"],
@@ -95,7 +101,7 @@
       ["food_rooms_found", "food rooms the player entered"],
       ["visits", "visits to food rooms"],
       ["{food}_room", "the room of the {food} food room"],
-      ["{food}_food", "the food the {food} food room showed (cheese or bread)"],
+      ["{food}_food", "the food the {food} food room showed (pizza or apples; cheese or bread before 2.8.0)"],
       ["{food}_worth", "the food a full {food} food room gives in a step"],
       ["{food}_found_step", "the step the {food} food room was first entered (empty if never)"],
       ["{food}_visits", "visits to the {food} food room"],
@@ -106,6 +112,13 @@
       ["look_s", "3D: seconds a painting was in the middle of the view, all paintings"],
       ["likes", "3D: likes (un-likes not counted)"],
       ["unlikes", "3D: likes taken back"],
+      ["ratings", "3D: ratings given (1 to 5 stars; a change counts again)"],
+      ["ratings_taken_back", "3D: ratings taken back (0 stars)"],
+      ["paintings_rated", "3D: paintings with stars at the end"],
+      ["stars_mean", "3D: the mean of the stars of the paintings rated at the end"],
+      ["info_opens", "3D: info cards opened"],
+      ["info_s", "3D: seconds the info cards were open (the game paused)"],
+      ["exited_by", "Escape or button, when the player left the game (ended_how exited)"],
       ["clicks", "clicks on the view"],
       ["music_room", "3D: the music room"],
       ["music_plays", "records played"],
@@ -231,7 +244,10 @@
       ["look_share", "3D: the share of the view it took"],
       ["music", "the record playing (empty if none)"],
       ["tilt", "3D: how far the view looked up at a near painting"],
-      ["back", "1: walking backwards"]
+      ["back", "3D: how far the view stepped back from a near painting, tiles (before 2.8.0)"],
+      ["view_dx", "3D: how far the view glided east of the player to face a painting, tiles (2.8.0)"],
+      ["view_dy", "3D: how far the view glided south of the player to face a painting, tiles (2.8.0)"],
+      ["view_turn", "3D: how far the view turned from where the player faces, degrees (2.8.0)"]
     ])},
     {name: "keys", row: "a key pressed or let go, from the end of the game before to the end of this one", columns: ID.concat([
       ["t_s", "the time"],
@@ -267,8 +283,12 @@
       ["first_seen_s", "when it was first in the view"],
       ["first_look_s", "when it was first in the middle of the view"],
       ["nearest", "the nearest the player came while looking, tiles"],
-      ["liked", "1: liked at the end"],
-      ["likes", "likes and un-likes of it"]
+      ["liked", "1: liked at the end (files before 2.8.0)"],
+      ["likes", "likes and un-likes of it (files before 2.8.0)"],
+      ["stars", "its stars at the end (0: not rated)"],
+      ["ratings", "times it was rated or its rating taken back"],
+      ["info_opens", "times its info card was opened"],
+      ["info_ms", "how long its info card was open"]
     ])},
     {name: "likes", row: "a like or un-like (3D)", columns: ID.concat([
       ["t_s", "the time"],
@@ -281,14 +301,40 @@
       ["by", "L (the painting in the middle of the view) or click (on its plaque)"],
       ["distance", "how far the player was, tiles"]
     ])},
+    {name: "ratings", row: "a painting rated or its rating taken back (3D)", columns: ID.concat([
+      ["t_s", "the time"],
+      ["step", "steps taken before it"],
+      ["place", "the painting's place"],
+      ["painting", "the painting"],
+      ["room", "its room"],
+      ["side", "its wall"],
+      ["stars", "its stars after it (0: the rating taken back)"],
+      ["before", "its stars before it"],
+      ["by", "1 to 5 (the key; the painting in the middle of the view), click (on a star of its plate) or card (on a star of its info card)"],
+      ["distance", "how far the player was, tiles"]
+    ])},
+    {name: "infos", row: "a painting's info card opened (3D); the game paused while it was open", columns: ID.concat([
+      ["opened_s", "when it was opened"],
+      ["step", "steps taken before it"],
+      ["place", "the painting's place"],
+      ["painting", "the painting"],
+      ["room", "its room"],
+      ["side", "its wall"],
+      ["by", "I (the painting in the middle of the view) or click (on its info button)"],
+      ["distance", "how far the player was, tiles"],
+      ["closed_s", "when it was closed"],
+      ["closed_by", "key, Escape, button, click outside, exit or game over"],
+      ["ms", "how long it was open"]
+    ])},
     {name: "clicks", row: "a click on the view", columns: ID.concat([
       ["t_s", "the time"],
       ["step", "steps taken before it"],
       ["x", "CSS pixels from the left of the view"],
       ["y", "CSS pixels from the top of the view"],
-      ["on", "what was clicked: plaque, gramophone or nothing"],
-      ["place", "the painting place of a plaque"],
-      ["outcome", "like, unlike, music on, music off, ignored, nothing"]
+      ["on", "what was clicked: star, info, gramophone, plaque (before 2.8.0) or nothing"],
+      ["place", "the painting place of a star, info button or plaque"],
+      ["star", "the star clicked (1 to 5)"],
+      ["outcome", "rated n, rating taken back, info open, like, unlike, music on, music off, ignored, nothing"]
     ])},
     {name: "music", row: "a record played", columns: ID.concat([
       ["piece", "the record"],
@@ -440,7 +486,7 @@
       return r;
     }
     var out = {games: [], steps: [], food: [], visits: [], navigation: [], track: [], keys: [], turns: [],
-      looks: [], likes: [], clicks: [], music: [], page: []};
+      looks: [], likes: [], ratings: [], infos: [], clicks: [], music: [], page: []};
 
     // steps and food levels
     var known = {};
@@ -590,7 +636,8 @@
         out.track.push(row({
           t_s: sec(get(r, "t")), x: num(get(r, "x"), 3), y: num(get(r, "y"), 3), angle_deg: num(get(r, "angle"), 1),
           step: get(r, "step"), look: get(r, "look"), look_d: num(get(r, "look_d"), 3), look_share: num(get(r, "look_share"), 4),
-          music: get(r, "music"), tilt: num(get(r, "tilt"), 4), back: yes(get(r, "back"))
+          music: get(r, "music"), tilt: num(get(r, "tilt"), 4), back: num(get(r, "back"), 3),
+          view_dx: num(get(r, "view_dx"), 3), view_dy: num(get(r, "view_dy"), 3), view_turn: num(get(r, "view_turn"), 1)
         }));
       });
     }
@@ -610,15 +657,27 @@
       out.looks.push(row({place: o.place, painting: o.painting, painter: p.painter || null, title: p.title || null,
         year: p.year || null, room: o.room, side: o.side, look_ms: num(o.look_ms, 1), looks: o.looks,
         seen_ms: num(o.seen_ms, 1), first_seen_s: sec(o.first_seen_at), first_look_s: sec(o.first_look_at),
-        nearest: num(o.nearest, 2), liked: yes(o.liked), likes: o.likes}));
+        nearest: num(o.nearest, 2), liked: o.liked === undefined ? null : yes(o.liked),
+        likes: o.likes === undefined ? null : o.likes, stars: o.stars === undefined ? null : o.stars,
+        ratings: o.ratings === undefined ? null : o.ratings, info_opens: o.info_opens === undefined ? null : o.info_opens,
+        info_ms: num(o.info_ms, 1)}));
     });
     (g.likes || []).forEach(function (o) {
       out.likes.push(row({t_s: sec(o.t), step: o.step, place: o.place, painting: o.painting, room: o.room, side: o.side,
         liked: yes(o.liked), by: o.by || null, distance: num(o.d, 2)}));
     });
+    (g.ratings || []).forEach(function (o) {
+      out.ratings.push(row({t_s: sec(o.t), step: o.step, place: o.place, painting: o.painting, room: o.room,
+        side: o.side, stars: o.stars, before: o.before, by: o.by || null, distance: num(o.d, 2)}));
+    });
+    (g.infos || []).forEach(function (o) {
+      out.infos.push(row({opened_s: sec(o.opened_at), step: o.step, place: o.place, painting: o.painting, room: o.room,
+        side: o.side, by: o.by || null, distance: num(o.d, 2), closed_s: sec(o.closed_at),
+        closed_by: o.closed_by || null, ms: num(o.ms, 1)}));
+    });
     (g.clicks || []).forEach(function (o) {
       out.clicks.push(row({t_s: sec(o.t), step: o.step, x: num(o.x, 1), y: num(o.y, 1), on: o.on || "nothing",
-        place: o.place === undefined ? null : o.place, outcome: o.outcome || null}));
+        place: o.place === undefined ? null : o.place, star: o.star || null, outcome: o.outcome || null}));
     });
     var plays = (g.music && g.music.plays) || [];
     plays.forEach(function (o) {
@@ -707,6 +766,14 @@
       look_s: g.looks ? num(looks.reduce(function (a, o) { return a + (o.look_ms || 0); }, 0) / 1000, 3) : null,
       likes: g.likes ? likes.filter(function (o) { return o.liked; }).length : null,
       unlikes: g.likes ? likes.filter(function (o) { return !o.liked; }).length : null,
+      ratings: g.ratings ? g.ratings.filter(function (o) { return o.stars > 0; }).length : null,
+      ratings_taken_back: g.ratings ? g.ratings.filter(function (o) { return !o.stars; }).length : null,
+      paintings_rated: g.ratings ? looks.filter(function (o) { return o.stars > 0; }).length : null,
+      stars_mean: g.ratings && looks.some(function (o) { return o.stars > 0; }) ?
+        num(mean(looks.filter(function (o) { return o.stars > 0; }).map(function (o) { return o.stars; })), 3) : null,
+      info_opens: g.infos ? g.infos.length : null,
+      info_s: g.infos ? num(g.infos.reduce(function (a, o) { return a + (o.ms || 0); }, 0) / 1000, 3) : null,
+      exited_by: g.ended && g.ended.how === "exited" ? g.ended.by || null : null,
       clicks: (g.clicks || []).length,
       music_room: g.music ? g.music.room || null : null,
       music_plays: plays.length,

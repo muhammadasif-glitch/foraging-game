@@ -159,7 +159,7 @@
       g.globalAlpha = 1;
     });
     (scene.crumbs || []).forEach(function (cr) {
-      g.fillStyle = cr.kind === "bread" ? "#c58a4a" : "#e9b93c";
+      g.fillStyle = {bread: "#c58a4a", apples: "#d4473a", pizza: "#e0a33a"}[cr.kind] || "#e9b93c";
       var cs = Math.max(2, T * 0.09);
       g.fillRect(cr.x * T - cs / 2, (cr.y - cr.z * 0.8) * T - cs / 2, cs, cs);
     });

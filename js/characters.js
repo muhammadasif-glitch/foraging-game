@@ -1,13 +1,14 @@
 /* The characters a player can be (settings.js: game.player), besides the
- * mouse of js/mouse.js and the arrow: a man, a woman, a dog, a robot and a
- * knight. Each is a 3D model (characters/<name>.js, made by
+ * mouse of js/mouse.js and the arrow: a girl, a boy, a woman and a man
+ * (Microsoft Rocketbox, from 2.8.0), a dog and a robot. Each is a 3D model (characters/<name>.js, made by
  * check/make_characters.py; credits in characters/CREDITS.md) drawn with
  * three.js (js/three) where the browser has WebGL.
  *
  * Each model has 3 clips that loop, each starting as the left foot lands:
- * idle (standing), walk and run. The man, the woman and the robot move as
- * people of the CMU motion capture database did; the knight and the dog
- * have their own. The game says how far the character has walked (gait, 2
+ * idle (standing), walk and run. The girl, the boy, the woman and the man
+ * move with Rocketbox's own motion capture (check/make_rocketbox.py), the
+ * robot as people of the CMU motion capture database did, the dog with its
+ * own. The game says how far the character has walked (gait, 2
  * pi a pair of steps) and how fast it goes (move); the clips are blended
  * by the speed and turned as fast as the ground goes by, so that the feet
  * keep to the floor, and the steps sound as each foot lands. A fourth clip,
@@ -42,24 +43,27 @@
    * from above), print (its prints in 2D), sounds: steps, voice, eating,
    * sniffing; file: its model. */
   var INFO = {
-    man: {label: "Man", height: 1.8, eye: 0.52, speed: 5.5, reach: 0.6,
+    girl: {label: "Girl", height: 1.43, eye: 0.41, speed: 5, reach: 0.5,
+      camera: {back: 1.45, eye: 0.64, near: 0.53, horizon: 0.42}, zoom2d: 6.6, print: "shoe",
+      sound: {steps: "shoes", voice: "girl", eat: "crunch", sniff: false}},
+    boy: {label: "Boy", height: 1.43, eye: 0.41, speed: 5, reach: 0.5,
+      camera: {back: 1.45, eye: 0.64, near: 0.53, horizon: 0.42}, zoom2d: 6.6, print: "shoe",
+      sound: {steps: "shoes", voice: "boy", eat: "crunch", sniff: false}},
+    woman: {label: "Woman", height: 1.72, eye: 0.5, speed: 5.6, reach: 0.55,
+      camera: {back: 1.55, eye: 0.75, near: 0.63, horizon: 0.41}, zoom2d: 6.2, print: "shoe",
+      sound: {steps: "shoes", voice: "woman", eat: "crunch", sniff: false}},
+    man: {label: "Man", height: 1.8, eye: 0.52, speed: 6, reach: 0.6,
       camera: {back: 1.6, eye: 0.78, near: 0.66, horizon: 0.41}, zoom2d: 6, print: "shoe",
       sound: {steps: "shoes", voice: "man", eat: "crunch", sniff: false}},
-    woman: {label: "Woman", height: 1.68, eye: 0.48, speed: 5.3, reach: 0.55,
-      camera: {back: 1.55, eye: 0.74, near: 0.62, horizon: 0.41}, zoom2d: 6.2, print: "bare",
-      sound: {steps: "bare", voice: "woman", eat: "crunch", sniff: false}},
     dog: {label: "Dog", height: 0.72, eye: 0.19, speed: 6, reach: 0.6,
       camera: {back: 1.0, eye: 0.42, near: 0.3, horizon: 0.47}, zoom2d: 6, print: "paw",
       sound: {steps: "claws", voice: "dog", eat: "chomp", sniff: true}},
     mouse: {label: "Mouse", height: 0.3},
     robot: {label: "Robot", height: 1.5, eye: 0.42, speed: 5, reach: 0.6,
       camera: {back: 1.5, eye: 0.7, near: 0.56, horizon: 0.42}, zoom2d: 5.6, print: "robot",
-      sound: {steps: "robot", voice: "robot", eat: "whirr", sniff: false}},
-    knight: {label: "Knight", height: 1.9, eye: 0.53, speed: 5, reach: 0.7,
-      camera: {back: 1.65, eye: 0.8, near: 0.68, horizon: 0.4}, zoom2d: 5.4, print: "boot",
-      sound: {steps: "armour", voice: "knight", eat: "crunch", sniff: false}}
+      sound: {steps: "robot", voice: "robot", eat: "whirr", sniff: false}}
   };
-  var LIST = ["man", "woman", "dog", "mouse", "robot", "knight"];
+  var LIST = ["girl", "boy", "woman", "man", "dog", "mouse", "robot"];
   Object.keys(INFO).forEach(function (n) {
     INFO[n].file = "characters/" + n + ".js";
     INFO[n].picture = "img/characters/" + n + ".png";

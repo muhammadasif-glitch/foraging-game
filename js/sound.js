@@ -259,6 +259,8 @@
   }
 
   // ------------------------------------------------------------ sounds
+  var STEPS_LOUDNESS = 0.18;
+
   function step(soft) {
     if (!ready()) {
       return;
@@ -266,8 +268,8 @@
     var at = ctx.currentTime + 0.005;
     steps += 1;
     var f = steps % 2 ? 900 : 760;
-    noise(at, soft ? 0.05 : 0.09, soft ? 0.18 : 0.32, f, 1.4);
-    noise(at, 0.05, soft ? 0.1 : 0.18, 180, 0.8, "lowpass");
+    noise(at, soft ? 0.05 : 0.09, (soft ? 0.18 : 0.32) * STEPS_LOUDNESS, f, 1.4);
+    noise(at, 0.05, (soft ? 0.1 : 0.18) * STEPS_LOUDNESS, 180, 0.8, "lowpass");
   }
 
   /* 1 step of the mouse: a pair of small feet landing a moment apart (a
@@ -282,7 +284,7 @@
     var at = ctx.currentTime + 0.003 + Math.random() * 0.006;
     steps += 1;
     var side = steps % 2 ? 1 : -1, wobble = 0.85 + Math.random() * 0.3;
-    var vol = (soft ? 0.07 : 0.1) * (0.8 + Math.random() * 0.4);
+    var vol = (soft ? 0.07 : 0.1) * (0.8 + Math.random() * 0.4) * STEPS_LOUDNESS;
     var bright = hard ? 1.3 : 1, thud = hard ? 0.3 : 0.55;
     [0, 0.011 + Math.random() * 0.008].forEach(function (late, n) {
       var v = n ? vol * 0.6 : vol, p = (n ? -side : side) * 0.18;
@@ -499,8 +501,11 @@
   // (steps, found, oof, full, eat) -> base64 mp3s, decoded when first
   // wanted (into AudioBuffers); until then the sounds made here play
   var own = {name: null, files: {}, buffers: {}, last: {}};
-  var OWN_PITCH = {knight: 0.86};
+  // the children speak with the recorded voices of the woman and the man, higher
+  var OWN_PITCH = {girl: 1.3, boy: 1.27};
   var STEP_VOLUME = {shoes: 0.42, bare: 1.1, armour: 0.4, robot: 0.3};
+  // every footstep (recorded or made here, of every character and the
+  // mouse) at this part of its loudness of 2.7.1: about 15 dB softer
 
   /* The recordings of character name (its file's sounds), or none. */
   function use(name, sounds) {
@@ -593,7 +598,7 @@
     if (buf) {
       steps += 1;
       var when = ctx.currentTime + 0.002 + Math.random() * 0.006;
-      var vol = STEP_VOLUME[kind] * (0.65 + 0.4 * Math.min(1, mv)) * (0.85 + Math.random() * 0.3);
+      var vol = STEP_VOLUME[kind] * (0.65 + 0.4 * Math.min(1, mv)) * (0.85 + Math.random() * 0.3) * STEPS_LOUDNESS;
       // bare feet: the soft part of a step; on stone the steps ring brighter
       var filter = kind === "bare" ? ["lowpass", 620, 0.7] : hard ? ["highshelf", 2400, 4] : null;
       play(buf, when, vol, 0.93 + Math.random() * 0.14, filter, (steps % 2 ? 1 : -1) * 0.12);
@@ -616,25 +621,25 @@
         tap(at + 0.05 + Math.random() * 0.02, 0.025, v * 0.55, (light ? 3400 : 2100) * w * b, 1.5, p);
       }
     } else if (kind === "armour") {
-      var va = 0.2 * (0.85 + Math.random() * 0.3);
+      var va = 0.2 * (0.85 + Math.random() * 0.3) * STEPS_LOUDNESS;
       tap(at, 0.09, va * 1.4, 95 * w, 0.8, p, "lowpass");
       tap(at, 0.04, va * 0.6, 1300 * w * b, 1.2, p);
       clank(at + 0.012, va * (run ? 1 : 0.7), false);
     } else if (kind === "robot") {
-      var vr = 0.16 * (0.9 + Math.random() * 0.2);
+      var vr = 0.16 * (0.9 + Math.random() * 0.2) * STEPS_LOUDNESS;
       tap(at, 0.07, vr * 1.2, 120 * w, 0.8, p, "lowpass");
       clank(at, vr, true);
       // the servo of the knee
       tone(at - 0.05, 0.12, 330 * w, 430 * w, vr * 0.12, "sawtooth", ["lowpass", 1400, 1]);
     } else if (kind === "claws") {
-      var vd = 0.11 * (0.8 + Math.random() * 0.4);
+      var vd = 0.11 * (0.8 + Math.random() * 0.4) * STEPS_LOUDNESS;
       tap(at, 0.04, vd, 260 * w, 0.8, p, "lowpass");
       [0, 0.014 + Math.random() * 0.01].forEach(function (late, n) {
         tap(at + late, 0.008, vd * (hard ? 0.9 : 0.55) * (n ? 0.7 : 1), 6200 * w, 5, (n ? -p : p));
       });
     } else {
       // soft paws: hardly a sound, a tiny tick on stone
-      var vc = 0.05 * (0.8 + Math.random() * 0.4);
+      var vc = 0.05 * (0.8 + Math.random() * 0.4) * STEPS_LOUDNESS;
       tap(at, 0.05, vc, 320 * w, 0.7, p, "lowpass");
       if (hard) {
         tap(at + 0.01, 0.006, vc * 0.5, 7000 * w, 5, p);
@@ -663,7 +668,7 @@
       return;
     }
     var at = ctx.currentTime + 0.01, j = 0.93 + Math.random() * 0.14;
-    var pitch = {man: 125, woman: 215, knight: 98}[who];
+    var pitch = {man: 125, woman: 215, girl: 300, boy: 270, knight: 98}[who];
     if (pitch) {
       var f = pitch * j, v = who === "knight" ? 0.08 : 0.07;
       if (kind === "found") {

@@ -33,17 +33,26 @@
  * the player walks into the room they are next to.
  *
  * Paintings (3D). Every wall of every room has a painting (js/art.js), hung
- * anew every game, and beside it a Like plaque: L likes the painting in the
- * middle of the view, a click likes the painting of the plaque clicked, and
- * again un-likes it. Looking is recorded: which painting is in the middle
+ * anew every game, with a rating plate of 5 stars on its left and an info
+ * button on its right. The keys 1 to 5 rate the painting in the middle of
+ * the view, a click on a star rates the painting of that plate; the same
+ * rating again takes it back (0 stars). I, or a click on the info button,
+ * opens the painting's card (js/painting_info.js): the game pauses (no stays,
+ * no walking, looking not counted) until the card is closed, by any key, its
+ * button or a click beside it. Looking is recorded: which painting is in the middle
  * of the view, how far away and how big, every frame (looks) and with the
  * place of the player (track).
  *
  * The music room (both views). 1 room has a gramophone (js/gramophone.js):
  * near it, P or a click on it plays a record, again stops it.
  *
- * Liking and the music cost nothing and do not hold up the stays: standing
+ * Rating and the music cost nothing and do not hold up the stays: standing
  * before a painting is standing still, a stay every idle_stay_ms as ever.
+ * Only the open info card stops the clock of the stays.
+ *
+ * Exit: Escape or the Exit button ends the game at once (ended.how
+ * "exited"); the game is saved and sent as any other. In a try of the
+ * editor, Escape goes back to the editor (ended.how "stopped").
  *
  * The caller hears of every change (g.onChange(record)), so that the game so
  * far is kept and reaches the researchers even if the page is closed. */
@@ -71,11 +80,13 @@
   // a short press of the arrow (no steps of its own) walks this far (tiles)
   var ARROW_STEP = 0.5;
   // a character faster than a person (game.same_speed) takes longer steps
-  // and quicker ones: each by the square root of how much faster it goes
-  var LONGER_STEPS = 0.5;
+  // and quicker ones: longer by how much faster it goes to the power 0.85,
+  // quicker by the rest (0.15), so that it runs as a sprinter does, about 4
+  // steps a second (0.5 before 2.8.0: 8 steps a second, a scurry)
+  var LONGER_STEPS = 0.85;
   // the food stands in the middle of its room, this wide (tiles); seen
   // through the eyes in 3D, smaller (near, it filled the screen)
-  var FOOD_RADIUS = {cheese: 0.42, bread: 0.32}, EYES_FOOD = 0.7;
+  var FOOD_RADIUS = {pizza: 0.42, apples: 0.36, cheese: 0.42, bread: 0.32}, EYES_FOOD = 0.7;
   // a room is entered this far onto its floor (tiles)
   var ENTER_TILES = 0.3;
   // doors guide the player when they are this far ahead (tiles), the walk
@@ -109,13 +120,16 @@
   // looking at a painting (3D): standing (slower than TILT_STILL tiles a
   // second, turning slower than TILT_TURN radians a second) before a
   // painting up to TILT_FAR tiles away, the view tilts up until the middle
-  // of the painting is in the middle of the screen (the horizon at most
-  // TILT_MOST below the middle), and, through the eyes, steps back (at most
-  // BACK_MOST tiles, never into a wall) until the painting and its plaque
-  // fit on the screen with FIT room to spare; in about TILT_IN_S, back in
-  // TILT_OUT_S. Only the view moves: the player stays where it is.
+  // of the painting, its rating plate and its info button is in the middle of
+  // the screen (the horizon at most TILT_MOST below the middle), and, through
+  // the eyes, the view glides to the place right in front of them and turns
+  // to face them squarely, as near as lets them fill the screen with FIT
+  // room to spare (no nearer than NEAR_MOST tiles to the wall, never out of
+  // the room): the painting seen full screen with its stars and its button;
+  // in about TILT_IN_S, back in TILT_OUT_S. Only the view moves: the player
+  // stays where it is (scene.dx, scene.dy, scene.turn: the view's offset).
   var TILT_STILL = 0.35, TILT_TURN = 0.35, TILT_FAR = 3.5, TILT_MOST = 0.42, TILT_IN_S = 0.45, TILT_OUT_S = 0.25;
-  var BACK_MOST = 1, FIT = 1.08;
+  var FIT = 1.22, NEAR_MOST = 0.6;
 
   function $(id) {
     return document.getElementById(id);
@@ -174,6 +188,8 @@
    * look(), seen(), hit(x, y), mark(), renderInfo(mark)), settings, layout,
    * seed, layout_seed, gallery_seed, onChange(record)}. Resolves to the
    * record. */
+  var exitGame = null;            // while a game is on: ends it at once (the Exit button)
+
   function play(g) {
     var s = g.settings;
     var three = g.view === "3d";
@@ -257,7 +273,7 @@
     var start = Wd.centre(M, room);
     var scene = {maze: M, x: start[0], y: start[1], angle: facing0 * QUARTER, facing: facing0, heading: 0,
       lit: null, light: new Float32Array(M.W * M.H), food: [], here: null, crumbs: [], bob: 0, sway: 0, tilt: 0,
-      back: 0,
+      back: 0, dx: 0, dy: 0, turn: 0,
       eye: MOUSE ? FG.mouse.EYE : FIG ? FIG.eye : 0.5, camera: CAMERA, cam: null, foodScale: FOOD_SCALE,
       mouse: MOUSE ? {phase: 0, move: 0, t: 0, eat: false, turn: 0} : null,
       figure: FIG ? {name: s.player, phase: 0, move: 0, t: 0, eat: false, turn: 0, back: false} : null, prints: [],
@@ -294,7 +310,8 @@
     var COUNT_MOVES = s.count_steps !== "all";
     var TRACK_MS = s.track_ms || 0;
     var track = {every_ms: TRACK_MS,
-      fields: ["t", "x", "y", "angle", "step", "look", "look_d", "look_share", "music", "tilt", "back"],
+      fields: ["t", "x", "y", "angle", "step", "look", "look_d", "look_share", "music", "tilt", "back",
+        "view_dx", "view_dy", "view_turn"],
       rows: []};
     var nextTrack = null;         // when the next place of the player is recorded (performance.now)
     var lastBump = -1e9;
@@ -309,9 +326,11 @@
     var places = three ? Wd.paintingPlaces(M) : null;
     var REAL = three && s.paintings && ART && ART.count() > 0;
     var gallery = three && ART ? {pics: ART.hang(places.list, FG.random.make(gallerySeed), REAL),
-      liked: new Uint8Array(places.list.length), likes: REAL && s.likes} : null;
+      stars: new Uint8Array(places.list.length), ratings: REAL && s.ratings,
+      info: REAL && s.painting_info && !!FG.PAINTING_INFO} : null;
     scene.gallery = gallery;
-    var looks = {}, lookAt = null, likes = [], clicks = [];
+    var looks = {}, lookAt = null, ratings = [], infos = [], clicks = [];
+    var paused = null;            // the info card open: {rec (its row in infos), t0 (performance.now)}
     var renderMark = three && g.renderer.mark ? g.renderer.mark() : 0;
 
     // the music room: a room that is neither the start nor a food room
@@ -348,18 +367,20 @@
         // a character's steps grow with its speed: at full speed
         c.step_tiles = MOUSE ? STEP[g.view] : FIG ? CH.stepTiles(s.player, 1, PER_METRE) : null;
         c.tap_tiles = TAP_TILES;
-        c.food_radius_tiles = {cheese: FOOD_RADIUS.cheese * FOOD_SCALE, bread: FOOD_RADIUS.bread * FOOD_SCALE};
+        c.food_radius_tiles = {};
+        Object.keys(FOOD_RADIUS).forEach(function (k) { c.food_radius_tiles[k] = FOOD_RADIUS[k] * FOOD_SCALE; });
         return c;
       })(),
       started: new Date().toISOString(), started_at: REC.now(), ended: null, steps: steps, turns: turns,
       walks_back: back, draws: draws, sound: {on_at_start: SND ? SND.on : null, toggles: soundToggles},
       track: TRACK_MS ? track : null, maze_def: mazeDef(g.layout.maze), path: null, known_rooms: null,
-      gallery_seed: gallerySeed, gallery: null, looks: null, likes: three ? likes : null, clicks: clicks,
+      gallery_seed: gallerySeed, gallery: null, looks: null, ratings: three ? ratings : null,
+      infos: three ? infos : null, clicks: clicks, exit_button: [],
       music: music, render: null,
       result: null
     };
     if (gallery) {
-      record.gallery = {source: REAL ? "paintings" : "landscapes", likes: gallery.likes,
+      record.gallery = {source: REAL ? "paintings" : "landscapes", ratings: gallery.ratings, info: gallery.info,
         places: places.list.map(function (pl, k) {
           var rm = M.list[pl.room], p = gallery.pics[k], info = ART.info(p);
           return {place: k, room: R.roomName([rm.i, rm.j]), side: Wd.SIDES[pl.side],
@@ -583,7 +604,7 @@
           continue;
         }
         var c = Wd.centre(M, fr);
-        var rr = (kinds[names[i]] === "bread" ? FOOD_RADIUS.bread : FOOD_RADIUS.cheese) * FOOD_SCALE + RAD;
+        var rr = (FOOD_RADIUS[kinds[names[i]]] || FOOD_RADIUS.pizza) * FOOD_SCALE + RAD;
         if ((x - c[0]) * (x - c[0]) + (y - c[1]) * (y - c[1]) < rr * rr) {
           return false;
         }
@@ -865,31 +886,96 @@
           o.first_seen_at = null;
           o.first_look_at = null;
           o.nearest = null;
-          o.liked = false;
-          o.likes = 0;
+          o.stars = 0;
+          o.ratings = 0;
+          o.info_opens = 0;
+          o.info_ms = 0;
           looks[k] = o;
         }
         return looks[k];
       }
 
-      /* A painting liked or un-liked: by "L" (the painting in the middle of
-       * the view) or "click" (its plaque). */
-      function like(k, by, at, d) {
-        gallery.liked[k] = gallery.liked[k] ? 0 : 1;
-        var on = !!gallery.liked[k];
+      /* A painting rated n stars (1 to 5) by a key ("1" to "5", the painting
+       * in the middle of the view) or "click" (a star of its plate). The same
+       * rating again takes it back: 0 stars. */
+      function rate(k, n, by, at, d) {
+        var before = gallery.stars[k];
+        var now = before === n ? 0 : n;
+        gallery.stars[k] = now;
         var o = placeInfo(k);
         o.t = at;
         o.step = t;
-        o.liked = on;
+        o.stars = now;
+        o.before = before;
         o.by = by;
         o.d = d === null || d === undefined ? null : round(d, 2);
-        likes.push(o);
+        ratings.push(o);
         var st = lookStats(k);
-        st.liked = on;
-        st.likes += 1;
+        st.stars = now;
+        st.ratings += 1;
         dirty = true;
         changed();
-        return on ? "like" : "unlike";
+        return now ? "rated " + now : "rating taken back";
+      }
+
+      /* The info card of painting k, by "I" or "click": the game pauses
+       * until it is closed (closeInfo). */
+      function openInfo(k, by, at, d) {
+        var pic = gallery.pics[k], info = ART.info(pic);
+        if (!info || !FG.paintingCard) {
+          return "ignored: no info";
+        }
+        // the player stands still: keys held are let go, a turn ends
+        Object.keys(down).forEach(function (code) { release(code, at, "info"); });
+        keysDown = {};
+        if (turning) {
+          endTurn();
+        }
+        var o = placeInfo(k);
+        o.opened_at = at;
+        o.step = t;
+        o.by = by;
+        o.d = d === null || d === undefined ? null : round(d, 2);
+        o.closed_at = null;
+        o.closed_by = null;
+        o.ms = null;
+        infos.push(o);
+        lookStats(k).info_opens += 1;
+        paused = {rec: o, t0: performance.now()};
+        var sideName = {east: "East", south: "South", west: "West", north: "North"}[o.side] || o.side;
+        FG.paintingCard.open(info, {
+          closed: function (how) { closeInfo(how, REC.now()); },
+          rating: gallery.ratings ? gallery.stars[k] : null,
+          where: "Room " + o.room.replace(/^s/, "") + " \u00b7 " + sideName + " wall",
+          rate: function (n) {
+            var c = {t: REC.now(), step: t, x: null, y: null, on: "card star", place: k, star: n, outcome: null};
+            clicks.push(c);
+            c.outcome = rate(k, n, "card", c.t, o.d);
+            o.ratings_on_card = (o.ratings_on_card || 0) + 1;
+            return gallery.stars[k];
+          }
+        });
+        changed();
+        return "info open";
+      }
+
+      function closeInfo(how, at) {
+        if (!paused) {
+          return "ignored: no card";
+        }
+        var o = paused.rec;
+        o.closed_at = at;
+        o.closed_by = how;
+        o.ms = round(at - o.opened_at, 1);
+        lookStats(o.place).info_ms += o.ms;
+        paused = null;
+        FG.paintingCard.close();
+        // the clock of the stays starts again now
+        idleSince = performance.now();
+        lastSpace = null;
+        lastFrame = null;
+        changed();
+        return "info closed";
       }
 
       /* Looking: the painting in the middle of the view, and every painting
@@ -996,20 +1082,35 @@
         return playingNow ? stopMusic(by, at) : startMusic(by, at);
       }
 
-      /* The keys of the paintings and the music: L, P. */
+      /* The keys of the paintings and the music: 1 to 5 (stars), I (info),
+       * P (music). */
       function extraKey(low, entry) {
-        if (low === "l") {
-          if (!gallery || !gallery.likes) {
-            return "ignored: no likes";
+        if (/^[1-5]$/.test(low) || low === "i") {
+          if (!gallery || !(low === "i" ? gallery.info : gallery.ratings)) {
+            return low === "i" ? "ignored: no info" : "ignored: no ratings";
           }
           var lk = g.renderer.look ? g.renderer.look() : null;
           if (!lk) {
             return "ignored: no painting in view";
           }
-          return like(lk.place, "L", entry.t, lk.d);
+          return low === "i" ? openInfo(lk.place, "I", entry.t, lk.d) : rate(lk.place, Number(low), low, entry.t, lk.d);
         }
         return gramophone("P", entry.t);
       }
+
+      /* The Exit button: the game ends at once, as with Escape. */
+      exitGame = function (by) {
+        var at = REC.now();
+        if (over || shownAt === null || ending) {
+          record.exit_button.push({t: at, step: t, outcome: "ignored: busy"});
+          return;
+        }
+        record.exit_button.push({t: at, step: t, outcome: "exit"});
+        if (paused) {
+          closeInfo("exit", at);
+        }
+        finish("exited", by);
+      };
 
       function onClick(e) {
         if (over || shownAt === null || e.button !== 0) {
@@ -1020,8 +1121,13 @@
         var c = {t: at, step: t, x: Math.round(e.offsetX), y: Math.round(e.offsetY), on: h ? h.kind : null,
           place: h && h.place !== null && h.place !== undefined ? h.place : null, outcome: null};
         clicks.push(c);
-        if (h && h.kind === "plaque" && gallery && gallery.likes) {
-          c.outcome = like(h.place, "click", at, h.d);
+        c.star = h && h.star ? h.star : null;
+        if (paused) {
+          c.outcome = "ignored: info card open";
+        } else if (h && h.kind === "star" && gallery && gallery.ratings) {
+          c.outcome = rate(h.place, h.star, "click", at, h.d);
+        } else if (h && h.kind === "info" && gallery && gallery.info) {
+          c.outcome = openInfo(h.place, "click", at, h.d);
         } else if (h && h.kind === "gramophone") {
           c.outcome = gramophone("click", at);
         } else {
@@ -1033,7 +1139,8 @@
 
       function onHover(e) {
         var h = !over && g.renderer.hit ? g.renderer.hit(e.offsetX, e.offsetY) : null;
-        var on = h && ((h.kind === "plaque" && gallery && gallery.likes) || (h.kind === "gramophone" && nearGramophone()));
+        var on = h && ((h.kind === "star" && gallery && gallery.ratings) || (h.kind === "info" && gallery && gallery.info) ||
+          (h.kind === "gramophone" && nearGramophone()));
         g.renderer.canvas.style.cursor = on ? "pointer" : "";
       }
 
@@ -1077,7 +1184,11 @@
       });
       requestAnimationFrame(frame);
 
-      function finish(how) {
+      function finish(how, by) {
+        if (paused) {
+          closeInfo("game over", REC.now());
+        }
+        exitGame = null;
         over = true;
         FG.game.where = function () { return null; };
         if (turning) {
@@ -1106,6 +1217,9 @@
         }
         Object.keys(holding).forEach(function (code) { delete holding[code]; });
         record.ended = ended(record, how, REC.now());
+        if (how === "exited") {
+          record.ended.by = by || "Escape";
+        }
         wayFields(record);
         record.result = modelResult(record);
         if (SND) {
@@ -1196,7 +1310,15 @@
       REC.listen(function (e, entry) {
         var code = e.code || e.key;
         var low = typeof e.key === "string" && e.key.length === 1 ? e.key.toLowerCase() : null;
-        if (low === "l" || low === "p") {
+        if (paused) {
+          // the info card open: any key closes it, and does nothing else
+          if (e.type !== "keydown") {
+            delete keysDown[code];
+            return undefined;
+          }
+          return closeInfo(e.key === "Escape" ? "Escape" : "key", entry.t);
+        }
+        if (/^[1-5ip]$/.test(low || "")) {
           // free, and they do not hold up the stays: not kept as held keys
           if (e.type === "keyup") {
             return undefined;
@@ -1235,6 +1357,13 @@
           // trying a maze in the editor: Escape goes back to it
           finish("stopped");
           return "stop";
+        }
+        if (e.key === "Escape" && !over) {
+          if (shownAt === null || ending) {
+            return "ignored: busy";
+          }
+          finish("exited", "Escape");
+          return "exit";
         }
         var key = KEY_MOVE[e.key];
         if (!key) {
@@ -1840,47 +1969,61 @@
         scene.cam = FG.mouse.camera(scene.x, scene.y, scene.angle, b, CAM);
       }
 
-      /* How far the view can step back from the player, looking the way it
-       * looks, before it comes near a wall (at most BACK_MOST). */
-      function roomBehind() {
-        var cx = -Math.cos(scene.angle), cy = -Math.sin(scene.angle);
-        for (var b = 0.05; b <= BACK_MOST + 0.2; b += 0.05) {
-          var x = Math.floor(scene.x + cx * b), y = Math.floor(scene.y + cy * b);
-          if (x < 0 || y < 0 || x >= M.W || y >= M.H || M.kind[y * M.W + x] === Wd.WALL) {
-            return Math.max(0, Math.min(BACK_MOST, b - 0.2));
-          }
-        }
-        return BACK_MOST;
-      }
-
       /* Looking at the painting in the middle of the view while the player
-       * stands before it (TILT_*): up to it, and back from it when it is too
-       * near to be seen whole; as before on walking or turning. */
+       * stands before it (TILT_*): up to it, and in to it or back from it
+       * until it fills the screen with its plate and button; as before on
+       * walking or turning. */
+      var facedLook = null;         // the painting the view turned to: {place, d}
       function updateTilt(dt) {
-        var wantTilt = 0, wantBack = 0;
+        var wantTilt = 0, want = {dx: 0, dy: 0, turn: 0};
         var still = Math.hypot(vx, vy) < TILT_STILL && Math.abs(omega) < TILT_TURN && !ending;
         var lk = still && gallery && g.renderer.look ? g.renderer.look() : null;
-        if (lk && lk.d > 0.05 && lk.d <= TILT_FAR) {
+        // the painting faced is kept while the player stands (the middle of the
+        // view may leave its frame as the view turns to it)
+        if (!still) {
+          facedLook = null;
+        } else if (lk && lk.d > 0.05 && lk.d <= TILT_FAR && (!facedLook || facedLook.place !== lk.place)) {
+          facedLook = lk;
+        }
+        lk = still ? facedLook : null;
+        if (lk) {
           var D = ART.layout(gallery.pics[lk.place]);
+          var plates = gallery.ratings || gallery.info;
+          var a0 = plates ? D.ax0 : D.fx0, a1 = plates ? D.ax1 : D.fx1;
+          var v0 = plates ? D.av0 : D.fv0, v1 = plates ? D.av1 : D.fv1;
+          var d = lk.d + (scene.cam ? scene.cam.back : 0);
           if (!BEHIND) {
             var c = $("c3d"), ar = c && c.clientHeight ? c.clientWidth / c.clientHeight : 16 / 9;
             var fov = Math.tan(33 * Math.PI / 180) * ar / (4 / 3);
-            var fw = (gallery.likes ? D.qx1 : D.fx1) - D.fx0, fh = D.fv1 - D.fv0;
-            wantBack = Math.min(roomBehind(), Math.max(0, Math.max(fh * FIT, fw * FIT / (2 * fov)) - lk.d));
+            var need = Math.max(NEAR_MOST, (v1 - v0) * FIT, (a1 - a0) / 2 * FIT / fov);
+            // the wall, the way into its room, and the middle of what hangs there
+            var pl = places.list[lk.place], rm = M.list[pl.room];
+            var n = pl.side === 0 ? [-1, 0] : pl.side === 2 ? [1, 0] : pl.side === 1 ? [0, -1] : [0, 1];
+            var mid = pl.start + (pl.flip ? 2 - (a0 + a1) / 2 : (a0 + a1) / 2);
+            var wx = pl.alongX ? mid : pl.wall, wy = pl.alongX ? pl.wall : mid;
+            // in front of it, inside its room
+            var m = 0.15;
+            var tx = Math.max(rm.c0 + m, Math.min(rm.c0 + Wd.ROOM - m, wx + n[0] * need));
+            var ty = Math.max(rm.r0 + m, Math.min(rm.r0 + Wd.ROOM - m, wy + n[1] * need));
+            var turn = Math.atan2(-n[1], -n[0]) - scene.angle;
+            turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+            want = {dx: tx - scene.x, dy: ty - scene.y, turn: turn};
+            d = Math.max(0.2, Math.abs((pl.alongX ? ty : tx) - (pl.alongX ? wy : wx)));
           }
-          // (lk.d is from the player; the camera is further away)
           var eye = scene.cam ? scene.cam.eye : scene.eye;
-          var d = lk.d + (scene.cam ? scene.cam.back : Math.max(scene.back, wantBack));
-          wantTilt = Math.max(0, Math.min(TILT_MOST, (1 - (D.fv0 + D.fv1) / 2 - eye) / d));
+          wantTilt = Math.max(0, Math.min(TILT_MOST, (1 - (v0 + v1) / 2 - eye) / d));
         }
-        var ease = function (now, want) {
-          var t = now + (want - now) * (1 - Math.exp(-dt * 3 / (want > now ? TILT_IN_S : TILT_OUT_S)));
-          return Math.abs(want - t) < 1e-4 ? want : t;
+        var ease = function (now, w, size) {
+          var t = now + (w - now) * (1 - Math.exp(-dt * 3 / (Math.abs(w) > Math.abs(now) ? TILT_IN_S : TILT_OUT_S)));
+          return Math.abs(w - t) < 1e-4 * size ? w : t;
         };
-        var tilt = ease(scene.tilt, wantTilt), back = ease(scene.back, wantBack);
-        if (tilt !== scene.tilt || back !== scene.back) {
+        var tilt = ease(scene.tilt, wantTilt, 1);
+        var vdx = ease(scene.dx, want.dx, 1), vdy = ease(scene.dy, want.dy, 1), vturn = ease(scene.turn, want.turn, 1);
+        if (tilt !== scene.tilt || vdx !== scene.dx || vdy !== scene.dy || vturn !== scene.turn) {
           scene.tilt = tilt;
-          scene.back = back;
+          scene.dx = vdx;
+          scene.dy = vdy;
+          scene.turn = vturn;
           dirty = true;
         }
       }
@@ -1892,6 +2035,16 @@
         var frameMs = lastFrame === null ? 0 : Math.min(LONGEST_FRAME_MS, ts - lastFrame);
         var dt = lastFrame === null ? 0 : Math.min(0.05, (ts - lastFrame) / 1000);
         lastFrame = ts;
+        if (paused) {
+          // the info card open: nothing goes on (no looking, no walking, no stays)
+          lastFrame = null;
+          updateMusic();
+          if (dirty) {
+            draw();
+          }
+          requestAnimationFrame(frame);
+          return;
+        }
         if (shownAt !== null && frameMs > 0) {
           updateLooks(frameMs);
         }
@@ -1939,7 +2092,9 @@
             three ? degrees(scene.angle) : null, t, lk ? lk.place : null, lk ? round(lk.d, 2) : null,
             lk ? round(lk.share, 3) : null,
             playingNow ? round(GRAM.loudness(Math.hypot(scene.x - musicAt[0], scene.y - musicAt[1])), 2) : null,
-            three ? round(scene.tilt, 3) : null, three ? round(scene.back, 3) : null]);
+            three ? round(scene.tilt, 3) : null, three ? round(scene.back, 3) : null,
+            three ? round(scene.dx, 3) : null, three ? round(scene.dy, 3) : null,
+            three ? round(scene.turn * 180 / Math.PI, 1) : null]);
           nextTrack = (nextTrack === null || now - nextTrack >= TRACK_MS ? now : nextTrack) + TRACK_MS;
         }
         if (ending && now - ending.t0 >= END_MS) {
@@ -2039,6 +2194,13 @@
   }
 
   FG.game = {play: play, modelResult: modelResult, shortForm: shortForm, wayFields: wayFields, ended: ended,
+    exit: function (by) {
+      if (exitGame) {
+        exitGame(by);
+        return true;
+      }
+      return false;
+    },
     FACING: FACING,
     CONTROLS: CONTROLS,
     quarterOf: quarterOf};

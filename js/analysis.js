@@ -21,7 +21,7 @@
   "use strict";
   var FG = root.FG = root.FG || {};
 
-  var VERSION = "2.7.1";
+  var VERSION = "2.8.0";
   var EXCEL_ROWS = 1000000;           // rows of a sheet before a table goes on in the next
   var $ = function (id) { return document.getElementById(id); };
 
@@ -363,6 +363,9 @@
   }
 
   function endedOf(g) {
+    if (g.ended_how === "exited") {
+      return "exited (" + (g.exited_by || "Escape") + ")";
+    }
     return g.ended_how || (g.partial ? "cut short" : "");
   }
 
@@ -875,7 +878,14 @@
       ["revisits", g.revisits], ["straight back", g.backtracks], ["decision, median ms", fmt(g.decision_ms_median, 0)]
     ];
     if (g.view === "3d") {
-      facts.push(["paintings looked at", g.paintings_looked_at], ["likes", g.likes], ["records played", g.music_plays]);
+      facts.push(["paintings looked at", g.paintings_looked_at]);
+      if (g.ratings !== null && g.ratings !== undefined) {
+        facts.push(["paintings rated", g.paintings_rated], ["mean stars", fmt(g.stars_mean, 2)],
+          ["info cards opened", g.info_opens], ["info cards open, s", fmt(g.info_s, 1)]);
+      } else {
+        facts.push(["likes", g.likes]);
+      }
+      facts.push(["records played", g.music_plays]);
     }
     card.hidden = false;
     card.innerHTML =

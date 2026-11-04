@@ -1,4 +1,5 @@
-/* The food of the food rooms: a cheese wheel or a loaf of bread, in 10
+/* The food of the food rooms (pizza and apples from 2.8.0, as 3D models in
+ * js/food3d.js; drawn here without WebGL): a cheese wheel or a loaf of bread, in 10
  * pieces. The level of a room is the share of its pieces left: at 0.73 there
  * are 7 whole pieces and a thinner eighth that is 0.3 of a piece. Which food a
  * room shows is set in settings.js (food_rooms.<name>.food).
@@ -347,6 +348,11 @@
    * bottom edge. */
   var SIDE_SCALE = 3;
   function sideView(kind, level) {
+    // the 3D models (js/food3d.js), where the browser has WebGL
+    var model = FG.food3d && FG.food3d.ready() ? FG.food3d.side(kind, level) : null;
+    if (model) {
+      return model;
+    }
     var lv = Math.round(Math.max(0, Math.min(1, level)) * 100);
     var k = "s" + kind + lv;
     if (!kept[k]) {
@@ -359,7 +365,7 @@
       c.height = 120 * SIDE_SCALE;
       var g = c.getContext("2d");
       g.scale(SIDE_SCALE, SIDE_SCALE);
-      if (kind === "bread") {
+      if (kind === "bread" || kind === "apples") {
         breadSide(g, 34, 108, 84, lv / 100);
       } else {
         cheeseSide(g, 80, 62, 62, lv / 100);
@@ -373,7 +379,13 @@
 
   /* The food from above at a level, drawn on g. */
   function topView(g, kind, cx, cy, size, level) {
-    if (kind === "bread") {
+    var model = FG.food3d && FG.food3d.ready() ? FG.food3d.top(kind, level, size * 2) : null;
+    if (model) {
+      var s = size * 1.45;
+      g.drawImage(model, cx - s / 2, cy - s / 2, s, s);
+      return;
+    }
+    if (kind === "bread" || kind === "apples") {
       breadTop(g, cx, cy, size * 1.5, level);
     } else {
       cheeseTop(g, cx, cy, size * 0.62, level);
@@ -382,7 +394,13 @@
 
   /* A small picture of the whole food, for signs and the map. */
   function icon(g, kind, cx, cy, size) {
-    if (kind === "bread") {
+    var model = FG.food3d && FG.food3d.ready() ? FG.food3d.icon(kind) : null;
+    if (model) {
+      var w = size * 1.25, h = w * model.height / model.width;
+      g.drawImage(model, cx - w / 2, cy - h * 0.6, w, h);
+      return;
+    }
+    if (kind === "bread" || kind === "apples") {
       breadSide(g, cx - size * 0.42, cy + size * 0.22, size * 0.72, 1);
     } else {
       cheeseSide(g, cx, cy - size * 0.05, size * 0.36, 1);
@@ -428,6 +446,8 @@
       c.width = c.height = 4;
       var g = c.getContext("2d");
       g.fillStyle = kind === "bread" ? [BREAD.crust, BREAD.crumb, BREAD.crustLight][n % 3] :
+        kind === "apples" ? ["#c8372d", "#f1e3b8", "#9e2a22"][n % 3] :
+        kind === "pizza" ? ["#e3a43c", "#c8432c", "#f4d27a"][n % 3] :
         [CHEESE.top, CHEESE.rind, CHEESE.cut][n % 3];
       g.fillRect(0, 0, 4, 4);
       kept[k] = pixels(c);
@@ -435,6 +455,12 @@
     return kept[k];
   }
 
+  // once the 3D models are in, the pictures drawn till then go
+  function forget() {
+    Object.keys(kept).forEach(function (k) { delete kept[k]; });
+    sides.length = 0;
+  }
+
   FG.food = {PIECES: PIECES, pieces: pieces, wedges: wedges, sideView: sideView, topView: topView,
-    icon: icon, sign: sign, crumb: crumb, cheeseSide: cheeseSide, breadSide: breadSide};
+    icon: icon, sign: sign, crumb: crumb, forget: forget, cheeseSide: cheeseSide, breadSide: breadSide};
 })(typeof window !== "undefined" ? window : globalThis);

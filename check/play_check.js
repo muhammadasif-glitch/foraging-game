@@ -21,11 +21,13 @@
  * a tab closed in the middle of a game, then the partial game sent; the page
  * opened from a file; the mouse with the camera behind it and through its
  * eyes (the camera never in or behind a wall), and the old arrow player; the
- * paintings (each game's hanging from its seed, looking, likes by L and by a
- * click on a plaque, L held to stand before a painting without holding up
- * the stays) and the music room (P and a click on the gramophone, in both
+ * paintings (each game's hanging from its seed, looking, ratings by the keys
+ * 1 to 5 and by a click on a star, keys pressed while standing before a
+ * painting without holding up the stays, the info card by I and by a click on
+ * its button, the game paused while it is open); Exit (Escape, the button,
+ * and Exit on the first page) and the music room (P and a click on the gramophone, in both
  * views, the music fading with the way away). Every game the bot plays
- * presses L and P now and then and clicks the view.
+ * presses 1 to 5 and P now and then and clicks the view.
  */
 "use strict";
 var fs = require("fs");
@@ -192,7 +194,8 @@ function ui(page) {
       here: vis("hereItem"),
       status: (document.getElementById("endStatus") || {}).textContent || "",
       msg: (document.getElementById("msgBody") || {}).textContent || "",
-      phase: window.FG && window.FG.recorder ? window.FG.recorder.phase : ""
+      phase: window.FG && window.FG.recorder ? window.FG.recorder.phase : "",
+      card: vis("infoCard"), exitBtn: vis("exitBtn")
     };
   });
 }
@@ -376,8 +379,8 @@ async function play(page, rnd, plan, opts) {
       if (!opts.noExtras) {
         var ex = rnd();
         if (ex < 0.05) {
-          // a like (3D), the gramophone, or a click on the view: free, a step never waits for them
-          await page.keyboard.press(ex < 0.025 ? "l" : "p");
+          // a rating (3D), the gramophone, or a click on the view: free, a step never waits for them
+          await page.keyboard.press(ex < 0.025 ? String(1 + Math.floor(rnd() * 5)) : "p");
           await sleep(40);
         } else if (ex < 0.07) {
           var vp = page.viewportSize();
@@ -662,7 +665,8 @@ function checkGameFile(name, f) {
   if (!partial) {
     expect(steps.length === g.ended.step + 1, where + ": steps " + steps.length + " vs ended at " + g.ended.step);
     var usedUp = countAll ? g.ended.step : g.ended.moves;
-    expect(g.ended.how === "finished" ? usedUp === s.steps : g.ended.how === "starved",
+    expect(g.ended.how === "finished" ? usedUp === s.steps : g.ended.how === "starved" ||
+      (g.ended.how === "exited" && usedUp <= s.steps && (g.ended.by === "Escape" || g.ended.by === "button")),
       where + ": end " + g.ended.how + " with " + usedUp + " of " + s.steps + " used");
   }
   var counted = {moves: 0, idle_stays: 0, space_stays: 0};
@@ -735,7 +739,7 @@ function checkGameFile(name, f) {
       var prevStep = steps[t - 1];
       expect(st.entered_at - prevStep.entered_at >= s.idle_stay_ms - 40 || prevStep.move !== "STAY",
         where + " step " + t + ": an idle stay " + Math.round(st.entered_at - prevStep.entered_at) + " ms after the step before");
-      // L and P (likes, the music) do not hold up the stays
+      // 1 to 5 and P (ratings, the music) do not hold up the stays
       var keyBetween = f.keys.some(function (k) {
         return k.t > st.entered_at - s.idle_stay_ms + 40 && k.t < st.entered_at - 5 && !freeKey(k);
       });
@@ -846,7 +850,7 @@ function checkGameFile(name, f) {
     expect(JSON.stringify(g.known_rooms) === JSON.stringify(Object.keys(knownAll).sort()), where + ": known rooms");
   }
   expect(g.sound && typeof g.sound.on_at_start === "boolean" && Array.isArray(g.sound.toggles), where + ": sound");
-  expect(g.food_kinds && Object.keys(g.food_kinds).every(function (n) { return ["cheese", "bread"].indexOf(g.food_kinds[n]) >= 0; }),
+  expect(g.food_kinds && Object.keys(g.food_kinds).every(function (n) { return ["pizza", "apples", "cheese", "bread"].indexOf(g.food_kinds[n]) >= 0; }),
     where + ": food kinds");
   if (g.view === "3d") {
     (g.turns || []).forEach(function (tr, i) {
@@ -916,7 +920,7 @@ function checkTrack(where, g) {
     return;
   }
   var tr = g.track;
-  if (!expect(tr && tr.every_ms === s.track_ms && tr.fields.join() === "t,x,y,angle,step,look,look_d,look_share,music,tilt,back" &&
+  if (!expect(tr && tr.every_ms === s.track_ms && tr.fields.join() === "t,x,y,angle,step,look,look_d,look_share,music,tilt,back,view_dx,view_dy,view_turn" &&
     tr.rows.length > 1, where + ": track")) {
     return;
   }
@@ -931,8 +935,10 @@ function checkTrack(where, g) {
       expect(p[6] === null && p[7] === null, where + ": track " + i + ": nothing looked at");
     }
     expect(p[8] === null || (p[8] >= 0 && p[8] <= 1), where + ": track " + i + ": music " + p[8]);
-    expect(g.view === "3d" ? p[9] >= 0 && p[9] <= 0.42 && p[10] >= 0 && p[10] <= 1 && (g.camera === "eyes" || p[10] === 0) :
-      p[9] === null && p[10] === null, where + ": track " + i + ": tilt and back " + JSON.stringify(p.slice(9)));
+    // the view glides in front of a painting (through the eyes), never out of its room: at most a room away
+    expect(g.view === "3d" ? p[9] >= 0 && p[9] <= 0.42 && p[10] === 0 && Math.hypot(p[11], p[12]) <= Wd.ROOM * 1.5 &&
+      Math.abs(p[13]) <= 180 && (g.camera === "eyes" || (p[11] === 0 && p[12] === 0 && p[13] === 0)) :
+      p[9] === null && p[10] === null && p[11] === null, where + ": track " + i + ": the view " + JSON.stringify(p.slice(9)));
   });
   var M = Wd.build(g.layout.maze);
   var start = Wd.centre(M, R.roomFromName(g.layout.start_room));
@@ -968,21 +974,23 @@ function checkTrack(where, g) {
 /* L and P: liking a painting and the gramophone; free, they do not hold
  * up the stays. */
 function freeKey(k) {
-  return typeof k.key === "string" && /^[lLpP]$/.test(k.key);
+  return typeof k.key === "string" && /^[1-5pP]$/.test(k.key);
 }
 
 /* The paintings of a 3D game: hung as its seed says (every place another
- * painting), looking and likes as the keys and clicks say; in 2D none. */
+ * painting), looking, ratings and info cards as the keys and clicks say; in 2D
+ * none. */
 globalThis.FG_LOOK_FAR = 6;
 function checkPaintings(where, f) {
   var g = f.game, s = g.settings, FGg = globalThis.FG;
   var downs = f.keys.filter(function (k) { return k.type === "down" && k.phase === "game " + g.number; });
-  var lKeys = downs.filter(function (k) { return /^[lL]$/.test(k.key); });
+  var rKeys = downs.filter(function (k) { return /^[1-5]$/.test(k.key); });
+  var iKeys = downs.filter(function (k) { return /^[iI]$/.test(k.key); });
   if (g.view !== "3d") {
-    expect(g.gallery === null && g.looks === null && g.likes === null && g.render === null,
-      where + ": no paintings, likes or sharpness in 2D");
-    expect(lKeys.every(function (k) { return k.outcome === "ignored: no likes" || /^ignored/.test(k.outcome); }),
-      where + ": L does nothing in 2D");
+    expect(g.gallery === null && g.looks === null && g.ratings === null && g.infos === null && g.render === null,
+      where + ": no paintings, ratings, info cards or sharpness in 2D");
+    expect(rKeys.concat(iKeys).every(function (k) { return /^ignored/.test(k.outcome); }),
+      where + ": 1 to 5 and I do nothing in 2D");
     return;
   }
   var M = Wd.build(g.layout.maze), places = Wd.paintingPlaces(M);
@@ -1005,36 +1013,53 @@ function checkPaintings(where, f) {
   });
   expect(sameAsSeed === places.list.length, where + ": the paintings hung as the seed says (" + sameAsSeed + " of " +
     places.list.length + ")");
-  expect(g.gallery.source === (real ? "paintings" : "landscapes") && g.gallery.likes === (real && s.likes),
+  expect(g.gallery.source === (real ? "paintings" : "landscapes") && g.gallery.ratings === (real && s.ratings),
     where + ": gallery source " + g.gallery.source);
   if (real && places.list.length <= FGg.art.count()) {
     expect(Object.keys(ids).length === places.list.length, where + ": every wall another painting");
   }
-  // likes: each a change of its place, by L or a click on its plaque
-  var liked = {}, byL = 0, byClick = 0, last = -Infinity;
-  (g.likes || []).forEach(function (lk, i) {
-    expect(lk.place >= 0 && lk.place < places.list.length && lk.painting === g.gallery.places[lk.place].painting,
-      where + ": like " + i + " of place " + lk.place);
-    liked[lk.place] = !liked[lk.place];
-    expect(lk.liked === liked[lk.place], where + ": like " + i + " liked " + lk.liked);
-    expect(lk.t >= last && (lk.by === "L" || lk.by === "click"), where + ": like " + i + " at " + lk.t + " by " + lk.by);
-    last = lk.t;
-    if (lk.by === "L") {
-      byL += 1;
-    } else {
+  // ratings: each a change of its place, by a key or a click on a star; the
+  // same rating again takes it back
+  var stars = {}, byKey = 0, byClick = 0, last = -Infinity;
+  (g.ratings || []).forEach(function (rt, i) {
+    expect(rt.place >= 0 && rt.place < places.list.length && rt.painting === g.gallery.places[rt.place].painting,
+      where + ": rating " + i + " of place " + rt.place);
+    var was = stars[rt.place] || 0;
+    expect(rt.before === was && rt.stars >= 0 && rt.stars <= 5, where + ": rating " + i + " " + was + " -> " + rt.stars);
+    var n = /^[1-5]$/.test(rt.by) ? Number(rt.by) : null;
+    if (n !== null) {
+      expect(rt.stars === (was === n ? 0 : n), where + ": rating " + i + " by key " + rt.by + " gave " + rt.stars);
+    }
+    stars[rt.place] = rt.stars;
+    expect(rt.t >= last && (/^[1-5]$/.test(rt.by) || rt.by === "click" || rt.by === "card"), where + ": rating " + i + " at " + rt.t +
+      " by " + rt.by);
+    last = rt.t;
+    if (rt.by === "click" || rt.by === "card") {
       byClick += 1;
+    } else {
+      byKey += 1;
     }
   });
-  var lOutcomes = lKeys.filter(function (k) { return k.outcome === "like" || k.outcome === "unlike"; }).length;
-  expect(lOutcomes === byL, where + ": " + lOutcomes + " L keys that liked, " + byL + " likes by L");
-  var clickLikes = (g.clicks || []).filter(function (c) { return c.outcome === "like" || c.outcome === "unlike"; }).length;
-  expect(clickLikes === byClick, where + ": " + clickLikes + " clicks that liked, " + byClick + " likes by a click");
+  var keyRatings = rKeys.filter(function (k) { return /^rat/.test(k.outcome || ""); }).length;
+  expect(keyRatings === byKey, where + ": " + keyRatings + " keys that rated, " + byKey + " ratings by a key");
+  var clickRatings = (g.clicks || []).filter(function (c) { return /^rat/.test(c.outcome || ""); }).length;
+  expect(clickRatings === byClick, where + ": " + clickRatings + " clicks that rated, " + byClick + " ratings by a click");
+  // info cards: each closed, by a key, its button, a click beside it, the exit or the end
+  (g.infos || []).forEach(function (o, i) {
+    expect(o.place >= 0 && o.place < places.list.length && o.painting === g.gallery.places[o.place].painting &&
+      (o.by === "I" || o.by === "click") && o.closed_at >= o.opened_at &&
+      ["key", "Escape", "button", "click outside", "exit", "game over"].indexOf(o.closed_by) >= 0 &&
+      Math.abs(o.ms - (o.closed_at - o.opened_at)) < 1, where + ": info card " + i + " " + JSON.stringify(o));
+    // the game paused: no step while it was open
+    var during = g.steps.filter(function (st) { return st.entered_at > o.opened_at + 5 && st.entered_at < o.closed_at - 5; });
+    expect(during.length === 0, where + ": info card " + i + ": " + during.length + " steps while it was open");
+  });
   // looking: as long as the track says, roughly
   var looks = g.looks || [];
   var lookMs = 0;
   looks.forEach(function (o, i) {
     expect(o.place >= 0 && o.place < places.list.length && o.painting === g.gallery.places[o.place].painting &&
-      o.look_ms >= 0 && o.seen_ms >= 0 && (o.look_ms > 0) === (o.looks > 0) && o.liked === !!liked[o.place],
+      o.look_ms >= 0 && o.seen_ms >= 0 && (o.look_ms > 0) === (o.looks > 0) && o.stars === (stars[o.place] || 0),
       where + ": looks " + i + " " + JSON.stringify(o));
     lookMs += o.look_ms;
   });
@@ -1583,7 +1608,7 @@ function checkSaved(folder) {
   en3.forEach(function (n) {
     var g = checkGameFile(n, env3.files[n]);
     var envOf = globalThis.FG.MAZES[g.maze].environment;
-    expect(envOf && g.food_kinds.patch === "cheese" && g.food_kinds.small === "bread", n + ": cheese and bread");
+    expect(envOf && g.food_kinds.patch === "pizza" && g.food_kinds.small === "apples", n + ": pizza and apples");
   });
   save("environments", env3.files);
   await env3.context.close();
@@ -1717,8 +1742,8 @@ function checkSaved(folder) {
   await sleep(150);
   ch = await edChecks(ed);
   expect(await ed.inputValue("#edName") === "test_loop" && ch[0] === "ok: 18 rooms, all reachable from each other" &&
-    ch.indexOf("info: Start: s00") >= 0 && ch.indexOf("info: Cheese room (worth 8): s34") >= 0 &&
-    ch.indexOf("info: Bread room (worth 1): s22") >= 0 && ch.indexOf("ok: Name: test_loop") >= 0,
+    ch.indexOf("info: Start: s00") >= 0 && ch.indexOf("info: Pizza room (worth 8): s34") >= 0 &&
+    ch.indexOf("info: Apple room (worth 1): s22") >= 0 && ch.indexOf("ok: Name: test_loop") >= 0,
     "team_mazes: the checks of the drawing " + JSON.stringify(ch));
   // a try in 3D, left with Escape
   await ed.click("#edTry3d");
@@ -1946,14 +1971,14 @@ function checkSaved(folder) {
   // 13. the characters: chosen on their page (WebGL), each in 3D behind or
   // through its eyes, or in 2D, C back to the page between the games
   var cs = await session("characters", "?test=1&condition=linear_fast&set.steps=5&gl=1", [
-    {view: "3d_behind", maze: "grid_4x4", character: "man"}, {view: "3d", maze: "grid_4x4", character: "woman"},
+    {view: "3d_behind", maze: "grid_4x4", character: "girl"}, {view: "3d", maze: "grid_4x4", character: "boy"},
     {view: "3d_behind", maze: "grid_4x4", character: "dog"}, {view: "2d", maze: "grid_4x4", character: "woman"},
-    {view: "3d_behind", maze: "grid_4x4", character: "robot"}, {view: "2d", maze: "grid_4x4", character: "knight"},
+    {view: "3d_behind", maze: "grid_4x4", character: "robot"}, {view: "2d", maze: "grid_4x4", character: "man"},
     {view: "3d_behind", maze: "grid_4x4", character: "mouse"}
   ], {seed: 41});
   var csn = gameFiles(cs.files);
   csn.forEach(function (n) { checkGameFile(n, cs.files[n]); });
-  var want7 = ["man", "woman", "dog", "woman", "robot", "knight", "mouse"];
+  var want7 = ["girl", "boy", "dog", "woman", "robot", "man", "mouse"];
   expect(csn.length === 7 && csn.every(function (n, i) {
     var f = cs.files[n];
     return f.character.name === want7[i] && f.character.how === "chosen" && f.character.choices.length === 1 &&
@@ -1970,17 +1995,18 @@ function checkSaved(folder) {
           i === 6 ? c.back_tiles_per_s === 2.5 : c.back_tiles_per_s === c.first_tiles_per_s);
     }), "characters: all at the mouse's speed, a walk first, backwards a walk; the dog behind it, the woman in 2D " +
     JSON.stringify(c3.map(function (c) { return [c.walk_tiles_per_s, c.first_tiles_per_s, c.back_tiles_per_s]; })));
-  // steps as long as the clips', longer as the characters go faster than a person: a run of 1 to 3.5 metres a step
+  // steps as long as the clips', longer as the characters go faster than a person: a run of 0.4 to 4.2
+  // metres of the floor a step (from 2.8.0 a sprint's steps, about 4 a second at the mouse's speed)
   csn.slice(0, 6).forEach(function (n) {
     var c = cs.files[n].game.controls, st = c.step_tiles * (cs.files[n].game.view === "3d" ? CH_TILE : 1);
     expect(c.step_tiles > 0 && c.tap_tiles > 0 && c.tap_tiles < c.step_tiles &&
-      (cs.files[n].game.view !== "3d" || (st > 0.4 && st < 3.6)),
+      (cs.files[n].game.view !== "3d" || (st > 0.4 && st < 4.2)),
       "characters: " + cs.files[n].character.name + " step " + c.step_tiles + " tiles, a short press " + c.tap_tiles);
   });
   // backwards a character only walks: no run at any speed
   var backs = await cs.page.evaluate(async function () {
     var CH = window.FG.characters, out = {};
-    for (var name of ["man", "woman", "dog", "robot", "knight"]) {
+    for (var name of ["girl", "boy", "woman", "man", "dog", "robot"]) {
       var m = await CH.load(name), fig = {phase: 1, move: 1, t: 0, eat: false, turn: 0, back: true};
       m.state.t = null;
       m.pose(fig);
@@ -1993,7 +2019,7 @@ function checkSaved(folder) {
   // eating standing still: the eat clip comes in, and goes once the bites stop
   var eats = await cs.page.evaluate(async function () {
     var CH = window.FG.characters, out = {};
-    for (var name of ["man", "woman", "dog", "robot", "knight"]) {
+    for (var name of ["girl", "boy", "woman", "man", "dog", "robot"]) {
       var m = await CH.load(name), fig = {phase: 0, move: 0, t: 0, eat: false, turn: 0, back: false}, w = [];
       m.state.t = null;
       for (var k = 0; k <= 90; k++) {
@@ -2015,14 +2041,14 @@ function checkSaved(folder) {
   save("characters", cs.files);
   await cs.context.close();
   // a picture below level 0 (drawn into a buffer and spread over the canvas, which keeps its size):
-  // the knight behind it, and the maze
+  // the man behind him, and the maze
   var lv = await session("characters_level", "?test=1&condition=linear_fast&set.steps=5&gl=1&level=3", [
-    {view: "3d_behind", maze: "grid_4x4", character: "knight"}], {seed: 44});
+    {view: "3d_behind", maze: "grid_4x4", character: "man"}], {seed: 44});
   var lvn = gameFiles(lv.files);
   lvn.forEach(function (n) { checkGameFile(n, lv.files[n]); });
   var lrd = lvn.length ? lv.files[lvn[0]].game.render : null;
   expect(lrd && lrd.fixed_level === 3 && lrd.level === 3 && lrd.width < lrd.screen.width &&
-    lv.files[lvn[0]].character.name === "knight", "characters_level: the knight at level 3 " + JSON.stringify(lrd && {
+    lv.files[lvn[0]].character.name === "man", "characters_level: the man at level 3 " + JSON.stringify(lrd && {
       fixed: lrd.fixed_level, level: lrd.level, width: lrd.width, screen: lrd.screen}));
   var canvasW = await lv.page.evaluate(function () { return document.getElementById("c3d").width; });
   expect(lrd && canvasW === lrd.screen.width, "characters_level: the canvas keeps the screen's pixels, " + canvasW);
@@ -2036,11 +2062,11 @@ function checkSaved(folder) {
     JSON.stringify(ncn.length && nc.files[ncn[0]].character));
   ncn.forEach(function (n) { checkGameFile(n, nc.files[n]); });
   await nc.context.close();
-  var kn = await session("knight_no_webgl", "?test=1&condition=linear_fast&set.steps=5&gl=0&set.player=knight", [
+  var kn = await session("man_no_webgl", "?test=1&condition=linear_fast&set.steps=5&gl=0&set.player=man", [
     {view: "3d_behind", maze: "grid_4x4"}], {seed: 43});
   var knn = gameFiles(kn.files);
   expect(knn.length === 1 && kn.files[knn[0]].character.name === "mouse" &&
-    /no WebGL/.test(kn.files[knn[0]].character.fallback || ""), "knight_no_webgl: the mouse instead, and why " +
+    /no WebGL/.test(kn.files[knn[0]].character.fallback || ""), "man_no_webgl: the mouse instead, and why " +
     JSON.stringify(knn.length && kn.files[knn[0]].character));
   knn.forEach(function (n) { checkGameFile(n, kn.files[n]); });
   await kn.context.close();
@@ -2078,8 +2104,10 @@ function checkSaved(folder) {
 
   }
   if (want("paintings")) {
-  // 12. the paintings: a painting looked at and liked with L, then L again
-  // and again while standing (the stays go on), a plaque clicked
+  // 12. the paintings: a painting looked at and rated with 3, then 3 again
+  // and again while standing (the stays go on), a star clicked; its info card
+  // by I (the game paused: no stays), closed by a key, and by a click on its
+  // button, closed by the card's button
   // (a smaller window: WebGL by the processor is slow; standing while turning
   // to a painting must not starve the player)
   var pc = await browser.newContext({viewport: {width: 960, height: 640}});
@@ -2103,21 +2131,62 @@ function checkSaved(folder) {
     looked = w1 && w2 && w1.look !== null && w1.look === w2.look ? w2 : null;
   }
   expect(looked, "paintings: a painting in the middle of the view");
-  await pp.keyboard.press("l");
+  await pp.keyboard.press("3");
   await sleep(300);
   var before = (await keptGame(pp)).steps.length;
   for (var li = 0; li < 12; li++) {
-    await pp.keyboard.press("l");
+    await pp.keyboard.press("3");
     await sleep(260);
   }
   var standing = (await keptGame(pp)).steps.slice(before).filter(function (st) { return st.by === "idle"; }).length;
-  expect(standing >= 2, "paintings: L pressed while standing, still " + standing + " idle stays in 3.4 s");
-  var plaque = await findPointer(pp, "c3d", 0.05, 0.95, 0.2, 0.7);
-  expect(plaque, "paintings: a plaque to click");
-  if (plaque) {
-    await pp.mouse.click(plaque.x, plaque.y);
+  expect(standing >= 2, "paintings: 3 pressed while standing, still " + standing + " idle stays in 3.4 s");
+  // the info card by I: no stays while it is open, any key closes it
+  var beforeCard = (await keptGame(pp)).steps.length;
+  await pp.keyboard.press("i");
+  await sleep(300);
+  expect((await ui(pp)).card, "paintings: I opens the info card");
+  await sleep(2600);
+  expect((await keptGame(pp)).steps.length === beforeCard, "paintings: no stay while the info card is open");
+  await pp.keyboard.press("x");
+  await sleep(300);
+  expect(!(await ui(pp)).card, "paintings: a key closes the info card");
+  // a star and the info button, clicked: what is under the pointer decides;
+  // the first found, then the other on the other side of the painting
+  var seen = {}, box = await pp.locator("#c3d").boundingBox();
+  async function clickSpot(spot) {
+    await pp.mouse.click(spot.x, spot.y);
     await sleep(300);
+    var lastClick = (await keptGame(pp)).clicks.slice(-1)[0];
+    if (lastClick && /^rat/.test(lastClick.outcome)) {
+      seen.star = true;
+    } else if (lastClick && lastClick.outcome === "info open") {
+      seen.info = true;
+      expect((await ui(pp)).card, "paintings: a click on the info button opens the card");
+      await pp.click("#icClose");
+      await sleep(300);
+      expect(!(await ui(pp)).card, "paintings: the card's button closes it");
+    }
   }
+  // the plate and the button under it are left of the painting: the first
+  // found is a star (the plate is higher), the button is below it
+  var spot1 = await findPointer(pp, "c3d", 0.03, 0.97, 0.2, 0.7);
+  if (spot1) {
+    await clickSpot(spot1);
+    var fx = (spot1.x - box.x) / box.width, fy = (spot1.y - box.y) / box.height;
+    var spot2 = null;
+    for (var dy = 0.03; dy <= 0.3 && !seen.info; dy += 0.02) {
+      for (var dx = -0.04; dx <= 0.3 && !seen.info; dx += 0.015) {
+        var px = box.x + (fx + dx) * box.width, py = box.y + (fy + dy) * box.height;
+        await pp.mouse.move(px, py);
+        var cur = await pp.evaluate(function () { return document.getElementById("c3d").style.cursor; });
+        if (cur === "pointer") {
+          spot2 = {x: px, y: py};
+          await clickSpot(spot2);
+        }
+      }
+    }
+  }
+  expect(seen.star && seen.info, "paintings: a star and an info button clicked " + JSON.stringify(seen));
   var pg0 = await keptGame(pp);
   var legal0 = pg0.steps[pg0.steps.length - 1].legal.filter(function (m) { return m !== "STAY"; })[0];
   for (var mi = 0; mi < 6 && !(await ui(pp)).end; mi++) {
@@ -2129,11 +2198,15 @@ function checkSaved(folder) {
   if (expect(pn.length === 1, "paintings: 1 game file, got " + Object.keys(pfiles).join(" "))) {
     var pgf = pfiles[pn[0]].game;
     checkGameFile(pn[0], pfiles[pn[0]]);
-    var byKey = pgf.likes.filter(function (l) { return l.by === "L"; }).length;
-    var byClick = pgf.likes.filter(function (l) { return l.by === "click"; }).length;
-    expect(byKey >= 12 && byClick === 1, "paintings: likes by L " + byKey + ", by a click " + byClick);
+    var byKey = pgf.ratings.filter(function (l) { return l.by === "3"; }).length;
+    var byClick = pgf.ratings.filter(function (l) { return l.by === "click"; }).length;
+    expect(byKey >= 12 && byClick >= 1, "paintings: ratings by 3 " + byKey + ", by a click " + byClick);
+    expect(pgf.infos.length >= 2 && pgf.infos[0].by === "I" && pgf.infos[0].closed_by === "key" &&
+      pgf.infos[0].ms >= 2500 && pgf.infos.some(function (o) { return o.by === "click" && o.closed_by === "button"; }),
+      "paintings: info cards " + JSON.stringify(pgf.infos));
     expect(pgf.looks.some(function (o) { return o.look_ms > 1000; }), "paintings: a painting looked at for a second or more");
-    notes.push("paintings: " + pgf.looks.length + " paintings seen, " + pgf.likes.length + " likes, sharpness level " +
+    notes.push("paintings: " + pgf.looks.length + " paintings seen, " + pgf.ratings.length + " ratings, " +
+      pgf.infos.length + " info cards, sharpness level " +
       pgf.render.level + " (" + pgf.render.width + " x " + pgf.render.height + "), " + pgf.render.changes.length +
       " changes, drawing " + pgf.render.draw_ms.median + " ms");
   }
@@ -2152,8 +2225,9 @@ function checkSaved(folder) {
     var merr = [], mfiles = {};
     mp.on("pageerror", function (e) { merr.push(String(e)); });
     await pipe(mp, mfiles, {value: "ok"}, 0);
-    // no plaques: only the gramophone can be clicked
-    await mp.goto(base + "?test=1&condition=linear_fast&set.steps=40&set.stomach.start=20&set.likes=false&gl=1");
+    // no plates: only the gramophone can be clicked
+    await mp.goto(base + "?test=1&condition=linear_fast&set.steps=40&set.stomach.start=20&set.ratings=false" +
+      "&set.painting_info=false&gl=1");
     await choose(mp, view, "grid_4x4");
     await sleep(1200);
     var mg = await keptGame(mp);
@@ -2234,6 +2308,53 @@ function checkSaved(folder) {
     save("music_" + view, mfiles);
     await mc.close();
   }
+
+  }
+  if (want("exit")) {
+  // 14. Exit: Escape in a 2D game and the Exit button in a 3D game end the
+  // game at once (ended exited), saved and sent, back to the first page;
+  // Exit on the first page ends the session with a file of its own
+  var xc = await browser.newContext({viewport: {width: 1100, height: 720}});
+  var xp = await xc.newPage();
+  var xerr = [], xfiles = {};
+  xp.on("pageerror", function (e) { xerr.push(String(e)); });
+  await pipe(xp, xfiles, {value: "ok"}, 0);
+  await xp.goto(base + "?test=1&condition=linear_fast&gl=1");
+  await choose(xp, "2d", "grid_4x4");
+  await sleep(1200);
+  expect((await ui(xp)).exitBtn, "exit: the Exit button shows in a game");
+  await walk2d(xp, (await keptGame(xp)).steps[0].legal.filter(function (m) { return m !== "STAY"; })[0]);
+  await xp.keyboard.press("Escape");
+  await waitFor(xp, async function () { return (await ui(xp)).menu; }, 6000);
+  expect((await ui(xp)).menu && !(await ui(xp)).end && !(await ui(xp)).exitBtn, "exit: Escape goes to the first page");
+  await sleep(800);
+  await choose(xp, "3d", "grid_4x4");
+  await sleep(1500);
+  await xp.click("#exitBtn");
+  await waitFor(xp, async function () { return (await ui(xp)).menu; }, 6000);
+  await sleep(800);
+  // the first page: Play by a click, then Exit
+  await xp.click("#menuExit");
+  await waitFor(xp, async function () { return (await ui(xp)).message; }, 6000);
+  await sleep(1500);
+  var xn = gameFiles(xfiles);
+  if (expect(xn.length === 2, "exit: 2 game files, got " + Object.keys(xfiles).join(" "))) {
+    var x1 = xfiles[xn[0]].game, x2 = xfiles[xn[1]].game;
+    checkGameFile(xn[0], xfiles[xn[0]]);
+    checkGameFile(xn[1], xfiles[xn[1]]);
+    expect(x1.ended.how === "exited" && x1.ended.by === "Escape" && x1.ended.moves >= 1,
+      "exit: game 1 left by Escape " + JSON.stringify(x1.ended));
+    expect(x2.ended.how === "exited" && x2.ended.by === "button" && x2.exit_button.length === 1,
+      "exit: game 2 left by the button " + JSON.stringify(x2.ended));
+  }
+  var bye = Object.keys(xfiles).filter(function (n) { return /_exit\.json$/.test(n); });
+  expect(bye.length === 1 && xfiles[bye[0]].file === "exit" && xfiles[bye[0]].games === 2 &&
+    xfiles[bye[0]].menu.actions.some(function (a) { return a.on === "exit"; }),
+    "exit: the first page's Exit sends a file of its own: " + bye.join(" "));
+  expect((await ui(xp)).msg.indexOf("Thank you") >= 0, "exit: the goodbye page");
+  expect(xerr.length === 0, "exit: page errors " + JSON.stringify(xerr));
+  save("exit", xfiles);
+  await xc.close();
 
   }
   if (want("file")) {

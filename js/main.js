@@ -27,7 +27,7 @@
   var FG = root.FG = root.FG || {};
   var REC = FG.recorder, Wd = FG.world;
 
-  FG.VERSION = "2.7.1";
+  FG.VERSION = "2.8.0";
   var FORMAT = "foraging-game";
   var FORMAT_VERSION = 9;
   var TRIAL_TYPE = "foraging-game";
@@ -209,6 +209,35 @@
     if (test) {
       $("test-banner").hidden = false;
     }
+    // nothing is sent (send=0, the demo): the files the game would have sent
+    // can be downloaded, as a zip, between games
+    if (!send && FG.zipfile) {
+      $("testFiles").addEventListener("mousedown", function (e) { e.preventDefault(); });
+      $("testFiles").addEventListener("click", function () {
+        var files = (root.FG_SENT || []).map(function (x) {
+          return {name: x.filename, bytes: JSON.stringify(x.data, null, 1)};
+        });
+        if (!files.length) {
+          $("testFiles").textContent = "Nothing recorded yet: play a game first";
+          root.setTimeout(function () { $("testFiles").textContent = "Download the recorded files"; }, 2500);
+          return;
+        }
+        FG.zipfile.write(files).then(function (bytes) {
+          var url = URL.createObjectURL(new Blob([bytes], {type: "application/zip"}));
+          var a = document.createElement("a");
+          a.href = url;
+          a.download = "food-rooms-" + session.session_id + ".zip";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          root.setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+        });
+      });
+      var showFiles = function () {
+        $("testFiles").hidden = playing || !(root.FG_SENT && root.FG_SENT.length);
+      };
+      root.setInterval(showFiles, 700);
+    }
     FG.datapipe.flush();
 
     // the 3D view drawn by the graphics card, unless the link says ?gl=0 (or
@@ -304,20 +333,26 @@
         var places = Wd.paintingPlaces(M);
         var real = all.game.paintings && FG.art.count() > 0;
         previews[M.name] = {pics: FG.art.hang(places.list, FG.random.make(7), real),
-          liked: new Uint8Array(places.list.length), likes: real && all.game.likes};
+          stars: new Uint8Array(places.list.length), ratings: real && all.game.ratings,
+          info: real && all.game.painting_info && !!FG.PAINTING_INFO};
       }
       var gal = previews[M.name], here = M.index[Wd.key(start)];
       FG.art.want([0, 1, 2, 3].map(function (sd) { return {p: gal.pics[here * 4 + sd], size: "small"}; }));
       return gal;
     }
 
-    /* The keys under the game: without L when no paintings can be liked. */
+    /* The keys under the game: the paintings' keys only when they can be
+     * rated or looked up; Esc to exit. */
     function keysText(v, settings) {
       var t = text("keys_" + v);
-      if (v === "3d" && !(settings.paintings && settings.likes && FG.art && FG.art.count())) {
-        t = t.replace(/\s*&middot;\s*<kbd>L<\/kbd>\s*like/, "");
+      var real = v === "3d" && settings.paintings && FG.art && FG.art.count();
+      if (real && settings.ratings) {
+        t += " &middot; " + text("keys_rate");
       }
-      return t;
+      if (real && settings.painting_info && FG.PAINTING_INFO) {
+        t += " &middot; " + text("keys_info");
+      }
+      return t + " &middot; " + text("keys_exit");
     }
 
     function header(kind) {
@@ -365,22 +400,19 @@
     };
 
     function buildMenu() {
-      if (FG.art) {
-        FG.art.setLabels(text("like") || "Like", text("liked") || "Liked");
-      }
       $("title").textContent = text("title");
       $("intro").textContent = text("intro");
       $("fullSign").textContent = text("full_sign");
       $("menuKeys").innerHTML = text("menu_keys");
       $("views").innerHTML = all.menu.views.map(function (v) {
-        return '<div class="card"><div class="card-size">' + viewOf(v).toUpperCase() + '</div>' +
+        return '<div class="card" data-row="0"><div class="card-size">' + viewOf(v).toUpperCase() + '</div>' +
           '<div class="card-meta">' + text("view_" + v) + '</div></div>';
       }).join("");
       $("views").className = "grid" + (all.menu.views.length === 2 ? " two" : "");
       $("mazes").innerHTML = all.menu.mazes.map(function (m, k) {
         var t = mazeText(m), team = FG.MAZES[m].team;
         var by = edit && team && team.saved_by ? " &middot; " + escape(team.saved_by) : "";
-        return '<div class="card"><div class="card-size">' + t[0] + '</div>' +
+        return '<div class="card" data-row="1"><div class="card-size">' + t[0] + '</div>' +
           '<div class="card-meta">' + t[1] + by + '</div><div class="card-meta">' +
           (k < 9 ? '<kbd>' + (k + 1) + '</kbd>' : "&nbsp;") + '</div></div>';
       }).join("") + (edit ? '<div class="card new" id="newMaze"><div class="card-size">+ New maze</div>' +
@@ -398,6 +430,37 @@
         }).join("<br>");
       }
     }
+
+    // the first page with the mouse: a click on a view or a maze chooses it,
+    // a click on the one chosen, or on Play, plays (menuClick: while the
+    // page waits for the player)
+    var menuClick = null;
+    [["views", 0], ["mazes", 1]].forEach(function (rw) {
+      $(rw[0]).addEventListener("click", function (e) {
+        var card = e.target.closest ? e.target.closest(".card[data-row]") : null;
+        if (!card || !menuClick) {
+          return;
+        }
+        var k = Array.prototype.indexOf.call($(rw[0]).children, card);
+        menuClick(rw[1] === 0 ? "view" : "maze", k);
+      });
+    });
+    $("play").addEventListener("click", function () {
+      if (menuClick) {
+        menuClick("play", null);
+      }
+    });
+    $("menuExit").addEventListener("click", function () {
+      if (menuClick) {
+        menuClick("exit", null);
+      }
+    });
+    $("exitBtn").addEventListener("mousedown", function (e) { e.preventDefault(); });
+    $("exitBtn").addEventListener("click", function (e) {
+      e.preventDefault();
+      $("exitBtn").blur();
+      FG.game.exit("button");
+    });
 
     var toEditor = null;          // while the first page is shown in edit mode: opens the editor
     function drawMenu() {
@@ -425,12 +488,61 @@
             return false;
           }
           toEditor = null;
+          menuClick = null;
           REC.listen(null);
           resolve({editor: true});
           return true;
         } : null;
+        function play(t) {
+          toEditor = null;
+          menuClick = null;
+          REC.listen(null);
+          rec.chosen_at = t;
+          rec.view = all.menu.views[choice.view];
+          rec.maze = all.menu.mazes[choice.maze];
+          rec.character = character.name;
+          resolve(rec);
+        }
         REC.shown().then(function (at) {
           rec.shown_at = at;
+          menuClick = function (kind, k) {
+            var t = REC.now();
+            var act = {t: t, key: "click", on: kind, row: null, view: null, maze: null, outcome: null};
+            rec.actions.push(act);
+            if (t - at < MENU_GUARD_MS) {
+              act.outcome = "ignored: too soon";
+            } else if (kind === "exit") {
+              act.outcome = "exit";
+              menuClick = null;
+              toEditor = null;
+              REC.listen(null);
+              resolve({exit: true, rec: rec});
+              return;
+            } else if (kind === "play" || (kind === "view" && k === choice.view && choice.row === 0) ||
+                (kind === "maze" && k === choice.maze && choice.row === 1)) {
+              act.outcome = ready ? "play" : "ignored: not ready";
+              if (ready) {
+                act.view = all.menu.views[choice.view];
+                act.maze = all.menu.mazes[choice.maze];
+                play(t);
+                return;
+              }
+            } else if (kind === "view" && k >= 0 && k < all.menu.views.length) {
+              choice.view = k;
+              choice.row = 0;
+              act.outcome = "view";
+            } else if (kind === "maze" && k >= 0 && k < all.menu.mazes.length) {
+              choice.maze = k;
+              choice.row = 1;
+              act.outcome = "maze";
+            } else {
+              act.outcome = "ignored";
+            }
+            act.row = choice.row === 0 ? "view" : "maze";
+            act.view = all.menu.views[choice.view];
+            act.maze = all.menu.mazes[choice.maze];
+            drawMenu();
+          };
           REC.listen(function (e, entry) {
             if (e.type !== "keydown") {
               return undefined;
@@ -449,6 +561,7 @@
             }
             if ((e.key === "c" || e.key === "C") && canChoose) {
               toEditor = null;
+              menuClick = null;
               REC.listen(null);
               resolve({characters: true});
               return "characters";
@@ -475,13 +588,7 @@
               if (!ready) {
                 return "ignored: not ready";
               }
-              toEditor = null;
-              REC.listen(null);
-              rec.chosen_at = entry.t;
-              rec.view = all.menu.views[choice.view];
-              rec.maze = all.menu.mazes[choice.maze];
-              rec.character = character.name;
-              resolve(rec);
+              play(entry.t);
               return "play";
             } else {
               return "ignored: key";
@@ -511,6 +618,7 @@
       $("hud").hidden = false;
       $("gameKeys").innerHTML = keysText(viewOf(menuRec.view), settings);
       $("gameKeys").hidden = false;
+      $("exitBtn").hidden = !!trial;
       playing = true;
 
       var who = {name: character.name, how: character.how, fallback: character.fallback, choices: choices};
@@ -579,6 +687,7 @@
       }
       return FG.game.play(g).then(function (rec) {
         playing = false;
+        $("exitBtn").hidden = true;
         if (trial) {
           // nothing of a try goes into the next game's file
           mark = REC.mark();
@@ -593,6 +702,14 @@
         soundMark = FG.sound ? FG.sound.log.length : 0;
         if (!send) {
           root.console.log("send=0: game " + n, root.FG_SENT[root.FG_SENT.length - 1]);
+        }
+        if (rec.ended.how === "exited") {
+          // Exit: straight back to the first page; the game is saved as any other
+          $("hud").hidden = true;
+          $("gameKeys").hidden = true;
+          status("saving");
+          saving.then(function (r) { status(r); });
+          return null;
         }
         return endOfGame(rec, saving);
       });
@@ -713,8 +830,34 @@
 
     function loop() {
       return menu().then(function (r) {
+        if (r.exit) {
+          return goodbye(r.rec);
+        }
         return r.editor ? editor() : r.characters ? who() : modelReady().then(function () { return playGame(r); });
-      }).then(loop);
+      }).then(function (r) {
+        return r === "gone" ? null : loop();
+      });
+    }
+
+    /* Exit on the first page: the session ends. What is not sent yet is
+     * sent; a file says when and how the player left. */
+    function goodbye(menuRec) {
+      var f = header("exit");
+      f.menu = menuRec;
+      f.games = games;
+      f.exited_at = REC.now();
+      f.keys = REC.since(mark).keys;
+      var saving = FG.datapipe.save(fileName("exit"), f);
+      REC.setPhase("exit");
+      message(text("bye_title"), escape(text("bye_body")) + '<br><span class="small" id="byeStatus">' +
+        escape(text("saving")) + "</span>");
+      saving.then(function (r) {
+        var el = $("byeStatus");
+        if (el) {
+          el.textContent = r.ok ? text("saved") : text(FG.datapipe.state().kept ? "not_saved" : "not_saved_open");
+        }
+      });
+      return Promise.resolve("gone");
     }
 
     /* The model of the character, in before the game starts ("loading"
@@ -961,6 +1104,14 @@
       });
     }
 
+    if (FG.food3d) {
+      // the food's 3D models: in while the first page is shown; the drawings till then
+      FG.food3d.load().then(function (ok) {
+        if (ok && FG.food) {
+          FG.food.forget();
+        }
+      });
+    }
     if (FG.art) {
       // an image of a painting behind the first page has come in
       FG.art.onLoad(function () {

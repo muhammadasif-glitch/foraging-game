@@ -689,13 +689,15 @@
     var M = scene.maze, w = this.rw, h = this.rh;
     var places = this.ensurePlaces(M);
     var gal = scene.gallery || null;
-    var dirX = Math.cos(scene.angle), dirY = Math.sin(scene.angle);
+    var dirX = Math.cos(scene.angle + (scene.turn || 0)), dirY = Math.sin(scene.angle + (scene.turn || 0));
     var fov = Math.tan(33 * Math.PI / 180) * (w / h) / (4 / 3);
     var planeX = -dirY * fov, planeY = dirX * fov;
     var sway = scene.sway || 0, eye = scene.eye || 0.5;
     // through the eyes, stepped back to see a near painting whole (scene.back)
     var stepBack = scene.back || 0;
-    var px = scene.x - dirY * sway - dirX * stepBack, py = scene.y + dirX * sway - dirY * stepBack;
+    // before a painting, the view glides in front of it and turns to it (scene.dx, dy, turn)
+    var px = scene.x + (scene.dx || 0) - dirY * sway - dirX * stepBack;
+    var py = scene.y + (scene.dy || 0) + dirX * sway - dirY * stepBack;
     var hor = (scene.horizon || 0.5) + (scene.bob || 0) + (scene.tilt || 0);
     var cam = scene.camera === "behind" ? scene.cam : null;
     if (cam) {
@@ -1063,7 +1065,7 @@
    * frames. Made anew only when something changed. */
   GLView.prototype.decals = function (scene, M, places, gal) {
     var light = scene.light, lit = scene.lit;
-    var likes = !!(gal && gal.likes);
+    var likes = !!(gal && gal.ratings), infos = !!(gal && gal.info);
     var litKey = [], i;
     for (i = 0; i < places.list.length; i++) {
       var L = light ? light[places.list[i].front] : (lit[places.list[i].front] ? 1 : 0);
@@ -1071,8 +1073,8 @@
         litKey.push(i);
       }
     }
-    var liked = gal && gal.liked ? Array.prototype.join.call(gal.liked, "") : "";
-    var key = litKey.join(",") + "|" + liked + "|" + (A.changes ? A.changes() : 0) + "|" + likes;
+    var liked = gal && gal.stars ? Array.prototype.join.call(gal.stars, "") : "";
+    var key = litKey.join(",") + "|" + liked + "|" + (A.changes ? A.changes() : 0) + "|" + likes + "|" + infos;
     if (key === this.decalKey && this.decalGallery === gal) {
       return this.decalBatches;
     }
@@ -1093,7 +1095,12 @@
     }
     var white = group("white");
     var atlasG = atlasTex ? group("atlas") : null;
-    var plaqueOff = likes ? {tex: A.plaque(false), v: []} : null, plaqueOn = likes ? {tex: A.plaque(true), v: []} : null;
+    // the rating plates, 1 batch for each rating (0 to 5 stars); the info buttons
+    var plates = [];
+    for (i = 0; likes && i <= A.STARS; i++) {
+      plates.push({tex: A.plaque(i), v: []});
+    }
+    var infoG = infos ? {tex: A.infoButton(), v: []} : null;
     litKey.forEach(function (k) {
       var place = places.list[k], pic = gal ? gal.pics[k] : -1 - (place.colour % 48), D = A.layout(pic);
       var tile = [place.front % M.W + 0.5, Math.floor(place.front / M.W) + 0.5];
@@ -1135,11 +1142,15 @@
       }
       rect(white, D.fx0, D.fx1, D.fv1, D.fv1 + SHADOW, full, [0, 0, 0], SHADOW_ALPHA);
       if (likes) {
-        rect(gal.liked && gal.liked[k] ? plaqueOn : plaqueOff, D.qx0, D.qx1, D.qv0, D.qv1, full, [1, 1, 1], 1);
+        rect(plates[gal.stars ? gal.stars[k] : 0], D.qx0, D.qx1, D.qv0, D.qv1, full, [1, 1, 1], 1);
+      }
+      if (infoG) {
+        rect(infoG, D.ix0, D.ix1, D.iv0, D.iv1, full, [1, 1, 1], 1);
       }
     });
-    if (plaqueOff) {
-      order.push(plaqueOff, plaqueOn);
+    plates.forEach(function (g) { order.push(g); });
+    if (infoG) {
+      order.push(infoG);
     }
     var all = [], batches = [];
     order.forEach(function (g) {
@@ -1154,7 +1165,7 @@
     this.decalKey = key;
     this.decalGallery = gal;
     this.decalBatches = batches;
-    this.plaqueRects = likes ? litKey : [];
+    this.plaqueRects = likes || infos ? litKey : [];
     return batches;
   };
 
@@ -1164,35 +1175,53 @@
     this.spriteHits.push({kind: e.hit, x0: e.x * sx, y0: e.y * sy, x1: (e.x + e.w) * sx, y1: (e.y + e.h) * sy, d: e.ty});
   };
 
-  /* Where each plaque in light is on the screen (device pixels). */
+  /* Where each star of each rating plate in light, and each info button,
+   * is on the screen (device pixels): {kind: "star", star (1 to 5)} or
+   * {kind: "info"}, with place and d. */
   GLView.prototype.plaqueHits = function () {
     var c = this.camera, out = [];
-    if (!c || !c.gallery || !c.gallery.likes) {
+    if (!c || !c.gallery || !(c.gallery.ratings || c.gallery.info)) {
       return out;
     }
     var W = this.W, H = this.H, rw = this.rw, rh = this.rh, sxk = W / rw, syk = H / rh;
     var inv = 1 / (c.planeX * c.dirY - c.dirX * c.planeY);
     (this.plaqueRects || []).forEach(function (k) {
       var place = c.places.list[k], D = A.layout(c.gallery.pics[k]);
-      var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, dsum = 0, ok = true;
-      [[D.qx0, D.qv0], [D.qx1, D.qv0], [D.qx1, D.qv1], [D.qx0, D.qv1]].forEach(function (p) {
-        var along = place.start + (place.flip ? 2 - p[0] : p[0]);
-        var wx = place.alongX ? along : place.wall, wy = place.alongX ? place.wall : along;
-        var dx = wx - c.px, dy = wy - c.py;
-        var tx = inv * (c.dirY * dx - c.dirX * dy), ty = inv * (-c.planeY * dx + c.planeX * dy);
-        if (ty < 0.05) {
-          ok = false;
-          return;
+      var box = function (ax0, ax1, v0, v1, o) {
+        var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, dsum = 0, ok = true;
+        [[ax0, v0], [ax1, v0], [ax1, v1], [ax0, v1]].forEach(function (p) {
+          var along = place.start + (place.flip ? 2 - p[0] : p[0]);
+          var wx = place.alongX ? along : place.wall, wy = place.alongX ? place.wall : along;
+          var dx = wx - c.px, dy = wy - c.py;
+          var tx = inv * (c.dirY * dx - c.dirX * dy), ty = inv * (-c.planeY * dx + c.planeX * dy);
+          if (ty < 0.05) {
+            ok = false;
+            return;
+          }
+          var X = (rw / 2) * (1 + tx / ty) * sxk, Y = (c.half - (1 - p[1] - c.eye) * rh / ty) * syk;
+          x0 = Math.min(x0, X);
+          x1 = Math.max(x1, X);
+          y0 = Math.min(y0, Y);
+          y1 = Math.max(y1, Y);
+          dsum += ty;
+        });
+        if (ok && x1 > 0 && x0 < W && y1 > 0 && y0 < H) {
+          o.place = k;
+          o.x0 = x0;
+          o.y0 = y0;
+          o.x1 = x1;
+          o.y1 = y1;
+          o.d = dsum / 4;
+          out.push(o);
         }
-        var X = (rw / 2) * (1 + tx / ty) * sxk, Y = (c.half - (1 - p[1] - c.eye) * rh / ty) * syk;
-        x0 = Math.min(x0, X);
-        x1 = Math.max(x1, X);
-        y0 = Math.min(y0, Y);
-        y1 = Math.max(y1, Y);
-        dsum += ty;
-      });
-      if (ok && x1 > 0 && x0 < W && y1 > 0 && y0 < H) {
-        out.push({kind: "plaque", place: k, x0: x0, y0: y0, x1: x1, y1: y1, d: dsum / 4});
+      };
+      if (c.gallery.ratings) {
+        for (var n = 1; n <= A.STARS; n++) {
+          box(D.sx[n - 1], D.sx[n], D.qv0, D.qv1, {kind: "star", star: n});
+        }
+      }
+      if (c.gallery.info) {
+        box(D.ix0, D.ix1, D.iv0, D.iv1, {kind: "info"});
       }
     });
     return out;
@@ -1260,7 +1289,8 @@
         best = h;
       }
     });
-    return best ? {kind: best.kind, place: best.place === undefined ? null : best.place, d: best.d} : null;
+    return best ? {kind: best.kind, place: best.place === undefined ? null : best.place, d: best.d,
+      star: best.star || null} : null;
   };
 
   // graphics "cards" that are programs on the processor: slower there than

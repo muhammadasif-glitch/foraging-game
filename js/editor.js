@@ -250,7 +250,7 @@
     } else {
       info.problems.forEach(function (p) { lines.push({ok: false, text: p}); });
     }
-    [["start", "Start"], ["cheese", "Cheese room (worth 8)"], ["bread", "Bread room (worth 1)"]].forEach(function (k) {
+    [["start", "Start"], ["cheese", "Pizza room (worth 8)"], ["bread", "Apple room (worth 1)"]].forEach(function (k) {
       var at = info[k[0]];
       lines.push({ok: null, text: k[1] + ": " + (at ? FG.rules.roomName(at) : "a random room each game")});
     });

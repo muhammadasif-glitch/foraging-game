@@ -24,7 +24,10 @@
   var BAD_KEYS = ["__proto__", "constructor", "prototype"];
   var FOOD_ROOM_KEYS = ["room", "worth", "start_level", "food"];
   // the foods the game can draw (js/world.js)
-  var FOODS = ["cheese", "bread"];
+  var FOODS = ["pizza", "apples", "cheese", "bread"];
+  // the room of a team's maze each food goes in: the rich room the editor
+  // drew (team.food.cheese) or the small one (team.food.bread)
+  var TEAM_SLOT = {pizza: "cheese", cheese: "cheese", apples: "bread", bread: "bread"};
 
   function plainKey(key, place) {
     if (BAD_KEYS.indexOf(key) >= 0) {
@@ -118,15 +121,15 @@
     return (FG.MAZES[name] && FG.MAZES[name].environment) || null;
   }
 
-  /* The food a food room shows: its own setting, or cheese for the room
-   * worth the most and bread for the others. */
+  /* The food a food room shows: its own setting, or pizza for the room
+   * worth the most and apples for the others (cheese and bread before 2.8.0). */
   function foodOf(s, name) {
     var f = s.food_rooms[name];
     if (f.food) {
       return f.food;
     }
     var top = Math.max.apply(null, Object.keys(s.food_rooms).map(function (n) { return s.food_rooms[n].worth; }));
-    return f.worth >= top ? "cheese" : "bread";
+    return f.worth >= top ? "pizza" : "apples";
   }
 
   function number(v, place, low, high) {
@@ -144,7 +147,7 @@
   }
 
   // who the player can be (game.player): chosen, a character, or the arrow
-  var PLAYERS = ["choose", "man", "woman", "dog", "mouse", "robot", "knight", "arrow"];
+  var PLAYERS = ["choose", "girl", "boy", "woman", "man", "dog", "mouse", "robot", "arrow"];
 
   function flag(v, place) {
     if (typeof v !== "boolean") {
@@ -199,7 +202,8 @@
     flag(s.same_speed, "same_speed");
     flag(s.voice, "voice");
     flag(s.paintings, "paintings");
-    flag(s.likes, "likes");
+    flag(s.ratings, "ratings");
+    flag(s.painting_info, "painting_info");
     flag(s.music_room, "music_room");
     number(s.idle_stay_ms, "idle_stay_ms", 200, 60000);
     oneOf(s.stomach.when_full, ["stop", "keep"], "stomach.when_full");
@@ -329,7 +333,7 @@
     names.forEach(function (n) {
       var spec = s.food_rooms[n].room;
       // a maze of the team: its cheese and bread rooms, where the editor put them
-      var drawn = team && spec === "random" ? team.food[foodOf(s, n)] || null : null;
+      var drawn = team && spec === "random" ? team.food[TEAM_SLOT[foodOf(s, n)]] || null : null;
       var r = given[n] || (spec === "environment" ? environment(s.maze).food_rooms[n].room :
         spec !== "random" ? spec : drawn);
       if (r) {

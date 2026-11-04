@@ -1,5 +1,81 @@
 # Changes
 
+## 2.8.0
+
+- The paintings are rated with 5 stars instead of liked. A brass plate with
+  5 stars hangs left of every painting (`game.ratings`): the keys 1 to 5 rate
+  the painting in the middle of the view, a click on a star rates the
+  painting of that plate, and the same rating again takes it back (0 stars).
+  Every rating is recorded (`ratings`: the time, the step, the painting, its
+  stars before and after, by which key or click, how far away); `looks`
+  gives each painting's stars at the end. Files of 2.7.1 and before keep
+  their likes, and the team's data page reads both.
+- An info button hangs under the plate (`game.painting_info`): I, or a click
+  on it, opens the painting's card, laid out as a museum's wall label: the
+  painter and the life dates, the title in italics with its date, the
+  movement, the genre and the collection, and a few sentences of the
+  painting's Wikipedia article (or of its painter's, when the painting has
+  none; it says which). The painting can be rated on the card too. The game
+  pauses while the card is open: no stays, no walking, looking not counted;
+  any key, its close button or a click beside it closes it, and the game goes
+  on. Every card is recorded (`infos`: opened and closed when, by what, for
+  how long). The texts are in `js/painting_info.js`, made from Wikidata and
+  Wikipedia by `check/media/get_painting_info.py` and
+  `check/media/make_painting_info.py`: a painting is found by its own
+  Wikimedia Commons file, or by its painter and title, never by its title
+  alone.
+- Standing before a painting (3D, through the eyes), the view glides in
+  front of it and turns to face it, so that the painting, its stars and its
+  button fill the screen; walking or turning brings it back. Only the view
+  moves; the track records how far it glided and turned (`view_dx`,
+  `view_dy`, `view_turn`). The plates are drawn twice as sharp as the Like
+  plaques were; the paintings at their own 1600 pixels as before.
+- Exit: Escape or the Exit button (top right) ends a game at once and goes
+  back to the first page, with no question; the game is saved and sent as
+  any other, `ended.how` "exited" and `ended.by` "Escape" or "button". Exit on
+  the first page ends the visit: a file of its own (`_exit.json`) says when,
+  and a page thanks the player. In a try of the editor Escape still goes back
+  to the editor.
+- The first page works with the mouse too: a click on a view or a maze
+  chooses it, a click on the one chosen or on Play plays; every click is
+  recorded with the keys (`menu.actions`, `key: "click"`).
+- New characters: a girl, a boy, a woman and a man from Microsoft Rocketbox
+  (MIT), with Rocketbox's own motion capture for standing, walking and
+  running (the run is Rocketbox's sprint, `run_fast_01`: long strides,
+  leaning forward, the arms driving); the dog, the mouse and the robot stay; the knight and the
+  Sketchfab man and woman of 2.7.1 are gone (old files keep their names).
+  Every bone of a person turns as in Rocketbox's clips, from its parent; the
+  hips' motion is scaled to each body's hip height, so that the children's
+  shorter legs reach the floor; the clips' travel over the floor is taken
+  out (the game moves the character) and measured as its stride, so that the
+  feet keep to the floor. `check/body_check.py` checks every frame of every
+  clip (bones, feet and floor, sliding, knees, elbows, head, shoulders, loops,
+  eating). The children speak with the woman's and the man's recordings,
+  higher. `check/make_rocketbox.py`, `check/rocketbox_blend.py` (Blender).
+- The food is new and 3D, from Kenney's Food Kit (CC0): a pizza of 10
+  slices on a round board in the room worth 8, a bowl of 10 apples in the
+  room worth 1 (eaten from the top of the heap; a part of an apple is a half
+  apple), drawn by three.js into the same pictures as before
+  (`js/food3d.js`, `js/food_models.js`, each model with its texture inside,
+  `check/media/make_food_models.py`); without WebGL the drawings of before.
+  `food_rooms.<name>.food` takes `pizza` and `apples` (the defaults) or
+  `cheese` and `bread` (a wheel of wedges, a loaf), so `food_kinds` in the
+  files says `pizza` and `apples`. The rules and the levels do not change.
+- Footsteps are about 15 dB softer, for every character and the mouse.
+  Walking is as before.
+- A character running takes longer, slower steps (`LONGER_STEPS` 0.85, from
+  0.5, in `js/game.js`; its own top speed, `js/characters.js`, the
+  sprint's): about 4 steps a second instead of 8. The speed of the game is
+  as before.
+- The first page, the characters page and the end of a game are new: a dark
+  panel left of the first page, so that the maze chosen stays in sight, the
+  names in Cormorant Garamond (in `fonts/`, SIL Open Font License), brass for
+  what is chosen.
+- With `?send=0` the files the game would send can be saved as a zip with a
+  button in the corner, between games.
+- `check/play_check.js` checks the ratings, the cards and the pause, and Exit
+  in both ways and on the first page.
+
 ## 2.7.1
 
 - The paintings no longer flash dark or bright for a moment when the player

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0c1016">
   <title>Food Rooms</title>
+  <link rel="stylesheet" href="css/fonts.css">
   <link rel="stylesheet" href="css/game.css">
 </head>
 <body>
@@ -36,6 +37,7 @@
     </div>
   </div>
   <div id="gameKeys" hidden></div>
+  <button id="exitBtn" class="exit" tabindex="-1" hidden>Exit <kbd>Esc</kbd></button>
   <div id="gameHint" hidden></div>
   <div id="nowPlaying" hidden></div>
 
@@ -59,9 +61,12 @@
       <div class="row-label" id="mazeLabel">Maze</div>
       <div class="grid" id="mazes"></div>
       <p class="keys" id="menuKeys"></p>
-      <button class="primary" id="play" tabindex="-1" disabled>Play &nbsp;<kbd>Enter</kbd></button>
       <p class="small" id="menuStatus"></p>
       <p class="small warn" id="menuProblems" hidden></p>
+      <div class="menu-actions">
+        <button class="primary" id="play" tabindex="-1" disabled>Play &nbsp;<kbd>Enter</kbd></button>
+        <button class="second exit-menu" id="menuExit" tabindex="-1">Exit</button>
+      </div>
     </div>
   </div>
 
@@ -73,12 +78,12 @@
           <div class="ed-tools">
             <button type="button" class="tool" id="edTool_rooms">Rooms <kbd>R</kbd></button>
             <button type="button" class="tool" id="edTool_S"><i class="dot s"></i>Start <kbd>S</kbd></button>
-            <button type="button" class="tool" id="edTool_C"><i class="dot c"></i>Cheese <kbd>C</kbd></button>
-            <button type="button" class="tool" id="edTool_B"><i class="dot b"></i>Bread <kbd>B</kbd></button>
+            <button type="button" class="tool" id="edTool_C"><i class="dot c"></i>Pizza <kbd>C</kbd></button>
+            <button type="button" class="tool" id="edTool_B"><i class="dot b"></i>Apples <kbd>B</kbd></button>
           </div>
           <canvas id="edGrid"></canvas>
           <p class="small left">Rooms: click a square to take the room out or put it back; drag to do the same
-            over several. Start, Cheese, Bread: click a room to put it there, click it again to take it away.
+            over several. Start, Pizza, Apples: click a room to put it there, click it again to take it away.
             Rooms side by side are joined by a door.</p>
         </div>
         <div class="ed-side">
@@ -136,6 +141,33 @@
     </div>
   </div>
 
+  <div id="infoCard" class="overlay info-card" hidden>
+    <article class="label-card" role="dialog" aria-modal="true" aria-labelledby="icTitle">
+      <figure class="lc-pic"><img id="icPic" alt=""></figure>
+      <div class="lc-label">
+        <button class="lc-close" id="icClose" tabindex="-1" aria-label="Close and go on">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+        <p class="lc-where" id="icWhere"></p>
+        <p class="lc-artist" id="icArtist"></p>
+        <p class="lc-life" id="icLife"></p>
+        <h2 class="lc-title" id="icTitle"></h2>
+        <dl class="lc-facts" id="icFacts"></dl>
+        <div class="lc-about" id="icAboutBox">
+          <p class="lc-kicker" id="icAboutLabel"></p>
+          <p class="lc-text" id="icAbout"></p>
+        </div>
+        <div class="lc-rate" id="icRate">
+          <span class="lc-kicker">Your rating</span>
+          <span class="lc-stars" id="icStars"></span>
+        </div>
+        <p class="lc-source" id="icSource"></p>
+      </div>
+      <footer class="lc-foot"><span class="lc-paused">Paused</span>
+        <span>Press any key to go back to the game</span></footer>
+    </article>
+  </div>
+
   <div id="message" class="overlay" hidden>
     <div class="panel">
       <h2 id="msgTitle">Food Rooms</h2>
@@ -148,6 +180,7 @@
     <span>M</span>
   </button>
 
+  <button id="testFiles" class="test-files" tabindex="-1" hidden>Download the recorded files</button>
   <div id="test-banner" hidden>Test mode: the files are marked TEST_</div>
   <div id="focus-note" hidden>The game does not have the keyboard: click on this page to go on.</div>
   <noscript><p>This game needs JavaScript.</p></noscript>
@@ -160,9 +193,12 @@
   <script src="js/config.js"></script>
   <script src="js/recorder.js"></script>
   <script src="js/datapipe.js"></script>
+  <script src="js/zipfile.js"></script>
   <script src="js/world.js"></script>
   <script src="js/food.js"></script>
   <script src="js/paintings.js"></script>
+  <script src="js/painting_info.js"></script>
+  <script src="js/painting_card.js"></script>
   <script src="js/art.js"></script>
   <script src="js/music.js"></script>
   <script src="js/gramophone.js"></script>
@@ -171,6 +207,8 @@
   <script src="js/mouse.js"></script>
   <script src="js/three/three.min.js"></script>
   <script src="js/three/GLTFLoader.js"></script>
+  <script src="js/food_models.js"></script>
+  <script src="js/food3d.js"></script>
   <script src="js/characters.js"></script>
   <script src="js/view2d.js"></script>
   <script src="js/view3d.js"></script>
