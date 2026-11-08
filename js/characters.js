@@ -465,6 +465,20 @@
       three.setRenderTarget(null);
       three.setViewport(0, 0, w, h);
     }
+    if (alpha < 1) {
+      // faded (the camera very near): first its depth alone, so that only its
+      // nearest surface is drawn after. Else the two-sided models showed what
+      // is behind that surface through it: from behind, the inside of the face
+      // through the hair (dark eyes and brows on the back of the head)
+      if (!this.depthOnly) {
+        this.depthOnly = new THREE.MeshBasicMaterial({colorWrite: false, side: THREE.DoubleSide});
+      }
+      this.shadow.visible = false;
+      this.scene.overrideMaterial = this.depthOnly;
+      three.render(this.scene, this.camera);
+      this.scene.overrideMaterial = null;
+      this.shadow.visible = true;
+    }
     three.render(this.scene, this.camera);
     three.setRenderTarget(null);
     three.resetState();
